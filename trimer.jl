@@ -207,6 +207,7 @@ end
 
 function unitpropag(system,invsys,init,isassi,assi)
     front = Set(Int[])
+    antecedants = Set(Int[])
     id=0
     c=0
     while length(front)>0 || id==0 
@@ -218,33 +219,31 @@ function unitpropag(system,invsys,init,isassi,assi)
             eq = system[id]
         end
         s = slack(eq,isassi,assi)
-        # if s<0
-        #     printeq(eq)
-        #     println(front)
-        #     return
-        # end
-        for l in eq.t
-            if !isassi[l.var.x+1,l.var.v+1] && l.coef > s
-                isassi[l.var.x+1,l.var.v+1] = true
-                assi[l.var.x+1,l.var.v+1] = l.sign
-                for j in invsys[l.var]
-                    if j!=id
-                        push!(front,j)
+        if s<0
+            push!(antecedants,id)
+        else
+            for l in eq.t
+                if !isassi[l.var.x+1,l.var.v+1] && l.coef > s
+                    isassi[l.var.x+1,l.var.v+1] = true
+                    assi[l.var.x+1,l.var.v+1] = l.sign
+                    for j in invsys[l.var]
+                        if j!=id
+                            push!(front,j)
+                        end
                     end
                 end
             end
         end
-        # println(length(front))
     end
-    println("prapagation sucessfull this is problematic ",c)
+    return antecedants
 end
 
 
     println("==========================")
     # path = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\"
     path = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\smol-proofs\\sip_proofs\\"
-    # file = "g2-g3"
-    file = "g24-g28"
+    file = "g2-g3"
+    # file = "g24-g28"
     system,invsys = @time readopb(path,file)
     system,invsys,systemlink = @time readveripb(path,file,system,invsys)
 
@@ -256,7 +255,14 @@ end
 
     normcoefsystem(system)
     init = reverse(system[end-1])
-    @time unitpropag(system,invsys,init,isassi,assi)
+    antecedants = unitpropag(system,invsys,init,isassi,assi)
+
+    printeq(init)
+    for id in antecedants
+        eq = system[id]
+        printeq(eq)
+        println("slack: ",slack(eq,isassi,assi))
+    end
 
 
 
