@@ -221,11 +221,13 @@ function unitpropag(system,invsys,init,isassi,assi)
         s = slack(eq,isassi,assi)
         if s<0
             push!(antecedants,id)
+            return antecedants
         else
             for l in eq.t
                 if !isassi[l.var.x+1,l.var.v+1] && l.coef > s
                     isassi[l.var.x+1,l.var.v+1] = true
                     assi[l.var.x+1,l.var.v+1] = l.sign
+                    push!(antecedants,id)
                     for j in invsys[l.var]
                         if j!=id
                             push!(front,j)
@@ -259,9 +261,9 @@ end
 
     printeq(init)
     for id in antecedants
-        eq = system[id]
+        eq = id==0 ? init : system[id]
+        print("slack: ",slack(eq,isassi,assi))
         printeq(eq)
-        println("slack: ",slack(eq,isassi,assi))
     end
 
 
