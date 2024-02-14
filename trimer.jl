@@ -121,7 +121,7 @@ function addeq(eq1,eq2)
     c = 0
     for lit in eq2.t
         i = findfirst(x->x==lit.var,vars)
-        if i!=nothing
+        if !isnothing(i)
             tmplit,tmpc = addlit(lit,lits[i])
             lits[i] = tmplit
             c+=tmpc
@@ -206,17 +206,13 @@ function reverse(eq)
 end
 
 function unitpropag(system,invsys,init,isassi,assi)
-    front = Set(Int[])
+    front = Set(Int[init])
     antecedants = Set(Int[])
-    id=0
-    c=0
-    while length(front)>0 || id==0 
-        c+=1
-        if length(front)==0
-            eq = init
-        else
-            id = pop!(front)
-            eq = system[id]
+    while length(front)>0
+        id = pop!(front)
+        eq = system[id]
+        if id==init
+            eq = reverse(eq)
         end
         s = slack(eq,isassi,assi)
         if s<0
@@ -239,8 +235,35 @@ function unitpropag(system,invsys,init,isassi,assi)
     end
     return antecedants
 end
+function smolproof(system,invsys,systemlink)
+    vars = collect(keys(invsys))
+    maxx = maximum(x->x.x,vars)
+    maxv = maximum(x->x.v,vars)
+    isassi = zeros(Bool,maxx+1,maxv+1)
+    assi = zeros(Bool,maxx+1,maxv+1)
+    antecedants = Set(Int[])
+    cone = Set(Int[])
+    front = Set(Int[length(system)-1])
+    while length(front)>0
+        id = pop!(front)
+        if isdefined(systemlink,id)
+            antecedants = systemlink[id]
+        else
+            isassi = zeros(Bool,maxx+1,maxv+1)
+            assi = zeros(Bool,maxx+1,maxv+1)        
+            antecedants = unitpropag(system,invsys,id,isassi,assi)
+        end
+        for i in antecedants
+            if !(i in cone)
+                push!(cone,i)
+                push!(front,i)
+            end
+        end
+    end
+    return cone
+end
 
-
+function main()
     println("==========================")
     # path = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\"
     path = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\smol-proofs\\sip_proofs\\"
@@ -249,23 +272,15 @@ end
     system,invsys = @time readopb(path,file)
     system,invsys,systemlink = @time readveripb(path,file,system,invsys)
 
-    vars = collect(keys(invsys))
-    maxx = maximum(x->x.x,vars)
-    maxv = maximum(x->x.v,vars)
-    isassi = zeros(Bool,maxx+1,maxv+1)
-    assi = zeros(Bool,maxx+1,maxv+1)
-
     normcoefsystem(system)
-    init = reverse(system[end-1])
-    antecedants = unitpropag(system,invsys,init,isassi,assi)
-
-    printeq(init)
-    for id in antecedants
-        eq = id==0 ? init : system[id]
-        print("slack: ",slack(eq,isassi,assi))
-        printeq(eq)
+    cone = smolproof(system,invsys,systemlink)
+    for eq in cone
+        printeq(system[eq])
     end
+    println(length(cone))
+end
 
+main()
 
 
 #= 
@@ -277,4 +292,6 @@ setdiff
 symdiff rend les elements uniques
 issubset ⊆⊇
 i belive it matters
+
+
 =#
