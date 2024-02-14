@@ -27,6 +27,20 @@ function printeq(e)
     end
     println("  >= ",e.b)
 end
+function printsys(system)
+    for id in 1:length(system)
+        print(id," ")
+        printeq(system[id])
+    end
+end
+function printsys(system,subset)
+    for id in 1:length(system)
+        if id in subset
+            print(id," ")
+            printeq(system[id])
+        end
+    end
+end
 function addinvsys(invsys,var,id)
     if haskey(invsys,var)
         push!(invsys[var],id)
@@ -246,13 +260,14 @@ function smolproof(system,invsys,systemlink)
     front = Set(Int[length(system)-1])
     while length(front)>0
         id = pop!(front)
-        if isdefined(systemlink,id)
+        if isassigned(systemlink,id)
             antecedants = systemlink[id]
         else
             isassi = zeros(Bool,maxx+1,maxv+1)
             assi = zeros(Bool,maxx+1,maxv+1)        
             antecedants = unitpropag(system,invsys,id,isassi,assi)
         end
+        println("id:",id," ",antecedants)
         for i in antecedants
             if !(i in cone)
                 push!(cone,i)
@@ -262,22 +277,56 @@ function smolproof(system,invsys,systemlink)
     end
     return cone
 end
-
-function main()
-    println("==========================")
+function inittest()
+    system = Vector{Eq}(undef,11)
+    invsys = Dict{Var,Vector{Int}}()
+    # system[1] = Eq([Lit(1,false,Var(2,0)),Lit(1,false,Var(3,0))],1)
+    system[1] = Eq([Lit(1,false,Var(2,0)),Lit(1,true,Var(3,0))],1)#corr
+    system[2] = Eq([Lit(1,true ,Var(1,0)),Lit(1,true ,Var(3,0))],1)
+    system[3] = Eq([Lit(1,false,Var(1,0)),Lit(1,true ,Var(2,0))],1)
+    system[4] = Eq([Lit(1,false,Var(1,0)),Lit(1,false,Var(2,0))],1)
+    system[5] = Eq([Lit(1,true ,Var(1,0)),Lit(1,false,Var(2,0))],1)
+    system[6] = Eq([Lit(1,true ,Var(2,0)),Lit(1,true ,Var(3,0))],1)
+    invsys[Var(1,0)] = [2,3,4,5,8]
+    invsys[Var(2,0)] = [1,3,4,5,6]
+    invsys[Var(3,0)] = [1,2,6,10]
+    systemlink = Vector{Vector{Int}}(undef,11)
+    system[7] = addeq(system[4],system[5])
+    systemlink[7] = [4,5]
+    addinvsyseq(invsys,system[7],7)
+    system[8] = Eq([Lit(1,true,Var(1,0))],1)
+    system[9] = addeq(addeq(system[1],system[2]),system[3])
+    systemlink[9] = [1,2,3]
+    addinvsyseq(invsys,system[9],9)
+    system[10] = Eq([Lit(1,false,Var(3,0))],1)
+    systemlink[10] = [9]
+    system[11] = Eq([],1)
+    return system,invsys,systemlink
+end
+function runinstance()
     # path = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\"
     path = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\smol-proofs\\sip_proofs\\"
-    file = "g2-g3"
-    # file = "g24-g28"
+    # file = "g2-g3"
+    file = "g24-g28"
     system,invsys = @time readopb(path,file)
     system,invsys,systemlink = @time readveripb(path,file,system,invsys)
-
+    return system,invsys,systemlink
+end
+function makesmol(system,invsys,systemlink)
     normcoefsystem(system)
-    cone = smolproof(system,invsys,systemlink)
-    for eq in cone
-        printeq(system[eq])
-    end
-    println(length(cone))
+    printsys(system)
+    cone = @time smolproof(system,invsys,systemlink)
+    printsys(system,cone)
+    println(length(cone),"/",length(system))
+end
+function main()
+    println("==========================")
+
+    system,invsys,systemlink = inittest()
+    # system,invsys,systemlink = runinstance()
+
+    makesmol(system,invsys,systemlink)
+
 end
 
 main()
