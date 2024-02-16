@@ -28,13 +28,13 @@ function printeq(e)
     println("  >= ",e.b)
 end
 function printsys(system)
-    for id in 1:length(system)
+    for id in eachindex(system)
         print(id," ")
         printeq(system[id])
     end
 end
 function printsys(system,subset)
-    for id in 1:length(system)
+    for id in eachindex(system)
         if id in subset
             print(id," ")
             printeq(system[id])
@@ -154,7 +154,6 @@ function solvepol(st,system)
     end
     return eq1
 end
-
 function readveripb(path,file,system,invsys)
     systemlink = Vector{Vector{Int}}
     open(string(path,file,".veripb"),"r") do f
@@ -190,12 +189,19 @@ function readveripb(path,file,system,invsys)
                 system[c] = eq
                 addinvsyseq(invsys,eq,c)
                 c+=1
+            elseif ss[1:2] == "v "
+                println("au secour")
+                st = split(ss,' ')
+                systemlink[c] = [parse(Int,st[2])]
+                eq = readeq(st[3:end])
+                system[c] = eq
+                addinvsyseq(invsys,eq,c)
+                c+=1
             end
         end
     end
     return system,invsys,systemlink
 end
-
 function slack(eq,isassi,assi)
     c=0
     for l in eq.t
@@ -211,23 +217,29 @@ function slack(eq,isassi,assi)
 end
 function reverse(eq)
     c=0
-    lits = copy(eq.t)
+    lits = [Lit(l.coef,l.sign,Var(l.var.x,l.var.v)) for l in eq.t]
     for l in lits
         l.sign = !l.sign
         c+=l.coef
     end
     return Eq(lits,-eq.b+1+c)
 end
-
-function unitpropag(system,invsys,init,isassi,assi)
+function initassignement(invsys)
+    # vars = collect(keys(invsys))
+    vars = eachindex(invsys)
+    maxx = maximum(x->x.x,vars)
+    maxv = maximum(x->x.v,vars)
+    return  zeros(Bool,maxx+1,maxv+1),zeros(Bool,maxx+1,maxv+1)
+end
+function unitpropag(system,invsys,init,isassi,assi) 
     front = Set(Int[init])
     antecedants = Set(Int[])
+    id = init
+    eq = system[init]
+    s = 0
     while length(front)>0
         id = pop!(front)
-        eq = system[id]
-        if id==init
-            eq = reverse(eq)
-        end
+        eq = id==init ? reverse(system[id]) : system[id]
         s = slack(eq,isassi,assi)
         if s<0
             push!(antecedants,id)
@@ -249,29 +261,27 @@ function unitpropag(system,invsys,init,isassi,assi)
     end
     return antecedants
 end
-function smolproof(system,invsys,systemlink)
-    vars = collect(keys(invsys))
-    maxx = maximum(x->x.x,vars)
-    maxv = maximum(x->x.v,vars)
-    isassi = zeros(Bool,maxx+1,maxv+1)
-    assi = zeros(Bool,maxx+1,maxv+1)
+function smolproof2(system,invsys,systemlink)
+    n = length(system)
+    isassi,assi = initassignement(invsys)
     antecedants = Set(Int[])
-    cone = Set(Int[])
-    front = Set(Int[length(system)-1])
-    while length(front)>0
-        id = pop!(front)
+    cone = zeros(Bool,n)
+    front = zeros(Bool,n)
+    front[n-1] = true
+    while true in front
+        id = findfirst(front)
+        front[id] = false
         if isassigned(systemlink,id)
-            antecedants = systemlink[id]
+            antecedants=systemlink[id]
         else
-            isassi = zeros(Bool,maxx+1,maxv+1)
-            assi = zeros(Bool,maxx+1,maxv+1)        
+            isassi .= false
+            assi .= false
             antecedants = unitpropag(system,invsys,id,isassi,assi)
         end
-        println("id:",id," ",antecedants)
         for i in antecedants
-            if !(i in cone)
-                push!(cone,i)
-                push!(front,i)
+            if !cone[i]
+                cone[i]=true
+                front[i]=true
             end
         end
     end
@@ -303,36 +313,42 @@ function inittest()
     system[11] = Eq([],1)
     return system,invsys,systemlink
 end
-function runinstance()
-    # path = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\"
-    path = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\smol-proofs\\sip_proofs\\"
-    # file = "g2-g3"
-    file = "g24-g28"
+function runinstance(path,file)
     system,invsys = @time readopb(path,file)
     system,invsys,systemlink = @time readveripb(path,file,system,invsys)
     return system,invsys,systemlink
 end
 function makesmol(system,invsys,systemlink)
+    println(system[end])
+    println("test")
     normcoefsystem(system)
-    printsys(system)
-    cone = @time smolproof(system,invsys,systemlink)
-    printsys(system,cone)
-    println(length(cone),"/",length(system))
+    # printsys(system)
+    cone = @time smolproof2(system,invsys,systemlink)
+    println(sum(cone),"/",length(system))
+    # printsys(system,cone)
 end
 function main()
     println("==========================")
-
     system,invsys,systemlink = inittest()
-    # system,invsys,systemlink = runinstance()
-
     makesmol(system,invsys,systemlink)
+    # path = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\"
+    path = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\smol-proofs\\sip_proofs\\"
+    # file = "g2-g3"
+    # file = "g7-g23"
+    # file = "g24-g28"
 
+    for file in ["g2-g3","g2-g5","g3-g6","g4-g10","g4-g14","g4-g33","g5-g6","g7-g11","g7-g15","g7-g23","g7-g28","g7-g33","g8-g9","g10-g14","g10-g25","g11-g13","g11-g28","g17-g25","g18-g22","g24-g28"]
+        system,invsys,systemlink = runinstance(path,file)
+        println(system[end-5:end])
+        makesmol(system,invsys,systemlink)
+    end
 end
 
 main()
 
 
 #= 
+
 veripb --trace --useColor test.opb test.pbp
 restart RELP  alt j alt r
 union ∪
