@@ -236,60 +236,108 @@ function initassignement(invsys)
     maxv = maximum(x->x.v,vars)
     return  zeros(Bool,maxx+1,maxv+1),zeros(Bool,maxx+1,maxv+1)
 end
-function unitpropag(system,invsys,init,isassi,assi) 
-    front = Set(Int[init])
-    antecedants = Set(Int[])
+# system : array of equations
+# invsys : dictonary mapping each variable to all the eqation indexesit is in
+# init : first equation to propagate
+# isassi : record of assigned variables
+# assi : value of assignements
+# nbopb : number of opb equations
+function unitpropag(system,invsys,isassi,assi,nbopb)
+    n = length(system)
+    antecedants = zeros(Bool,n)
+    front = zeros(Bool,n)
+    front[nbopb:n-1] .= true
+    # antecedants = copy(front)
+    id = n-1
+    eq = system[n-1]
+    s = x = v = 0
+    while true in front
+        id = findlast(front)
+        front[id] = false
+        eq = system[id]
+        s = slack(eq,isassi,assi)
+        if s<0                                      # contradiction
+            antecedants[id] = true
+            return antecedants
+        else
+            for l in eq.t
+                x,v = l.var.x+1,l.var.v+1
+                if !isassi[x,v] && l.coef > s       # assign variable
+                    isassi[x,v] = true
+                    assi[x,v] = l.sign
+                    antecedants[id] = true
+                    for j in invsys[l.var]          # add impacted equations in front
+                        if j!=id
+                            front[j] = true
+                        end end end end end 
+    end
+    println("\nUP Failed from:")
+    return antecedants
+end
+function revunitpropag(system,invsys,init,isassi,assi) 
+    n = length(system)
+    front = zeros(Bool,n)
+    front[init] = true
+    antecedants = zeros(Bool,n)
     id = init
     eq = system[init]
     s = 0
-    while length(front)>0
-        id = pop!(front)
+    while true in front
+        id = findlast(front)
+        front[id] = false
         eq = id==init ? reverse(system[id]) : system[id]
         s = slack(eq,isassi,assi)
         if s<0
-            push!(antecedants,id)
+            antecedants[id] = true
             return antecedants
         else
             for l in eq.t
                 if !isassi[l.var.x+1,l.var.v+1] && l.coef > s
                     isassi[l.var.x+1,l.var.v+1] = true
                     assi[l.var.x+1,l.var.v+1] = l.sign
-                    push!(antecedants,id)
+                    antecedants[id] = true
                     for j in invsys[l.var]
                         if j!=id
-                            push!(front,j)
+                            front[j] = true
                         end
                     end
                 end
             end
         end
     end
+    println("\nRUP Failed from:",init)
+    # println(findall(antecedants))
     return antecedants
 end
-function smolproof2(system,invsys,systemlink)
-    n = length(system)
+function getfront(system,invsys,isassi,assi,nbopb)
+    return unitpropag(system,invsys,isassi,assi,nbopb)
+end
+function smolproof2(system,invsys,systemlink,nbopb)
     isassi,assi = initassignement(invsys)
+    front = getfront(system,invsys,isassi,assi,nbopb) #println("front:",findall(front))
+    cone = copy(front)
+    cone[end] = true
     antecedants = Set(Int[])
-    cone = zeros(Bool,n)
-    front = zeros(Bool,n)
-    front[n-1] = true
     while true in front
-        id = findfirst(front)
+        id = findlast(front)
         front[id] = false
-        if isassigned(systemlink,id)
-            antecedants=systemlink[id]
-        else
-            isassi .= false
-            assi .= false
-            antecedants = unitpropag(system,invsys,id,isassi,assi)
-        end
-        for i in antecedants
-            if !cone[i]
-                cone[i]=true
-                front[i]=true
+        if id>nbopb
+            if isassigned(systemlink,id)
+                antecedants=systemlink[id]
+            else
+                isassi .= false
+                assi .= false
+                antecedants = findall(revunitpropag(system,invsys,id,isassi,assi))
+            end
+            for i in antecedants
+                if !cone[i]
+                    cone[i]=true
+                    front[i]=true
+                end
             end
         end
     end
+    cone[end] = true
     return cone
 end
 function inittest()
@@ -301,7 +349,8 @@ function inittest()
     system[3] = Eq([Lit(1,false,Var(1,0)),Lit(1,true ,Var(2,0))],1)
     system[4] = Eq([Lit(1,false,Var(1,0)),Lit(1,false,Var(2,0))],1)
     system[5] = Eq([Lit(1,true ,Var(1,0)),Lit(1,false,Var(2,0))],1)
-    system[6] = Eq([Lit(1,true ,Var(2,0)),Lit(1,true ,Var(3,0))],1)
+    # system[6] = Eq([Lit(1,true ,Var(2,0)),Lit(1,true ,Var(3,0))],1)
+    system[6] = Eq([Lit(1,true ,Var(2,0)),Lit(1,false ,Var(3,0))],1)#corr
     invsys[Var(1,0)] = [2,3,4,5,8]
     invsys[Var(2,0)] = [1,3,4,5,6]
     invsys[Var(3,0)] = [1,2,6,10]
@@ -313,46 +362,79 @@ function inittest()
     system[9] = addeq(addeq(system[1],system[2]),system[3])
     systemlink[9] = [1,2,3]
     addinvsyseq(invsys,system[9],9)
-    system[10] = Eq([Lit(1,false,Var(3,0))],1)
+    system[10] = Eq([Lit(1,true,Var(3,0))],1)
     systemlink[10] = [9]
     system[11] = Eq([],1)
     return system,invsys,systemlink
 end
 function runinstance(path,file)
     system,invsys = readopb(path,file)
+    nbopb = length(system)
     system,invsys,systemlink = readveripb(path,file,system,invsys)
-    return system,invsys,systemlink
+    return system,invsys,systemlink,nbopb
 end
-function makesmol(system,invsys,systemlink)
+function makesmol(system,invsys,systemlink,nbopb)
     normcoefsystem(system)
     # printsys(system)
-    return smolproof2(system,invsys,systemlink)
+    return smolproof2(system,invsys,systemlink,nbopb)
     # printsys(system,cone)
 end
 
 function main()
     println("==========================")
     # system,invsys,systemlink = inittest()
-    # makesmol(system,invsys,systemlink)
+    # cone = makesmol(system,invsys,systemlink,6)
     # path = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\"
     path = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\smol-proofs\\sip_proofs\\"
+    # file = "init"
     # file = "g2-g3"
     # file = "g2-g5"
     # file = "g7-g23"
     # file = "g24-g28"
-    println("threads available:",Threads.nthreads())
+    # println("threads available:",Threads.nthreads())
 
-    Threads.@threads for file in ["g2-g3","g2-g5","g3-g6","g4-g10","g4-g14","g4-g33","g5-g6","g7-g11","g7-g15","g7-g23","g7-g28","g7-g33","g8-g9","g10-g14","g10-g25","g11-g13","g11-g28","g17-g25","g18-g22","g24-g28"]
-        system,invsys,systemlink = runinstance(path,file)
-        cone = makesmol(system,invsys,systemlink)
-        println(file,":",sum(cone),"/",length(system))
+    # Threads.@threads 
+    # for file in ["g2-g3","g2-g5","g3-g6","g4-g10","g4-g14","g4-g33","g5-g6","g7-g11","g7-g15","g7-g23","g7-g28","g7-g33","g8-g9","g10-g14","g10-g25","g11-g13","g11-g28","g17-g25","g18-g22","g24-g28"]
+    for file in ["g5-g6","g3-g6","g2-g5","g10-g25","g17-g25","g2-g3","g24-g28","g7-g23","g11-g28","g10-g14"]
+            system,invsys,systemlink,nbopb = runinstance(path,file)
+        cone =  makesmol(system,invsys,systemlink,nbopb)
+        println(file,"\n    ",sum(cone[nbopb+1:end]),"/",length(system)-nbopb,"        ratio ", round(Int,100-100*sum(cone[nbopb+1:end])/(length(system)-nbopb))," %")
+        println("    ",sum(cone),"/",length(system),"        ratio ", round(Int,100-100*sum(cone)/(length(system)))," %")
+        # println(findall(cone))
     end
 end
 
 main()
 
 
+# using Profile
+# using ProfileView
+# ProfileView.@profile main()
+# ProfileView.view()
+
 #= 
+    sid = [1410,438,592,157,159,590,62,891,124,393]
+==========================
+threads available:10
+g2-g3:1151/2531
+g2-g5:1210/2643
+g4-g14:4384/5328
+g3-g6:5292/6561
+g4-g10:3731/3913
+g8-g9:4318/5407
+g5-g6:16027/26090
+g10-g25:5356/14535
+g4-g33:10061/10183
+g7-g28:14912/20291
+g10-g14:7771/9430
+g7-g15:8899/10912
+g7-g11:8622/8648
+g11-g13:9714/12357
+g11-g28:17590/24059
+g17-g25:7392/19381
+g7-g23:16385/16653
+ . . . 
+ 
 ==========================
 g2-g3:
   0.015955 seconds (7.45 k allocations: 1.010 MiB)
