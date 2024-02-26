@@ -234,7 +234,36 @@ function initassignement(invsys)
     vars = eachindex(invsys)
     maxx = maximum(x->x.x,vars)
     maxv = maximum(x->x.v,vars)
-    return  zeros(Bool,maxx+1,maxv+1),zeros(Bool,maxx+1,maxv+1)
+    return zeros(Bool,maxx+1,maxv+1),zeros(Bool,maxx+1,maxv+1)
+end
+function reset(mats)
+    for mat in mats
+        mat .=false
+    end
+end
+function findassigned(front,antecedants,system,invsys,isassi,assi)
+    for i in eachindex(system)
+        eq = system[i]
+        if length(eq.t)==1
+            s = slack(eq,isassi,assi)
+            if s>=0
+                l = eq.t[1]
+                if l.coef > s
+                    x,v = l.var.x+1,l.var.v+1
+                    assi[x,v] = l.sign
+                    isassi[x,v] = true 
+                    front[i] = antecedants[i] = true
+                    for j in invsys[l.var]          
+                        if j!=i
+                            front[j] = true
+                        end 
+                    end
+                end
+            else
+                println("contradicting litteral")
+            end
+        end
+    end
 end
 # system : array of equations
 # invsys : dictonary mapping each variable to all the eqation indexesit is in
@@ -242,15 +271,9 @@ end
 # isassi : record of assigned variables
 # assi : value of assignements
 # nbopb : number of opb equations
-function unitpropag(system,invsys,isassi,assi,nbopb)
-    n = length(system)
-    antecedants = zeros(Bool,n)
-    front = zeros(Bool,n)
-    front[nbopb:n-1] .= true
-    # antecedants = copy(front)
-    id = n-1
-    eq = system[n-1]
-    s = x = v = 0
+function unitpropag(front,antecedants,system,invsys,isassi,assi)
+    id = s = x = v = 0
+    eq = system[end]
     while true in front
         id = findlast(front)
         front[id] = false
@@ -258,7 +281,7 @@ function unitpropag(system,invsys,isassi,assi,nbopb)
         s = slack(eq,isassi,assi)
         if s<0                                      # contradiction
             antecedants[id] = true
-            return antecedants
+            return true
         else
             for l in eq.t
                 x,v = l.var.x+1,l.var.v+1
@@ -271,8 +294,8 @@ function unitpropag(system,invsys,isassi,assi,nbopb)
                             front[j] = true
                         end end end end end 
     end
-    println("\nUP Failed from:")
-    return antecedants
+    println("\nUP Failed")
+    return false
 end
 function revunitpropag(system,invsys,init,isassi,assi) 
     n = length(system)
@@ -310,7 +333,36 @@ function revunitpropag(system,invsys,init,isassi,assi)
     return antecedants
 end
 function getfront(system,invsys,isassi,assi,nbopb)
-    return unitpropag(system,invsys,isassi,assi,nbopb)
+    n = length(system)
+    antecedants = zeros(Bool,n)
+    front = zeros(Bool,n)
+    isassif,assif = initassignement(invsys)
+    for i in eachindex(system)
+        eq = system[i]
+        s = slack(eq,isassif,assif)
+        if s<0 println("solocontradiction ") end
+        for l in eq.t 
+            if l.coef > s
+                printeq(eq)
+                reset([front,antecedants,isassi,assi])
+                x,v = l.var.x+1,l.var.v+1
+                assi[x,v] = l.sign
+                isassi[x,v] = true 
+                front[i] = antecedants[i] = true
+                for j in invsys[l.var]          
+                    if j!=i
+                        front[j] = true
+                    end 
+                end
+                if unitpropag(front,antecedants,system,invsys,isassi,assi)
+                    println(sum(antecedants))
+                end
+            end
+        end
+    end
+    reset([antecedants])
+    updumb(system,invsys,antecedants)
+    return antecedants
 end
 function smolproof2(system,invsys,systemlink,nbopb)
     isassi,assi = initassignement(invsys)
@@ -340,6 +392,86 @@ function smolproof2(system,invsys,systemlink,nbopb)
     cone[end] = true
     return cone
 end
+function smolproof3(system,invsys,systemlink,nbopb)
+    isassi,assi = initassignement(invsys)
+    cone = zeros(Bool,length(system))
+    cone[end] = true
+    antecedants = zeros(Bool,length(system))
+    front = zeros(Bool,length(system))
+    updumb(system,invsys,front)
+    while true in front
+        id = findlast(front)
+        front[id] = false
+        if id>nbopb
+            if isassigned(systemlink,id)
+                for i in systemlink[id]
+                    antecedants[i] = true
+                end
+            else
+                rupdumb(system,invsys,antecedants,id,isassi,assi)
+            end
+            for i in findall(antecedants)
+                if !cone[i]
+                    cone[i]=true
+                    front[i]=true
+                end
+            end
+            reset([antecedants,isassi,assi])
+        end
+    end
+    cone[end] = true
+    return cone
+end
+function updumb(system,invsys,antecedants)
+    isassi,assi = initassignement(invsys)
+    changes = true
+    while changes
+        changes = false
+        for i in eachindex(system)
+            eq = system[i]
+            s = slack(eq,isassi,assi)
+            if s<0
+                antecedants[i] = true
+                return 
+            else
+                for l in eq.t
+                    if l.coef > s
+                        x,v = l.var.x+1,l.var.v+1
+                        assi[x,v] = l.sign
+                        isassi[x,v] = true 
+                        antecedants[i] = true
+                        changes = true
+                    end
+                end
+            end
+        end
+    end
+end
+function rupdumb(system,invsys,antecedants,init,isassi,assi)
+    rev = reverse(system[init])
+    changes = true
+    while changes
+        for i in 1:init
+            eq = i==init ? rev : system[i]
+            s = slack(eq,isassi,assi)
+            if s<0
+                antecedants[i] = true
+                return 
+            else
+                for l in eq.t
+                    if l.coef > s
+                        x,v = l.var.x+1,l.var.v+1
+                        assi[x,v] = l.sign
+                        isassi[x,v] = true 
+                        antecedants[i] = true
+                        changes = true
+                    end
+                end
+            end
+        end
+    end
+end
+
 function inittest()
     system = Vector{Eq}(undef,11)
     invsys = Dict{Var,Vector{Int}}()
@@ -365,7 +497,11 @@ function inittest()
     system[10] = Eq([Lit(1,true,Var(3,0))],1)
     systemlink[10] = [9]
     system[11] = Eq([],1)
-    return system,invsys,systemlink
+    nbopb = 6
+    file = "inittest"
+    cone =  makesmol(system,invsys,systemlink,nbopb)
+    println(file,"\n    ",sum(cone[nbopb+1:end]),"/",length(system)-nbopb,"        ratio ", round(Int,100-100*sum(cone[nbopb+1:end])/(length(system)-nbopb))," %")
+    println("    ",sum(cone),"/",length(system),"        ratio ", round(Int,100-100*sum(cone)/(length(system)))," %")
 end
 function runinstance(path,file)
     system,invsys = readopb(path,file)
@@ -376,17 +512,15 @@ end
 function makesmol(system,invsys,systemlink,nbopb)
     normcoefsystem(system)
     # printsys(system)
-    return smolproof2(system,invsys,systemlink,nbopb)
+    return smolproof3(system,invsys,systemlink,nbopb)
     # printsys(system,cone)
 end
 
 function main()
     println("==========================")
-    # system,invsys,systemlink = inittest()
-    # cone = makesmol(system,invsys,systemlink,6)
+    # inittest()
     # path = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\"
     path = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\smol-proofs\\sip_proofs\\"
-    # file = "init"
     # file = "g2-g3"
     # file = "g2-g5"
     # file = "g7-g23"
@@ -394,18 +528,19 @@ function main()
     # println("threads available:",Threads.nthreads())
 
     # Threads.@threads 
-    # for file in ["g2-g3","g2-g5","g3-g6","g4-g10","g4-g14","g4-g33","g5-g6","g7-g11","g7-g15","g7-g23","g7-g28","g7-g33","g8-g9","g10-g14","g10-g25","g11-g13","g11-g28","g17-g25","g18-g22","g24-g28"]
-    for file in ["g5-g6","g3-g6","g2-g5","g10-g25","g17-g25","g2-g3","g24-g28","g7-g23","g11-g28","g10-g14"]
-            system,invsys,systemlink,nbopb = runinstance(path,file)
+    for file in ["g2-g3","g2-g5","g3-g6","g4-g10","g4-g14","g4-g33","g5-g6","g7-g11","g7-g15","g7-g23","g7-g28","g7-g33","g8-g9","g10-g14","g10-g25","g11-g13","g11-g28","g17-g25","g18-g22","g24-g28"]
+    # for file in ["g5-g6","g3-g6","g2-g5","g10-g25","g17-g25","g2-g3","g24-g28","g7-g23","g11-g28","g10-g14"]
+        system,invsys,systemlink,nbopb = runinstance(path,file)
         cone =  makesmol(system,invsys,systemlink,nbopb)
-        println(file,"\n    ",sum(cone[nbopb+1:end]),"/",length(system)-nbopb,"        ratio ", round(Int,100-100*sum(cone[nbopb+1:end])/(length(system)-nbopb))," %")
-        println("    ",sum(cone),"/",length(system),"        ratio ", round(Int,100-100*sum(cone)/(length(system)))," %")
-        # println(findall(cone))
+        nto = sum(cone[1:nbopb])
+        ntp = sum(cone[nbopb+1:end])
+        println(file,"\n        ",round(Int,100-100*nto/nbopb)," %    (",nto,"/",nbopb,")\n        ",round(Int,100-100*ntp/(length(system)-nbopb))," %    (",ntp,"/",(length(system)-nbopb),")")
     end
 end
 
 main()
 
+# println("threads available:",Threads.nthreads())
 
 # using Profile
 # using ProfileView
