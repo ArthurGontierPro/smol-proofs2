@@ -80,3 +80,340 @@ v = [1358,1366,1375,1383,1392,1400,1409,1417,1426,1434,1443,1451,1460,1468,1477,
 for vv in v
     println(vv," ",vv in c2)
 end
+
+function smolproof2(system,invsys,systemlink,nbopb)
+    isassi,assi = initassignement(invsys)
+    front = getfront(system,invsys,isassi,assi,nbopb) #println("front:",findall(front))
+    cone = copy(front)
+    cone[end] = true
+    antecedants = Set(Int[])
+    while true in front
+        id = findlast(front)
+        front[id] = false
+        if id>nbopb
+            if isassigned(systemlink,id)
+                antecedants=systemlink[id]
+            else
+                isassi .= false
+                assi .= false
+                antecedants = findall(revunitpropag(system,invsys,id,isassi,assi))
+            end
+            for i in antecedants
+                if !cone[i]
+                    cone[i]=true
+                    front[i]=true
+                end
+            end
+        end
+    end
+    cone[end] = true
+    return cone
+end
+
+function getfront(system,invsys,isassi,assi,nbopb)
+    n = length(system)
+    antecedants = zeros(Bool,n)
+    front = zeros(Bool,n)
+    isassif,assif = initassignement(invsys)
+    for i in eachindex(system)
+        eq = system[i]
+        s = slack(eq,isassif,assif)
+        if s<0 println("solocontradiction ") end
+        for l in eq.t 
+            if l.coef > s
+                printeq(eq)
+                reset([front,antecedants,isassi,assi])
+                x,v = l.var.x+1,l.var.v+1
+                assi[x,v] = l.sign
+                isassi[x,v] = true 
+                front[i] = antecedants[i] = true
+                for j in invsys[l.var]          
+                    if j!=i
+                        front[j] = true
+                    end 
+                end
+                if unitpropag(front,antecedants,system,invsys,isassi,assi)
+                    println(sum(antecedants))
+                end
+            end
+        end
+    end
+    reset([antecedants])
+    updumb(system,invsys,antecedants)
+    return antecedants
+end
+function revunitpropag(system,invsys,init,isassi,assi) 
+    n = length(system)
+    front = zeros(Bool,n)
+    front[init] = true
+    antecedants = zeros(Bool,n)
+    id = init
+    eq = system[init]
+    s = 0
+    while true in front
+        id = findlast(front)
+        front[id] = false
+        eq = id==init ? reverse(system[id]) : system[id]
+        s = slack(eq,isassi,assi)
+        if s<0
+            antecedants[id] = true
+            return antecedants
+        else
+            for l in eq.t
+                if !isassi[l.var.x+1,l.var.v+1] && l.coef > s
+                    isassi[l.var.x+1,l.var.v+1] = true
+                    assi[l.var.x+1,l.var.v+1] = l.sign
+                    antecedants[id] = true
+                    for j in invsys[l.var]
+                        if j!=id
+                            front[j] = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+    println("\nRUP Failed from:",init)
+    # println(findall(antecedants))
+    return antecedants
+end
+function findassigned(front,antecedants,system,invsys,isassi,assi)
+    for i in eachindex(system)
+        eq = system[i]
+        if length(eq.t)==1
+            s = slack(eq,isassi,assi)
+            if s>=0
+                l = eq.t[1]
+                if l.coef > s
+                    x,v = l.var.x+1,l.var.v+1
+                    assi[x,v] = l.sign
+                    isassi[x,v] = true 
+                    front[i] = antecedants[i] = true
+                    for j in invsys[l.var]          
+                        if j!=i
+                            front[j] = true
+                        end 
+                    end
+                end
+            else
+                println("contradicting litteral")
+            end
+        end
+    end
+end
+
+function smolproof3(system,invsys,systemlink,nbopb)
+    isassi,assi = initassignement(invsys)
+    cone = zeros(Bool,length(system))
+    cone[end] = true
+    antecedants = zeros(Bool,length(system))
+    front = zeros(Bool,length(system))
+    updumb(system,invsys,front)
+    while true in front
+        id = findlast(front)
+        front[id] = false
+        if id>nbopb
+            if isassigned(systemlink,id)
+                for i in systemlink[id]
+                    antecedants[i] = true
+                end
+            else
+                rupdumb(system,invsys,antecedants,id,isassi,assi)
+            end
+            for i in findall(antecedants)
+                if !cone[i]
+                    cone[i]=true
+                    front[i]=true
+                end
+            end
+            
+        end
+    end
+    cone[end] = true
+    return cone
+end
+# system : array of equations
+# invsys : dictonary mapping each variable to all the eqation indexesit is in
+# init : first equation to propagate
+# isassi : record of assigned variables
+# assi : value of assignements
+# nbopb : number of opb equations
+function unitpropag(front,antecedants,system,invsys,isassi,assi)
+    id = s = x = v = 0
+    eq = system[end]
+    while true in front
+        id = findlast(front)
+        front[id] = false
+        eq = system[id]
+        s = slack(eq,isassi,assi)
+        if s<0                                      # contradiction
+            antecedants[id] = true
+            return true
+        else
+            for l in eq.t
+                x,v = l.var.x+1,l.var.v+1
+                if !isassi[x,v] && l.coef > s       # assign variable
+                    isassi[x,v] = true
+                    assi[x,v] = l.sign
+                    antecedants[id] = true
+                    for j in invsys[l.var]          # add impacted equations in front
+                        if j!=id
+                            front[j] = true
+                        end end end end end 
+    end
+    println("\nUP Failed")
+    return false
+end
+
+
+# using Profile
+# using ProfileView
+# ProfileView.@profile main()
+# ProfileView.view()
+
+#= 
+g2-g3
+        97 %    (7/230)
+        99 %    (16/2301)
+g2-g5
+        98 %    (5/251)
+        99 %    (31/2392)
+g3-g6
+        59 %    (249/609)
+        92 %    (453/5952)
+g4-g10
+        80 %    (762/3751)
+        1 %    (161/162)
+g4-g14
+        23 %    (3507/4570)
+        0 %    (757/758)
+g4-g33
+        52 %    (4466/9211)
+        0 %    (971/972)
+g5-g6
+        9 %    (731/801)
+        86 %    (3459/25289)
+g7-g11
+        90 %    (864/8482)
+        1 %    (165/166)
+
+
+
+    sid = [1410,438,592,157,159,590,62,891,124,393]
+==========================
+threads available:10
+g2-g3:1151/2531
+g2-g5:1210/2643
+g4-g14:4384/5328
+g3-g6:5292/6561
+g4-g10:3731/3913
+g8-g9:4318/5407
+g5-g6:16027/26090
+g10-g25:5356/14535
+g4-g33:10061/10183
+g7-g28:14912/20291
+g10-g14:7771/9430
+g7-g15:8899/10912
+g7-g11:8622/8648
+g11-g13:9714/12357
+g11-g28:17590/24059
+g17-g25:7392/19381
+g7-g23:16385/16653
+ . . . 
+ 
+==========================
+g2-g3:
+  0.015955 seconds (7.45 k allocations: 1.010 MiB)
+  0.112484 seconds (200.47 k allocations: 23.322 MiB, 72.17% compilation time)
+  0.574211 seconds (12.24 k allocations: 17.901 MiB)
+1151/2531
+g2-g5:
+  0.012458 seconds (8.87 k allocations: 1.188 MiB)
+  0.154311 seconds (178.67 k allocations: 31.551 MiB, 42.84% gc time)
+  0.944702 seconds (13.41 k allocations: 19.213 MiB)
+1210/2643
+g3-g6:
+  0.016844 seconds (20.48 k allocations: 2.673 MiB)
+  0.059255 seconds (373.56 k allocations: 42.712 MiB, 5.60% gc time)
+  3.866249 seconds (25.90 k allocations: 107.933 MiB, 0.28% gc time)
+5292/6561
+g4-g10:
+  0.027052 seconds (127.54 k allocations: 16.919 MiB)
+  0.020573 seconds (15.10 k allocations: 2.313 MiB)
+  3.109376 seconds (148.18 k allocations: 564.057 MiB, 1.27% gc time)
+3731/3913
+g4-g14:
+  0.044422 seconds (164.60 k allocations: 20.567 MiB)
+  0.052560 seconds (64.25 k allocations: 9.464 MiB, 8.88% gc time)
+  3.697321 seconds (142.81 k allocations: 372.954 MiB, 0.67% gc time)
+4384/5328
+g4-g33:
+  0.095689 seconds (405.20 k allocations: 53.279 MiB, 4.81% gc time)
+  0.050947 seconds (108.16 k allocations: 21.007 MiB, 11.53% gc time)
+ 61.463491 seconds (400.45 k allocations: 1.452 GiB, 0.13% gc time)
+10061/10183
+g5-g6:
+  0.027208 seconds (26.59 k allocations: 3.473 MiB)
+  0.355994 seconds (1.52 M allocations: 185.857 MiB, 42.89% gc time)
+ 14.876507 seconds (35.09 k allocations: 511.352 MiB, 1.04% gc time)
+16027/26090
+g7-g11:
+  0.096185 seconds (353.21 k allocations: 46.271 MiB, 3.97% gc time)
+  0.022820 seconds (19.47 k allocations: 4.870 MiB)
+ 59.304870 seconds (419.86 k allocations: 1.884 GiB, 0.14% gc time)
+8622/8648
+g7-g15:
+  0.060827 seconds (437.18 k allocations: 57.182 MiB, 8.27% gc time)
+  0.037761 seconds (79.31 k allocations: 15.907 MiB, 14.69% gc time)
+ 73.420885 seconds (394.00 k allocations: 1.535 GiB, 0.08% gc time)
+8899/10912
+g7-g23:
+  0.093485 seconds (783.34 k allocations: 102.533 MiB, 9.16% gc time)
+  0.050182 seconds (230.07 k allocations: 63.655 MiB, 14.89% gc time)
+227.013073 seconds (705.20 k allocations: 5.889 GiB, 0.09% gc time)
+16385/16653
+g7-g28:
+  0.067647 seconds (460.64 k allocations: 54.505 MiB, 4.65% gc time)
+  0.026563 seconds (58.88 k allocations: 8.102 MiB)
+ 58.600608 seconds (637.56 k allocations: 5.279 GiB, 0.58% gc time)
+14912/20291
+g7-g33:
+  0.102984 seconds (895.87 k allocations: 117.412 MiB, 8.72% gc time)
+  0.018334 seconds (73.04 k allocations: 19.104 MiB)
+887.864739 seconds (1.09 M allocations: 14.379 GiB, 0.04% gc time)
+20931/20937
+g8-g9:
+  0.037838 seconds (156.49 k allocations: 19.754 MiB, 6.14% gc time)
+  0.021842 seconds (33.77 k allocations: 4.363 MiB)
+ 10.019443 seconds (165.15 k allocations: 542.267 MiB, 0.20% gc time)
+4318/5407
+g10-g14:
+  0.096011 seconds (313.64 k allocations: 39.333 MiB, 2.25% gc time)
+  0.048104 seconds (66.76 k allocations: 12.383 MiB)
+ 75.430113 seconds (307.45 k allocations: 1.119 GiB, 0.27% gc time)
+7771/9430
+g10-g25:
+  0.060173 seconds (385.80 k allocations: 46.176 MiB, 3.50% gc time)
+  0.035077 seconds (96.54 k allocations: 11.414 MiB, 9.32% gc time)
+ 26.100259 seconds (238.26 k allocations: 855.204 MiB, 0.13% gc time)
+5356/14535
+g11-g13:
+  0.074360 seconds (465.87 k allocations: 59.605 MiB, 9.29% gc time)
+  0.027814 seconds (73.98 k allocations: 15.350 MiB)
+
+
+
+
+veripb --trace --useColor test.opb test.pbp
+restart RELP  alt j alt r
+union ∪
+intersect ∩
+setdiff
+symdiff rend les elements uniques
+issubset ⊆⊇
+i belive it matters
+
+
+
+
+=#
