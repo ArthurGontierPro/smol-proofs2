@@ -198,7 +198,7 @@ function readveripb(path,file,system,invsys)
             elseif ss[1:2] == "v "                                  # on ajoute la negation au probleme pour chercher d'autres solutions. jusqua contradiction finale. dans la preuve c.est juste des contraintes pour casser toutes les soloutions trouvees
                 eq = solvesol(st)
             end
-            if length(eq.t)!=0
+            if length(eq.t)!=0 || eq.b!=0
                 system[c] = eq
                 addinvsyseq(invsys,eq,c)
                 c+=1
@@ -240,7 +240,19 @@ function reset(mats)
         mat .=false
     end
 end
-
+function nbfreelits(eq,isassi)
+    s = x = v = 0
+    for l in eq.t
+        x,v = l.var.x+1,l.var.v+1
+        if !isassi[x,v]
+            s+=1
+        end
+    end
+    return s
+end
+function comparefreelits(eq1,eq2,system,isassi)
+    return nbfreelits(system[eq1],isassi) < nbfreelits(system[eq2],isassi)
+end
 function smolproof4(system,invsys,systemlink,nbopb)
     n = length(system)
     antecedants = zeros(Bool,n)
@@ -249,8 +261,8 @@ function smolproof4(system,invsys,systemlink,nbopb)
     cone = zeros(Bool,n)
     cone[end] = true
     front = zeros(Bool,n)
-    # updumb(system,invsys,front)                     #front now contains the antecedants of the final claim
-    upsmart(system,invsys,front,nbopb)                     
+    updumb(system,invsys,front)                     #front now contains the antecedants of the final claim
+    println(findall(front))
     while true in front
         i = findlast(front)
         front[i] = false
@@ -281,13 +293,25 @@ function updumb(system,invsys,antecedants)
             s = slack(eq,isassi,assi)
             if s<0
                 antecedants[i] = true
+                println(findall(antecedants))
+                printeq(eq)
+                printsys(system)
+                println(findall(assi))
+                println(findall(x->!x,assi))
+                for e in system
+                    println(slack(e,isassi,assi))
+                    printeq(e)
+                end
                 return 
             else
                 for l in eq.t
                     x,v = l.var.x+1,l.var.v+1
                     if !isassi[x,v] && l.coef > s
+                        println("fix ",x)
+                        print(i,"  ")
+                        printeq(eq)
                         assi[x,v] = l.sign
-                        isassi[x,v] = true
+                        isassi[x,v] = true 
                         antecedants[i] = true
                         changes = true
                     end
@@ -297,68 +321,11 @@ function updumb(system,invsys,antecedants)
     end
     println("updumb Failed")
 end
-function nbfreelits(eq,isassi)
-    s = x = v = 0
-    for l in eq.t
-        x,v = l.var.x+1,l.var.v+1
-        if !isassi[x,v]
-            s+=1
-        end
-    end
-    return s
-end
-function comparefreelits(eq1,eq2,system,isassi)
-    return nbfreelits(system[eq1],isassi) < nbfreelits(system[eq2],isassi)
-end
-function upsmart(system,invsys,antecedants,nbopb)       #extremely costly in freelit comparisons
-    isassi,assi = initassignement(invsys)
-    n = length(system)
-    front = zeros(Bool,n)
-    init = n
-    while init>nbopb
-        front[init] = true
-        while true in front
-            tab = findall(front)
-            sort!(tab,lt=(x,y)->comparefreelits(x,y,system,isassi))
-            change = false
-            sortid = 1
-            while !change && sortid<=length(tab)
-                i = tab[sortid]
-                sortid+=1
-                front[i] = false
-                eq = system[i]
-                s = slack(eq,isassi,assi)
-                if s<0
-                    antecedants[i] = true
-                    return 
-                else
-                    for l in eq.t
-                        x,v = l.var.x+1,l.var.v+1
-                        if !isassi[x,v] && l.coef > s
-                            change = true
-                            assi[x,v] = l.sign
-                            isassi[x,v] = true 
-                            antecedants[i] = true
-                            for j in invsys[l.var]          
-                                if j!=i
-                                    front[j] = true
-                                end 
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        init-=1
-    end
-    println("upbsmart Failed")
-end
 function rupdumb(system,invsys,antecedants,init,isassi,assi)
     rev = reverse(system[init])
     changes = true
     while changes
-        changes = false
-        for i in eachindex(system)#1:init
+        for i in 1:init
             eq = i==init ? rev : system[i]
             s = slack(eq,isassi,assi)
             if s<0
@@ -381,7 +348,7 @@ function rupdumb(system,invsys,antecedants,init,isassi,assi)
 end
 
 function inittest()
-    system = Vector{Eq}(undef,11)
+    system = Vector{Eq}(undef,10)
     invsys = Dict{Var,Vector{Int}}()
     # system[1] = Eq([Lit(1,false,Var(2,0)),Lit(1,false,Var(3,0))],1)
     system[1] = Eq([Lit(1,false,Var(2,0)),Lit(1,true,Var(3,0))],1)#corr
@@ -398,18 +365,31 @@ function inittest()
     system[7] = addeq(system[4],system[5])
     systemlink[7] = [4,5]
     addinvsyseq(invsys,system[7],7)
-    system[8] = Eq([Lit(1,true,Var(1,0))],1)
+    system[8] = Eq([Lit(1,false,Var(1,0))],1)
     system[9] = addeq(addeq(system[1],system[2]),system[3])
     systemlink[9] = [1,2,3]
     addinvsyseq(invsys,system[9],9)
     system[10] = Eq([Lit(1,true,Var(3,0))],1)
     systemlink[10] = [9]
-    system[11] = Eq([],1)
+    # system[11] = Eq([],1)
     nbopb = 6
     file = "inittest"
     cone =  makesmol(system,invsys,systemlink,nbopb)
-    println(file,"\n    ",sum(cone[nbopb+1:end]),"/",length(system)-nbopb,"        ratio ", round(Int,100-100*sum(cone[nbopb+1:end])/(length(system)-nbopb))," %")
-    println("    ",sum(cone),"/",length(system),"        ratio ", round(Int,100-100*sum(cone)/(length(system)))," %")
+
+    isassi,assi = initassignement(invsys)
+
+    for e in system
+        println(nbfreelits(e,isassi))
+    end
+
+    front = ones(Bool,10)
+
+
+
+    nto = sum(cone[1:nbopb])
+    ntp = sum(cone[nbopb+1:end])
+    println(file,"\n        ",round(Int,100-100*nto/nbopb)," %    (",nto,"/",nbopb,")\n        ",round(Int,100-100*ntp/(length(system)-nbopb))," %    (",ntp,"/",(length(system)-nbopb),")")
+    println(findall(cone))
 end
 function runinstance(path,file)
     system,invsys = readopb(path,file)
@@ -423,191 +403,27 @@ function makesmol(system,invsys,systemlink,nbopb)
     return smolproof4(system,invsys,systemlink,nbopb)
     # printsys(system,cone)
 end
-
 function main()
     println("==========================")
-    # inittest()
-    # path = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\"
-    path = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\smol-proofs\\sip_proofs\\"
-    # file = "g2-g3"
-    # file = "g2-g5"
-    # file = "g7-g23"
-    # file = "g24-g28"
+
+
+    inittest()
+    path = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\smol-proofs2\\Instances\\"
+    files = cd(readdir, path)
+    files = [s[1:end-4] for s in files if s[end-3:end]==".opb"]
+
     # println("threads available:",Threads.nthreads())
 
     # Threads.@threads 
-    # for file in ["g2-g3","g2-g5","g3-g6","g4-g10","g4-g14","g4-g33","g5-g6","g7-g11","g7-g15","g7-g23","g7-g28","g7-g33","g8-g9","g10-g14","g10-g25","g11-g13","g11-g28","g17-g25","g18-g22","g24-g28"]
-    for file in ["g5-g6","g3-g6","g2-g5","g10-g25","g17-g25","g2-g3","g24-g28","g7-g23","g11-g28","g10-g14"]
-        system,invsys,systemlink,nbopb = runinstance(path,file)
-        cone =  makesmol(system,invsys,systemlink,nbopb)
-        nto = sum(cone[1:nbopb])
-        ntp = sum(cone[nbopb+1:end])
-        println(file,"\n        ",round(Int,100-100*nto/nbopb)," %    (",nto,"/",nbopb,")\n        ",round(Int,100-100*ntp/(length(system)-nbopb))," %    (",ntp,"/",(length(system)-nbopb),")")
-    end
+    # for file in files
+    #     system,invsys,systemlink,nbopb = runinstance(path,file)
+    #     cone =  makesmol(system,invsys,systemlink,nbopb)
+    #     nto = sum(cone[1:nbopb])
+    #     ntp = sum(cone[nbopb+1:end])
+    #     println(file,"\n        ",round(Int,100-100*nto/nbopb)," %    (",nto,"/",nbopb,")\n        ",round(Int,100-100*ntp/(length(system)-nbopb))," %    (",ntp,"/",(length(system)-nbopb),")")
+    # end
 end
 
 main()
 
 # println("threads available:",Threads.nthreads())
-
-
-#=
-
-upsmart is better  but cost so much more to do litteral comaprisons
-========================== upbdumb
-g2-g3
-        78 %    (51/230)
-        98 %    (47/2300)
-g2-g5
-        87 %    (32/251)
-        98 %    (48/2391)
-rupdumb Failed
-rupdumb Failed
-rupdumb Failed
-rupdumb Failed
-g3-g6
-        39 %    (372/609)
-        91 %    (539/5951)
-g4-g10
-        80 %    (762/3751)
-        39 %    (99/161)
-updumb Failed
-g4-g14
-        35 %    (2957/4570)
-        48 %    (397/757)
-updumb Failed
-g4-g33
-        47 %    (4871/9211)
-        9 %    (881/971)
-g5-g6
-        36 %    (514/801)
-        96 %    (1018/25288)
-g7-g11
-        90 %    (864/8482)
-        0 %    (165/165)
-updumb Failed
-g7-g15
-        66 %    (3414/10090)
-        22 %    (641/821)
-updumb Failed
-g7-g23
-        34 %    (9768/14713)
-        0 %    (1939/1939)
-updumb Failed
-g7-g28
-        79 %    (4119/19537)
-        27 %    (553/753)
-updumb Failed
-g7-g33
-        80 %    (4148/20341)
-        0 %    (595/595)
-updumb Failed
-g8-g9
-        71 %    (1378/4685)
-        33 %    (481/721)
-updumb Failed
-g10-g14
-        67 %    (2722/8132)
-        26 %    (961/1297)
-updumb Failed
-g10-g25
-        76 %    (2962/12157)
-        81 %    (441/2377)
-updumb Failed
-g11-g13
-        72 %    (3171/11305)
-        29 %    (751/1051)
-g11-g28
-        67 %    (7386/22297)
-        28 %    (1261/1761)
-updumb Failed
-g17-g25
-        77 %    (3833/17003)
-        81 %    (441/2377)
-updumb Failed
-g18-g22
-        93 %    (1273/17347)
-        0 %    (631/631)
-g24-g28
-        51 %    (6550/13245)
-        29 %    (1465/2065)
-
-========================== upbsmart
-g2-g3
-        78 %    (51/230)
-        98 %    (47/2300)
-g2-g5
-        87 %    (32/251)
-        98 %    (48/2391)
-rupdumb Failed
-rupdumb Failed
-rupdumb Failed
-rupdumb Failed
-g3-g6
-        39 %    (372/609)
-        91 %    (539/5951)
-g4-g10
-        75 %    (925/3751)
-        48 %    (83/161)
-upbsmart Failed
-g4-g14
-        37 %    (2869/4570)
-        32 %    (512/757)
-upbsmart Failed
-g4-g33
-        69 %    (2831/9211)
-        58 %    (403/971)
-g5-g6
-        18 %    (659/801)
-        96 %    (945/25288)
-g7-g11
-        86 %    (1190/8482)
-        29 %    (117/165)
-upbsmart Failed
-g7-g15
-        59 %    (4134/10090)
-        0 %    (821/821)
-upbsmart Failed
-g7-g23
-        39 %    (9048/14713)
-        8 %    (1779/1939)
-upbsmart Failed
-g7-g28
-        85 %    (2945/19537)
-        49 %    (381/753)
-upbsmart Failed
-g7-g33
-        83 %    (3410/20341)
-        28 %    (431/595)
-upbsmart Failed
-g8-g9
-        62 %    (1792/4685)
-        0 %    (721/721)
-upbsmart Failed
-g10-g14
-        64 %    (2908/8132)
-        13 %    (1123/1297)
-upbsmart Failed
-g10-g25
-        53 %    (5697/12157)
-        5 %    (2249/2377)
-upbsmart Failed
-g11-g13
-        66 %    (3841/11305)
-        0 %    (1051/1051)
-g11-g28
-        84 %    (3637/22297)
-        74 %    (451/1761)
-upbsmart Failed
-g17-g25
-        72 %    (4700/17003)
-        5 %    (2251/2377)
-upbsmart Failed
-g18-g22
-        93 %    (1273/17347)
-        0 %    (631/631)
-g24-g28
-        88 %    (1573/13245)
-        92 %    (173/2065)
-
-=#
