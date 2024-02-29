@@ -110,8 +110,14 @@ function normcoefeq(eq)
     for l in eq.t
         c+= normcoef(l)
     end
-    eq.b = c+eq.b
+    eq.b = max(c+eq.b,0)
 end
+#=
+-3x + y >= -7
+
+3~x +y >= 3-7 ==> got to zero
+
+=#
 function normcoefsystem(s)
     for eq in s
         normcoefeq(eq)
