@@ -183,17 +183,6 @@ function solvepol(st,system,systemlink,c)
         end
     end
     return eq1
-end    
-function solvesol(st,varmap)
-    lits = Vector{Lit}(undef,length(st)-1)
-    for i in 2:length(st)
-        sign = st[i][1]!='~'
-        var = readvar(st[i],varmap)
-        lits[i-1] = Lit(1,!sign,var)
-    end
-    eq = Eq(lits,1) 
-    printeq(eq)
-    return eq
 end
 function proofsize(s)
     nbctr = 0
@@ -203,6 +192,49 @@ function proofsize(s)
         end
     end
     return nbctr
+end
+function findfullassi(system,invsys,st,init,varmap)
+    isassi,assi = initassignement(invsys)
+    lits = Vector{Lit}(undef,length(st)-1)
+    for i in 2:length(st)
+        sign = st[i][1]!='~'
+        var = readvar(st[i],varmap)
+        lits[i-1] = Lit(1,!sign,var)
+        assi[var] = sign
+        isassi[var] = true
+    end
+    changes = true
+    while changes
+        changes = false
+        for i in 1:init-1
+            eq = system[i]
+            s = slack(eq,isassi,assi)
+            if s<0
+                printstyled(" !sol"; color = :red)
+                lits = [Lit(l.coef,!l.sign,l.var) for l in lits]
+                return Eq(lits,1)
+            else
+                for l in eq.t
+                    if !isassi[l.var] && l.coef > s
+                        assi[l.var] = l.sign
+                        isassi[l.var] = true 
+                        changes = true
+                    end
+                end
+            end
+        end
+    end
+    if sum(isassi)!=length(isassi)
+        printstyled(" Assignement not full "; color = :red)
+    end
+    lits = Vector{Lit}(undef,sum(isassi))
+    j=1
+    for i in findall(isassi)
+        lits[j] = Lit(1,!assi[i],i)
+        j+=1
+    end
+    eq = Eq(lits,1)
+    return eq
 end
 function readveripb(path,file,system,invsys,varmap)
     systemlink = Vector{Vector{Int}}
@@ -228,8 +260,8 @@ function readveripb(path,file,system,invsys,varmap)
                 systemlink[c] = [parse(Int,st[2])]
                 eq = readeq(st,3:2:length(st)-3)
             elseif ss[1:2] == "so"                                  # on ajoute la negation au probleme pour chercher d'autres solutions. jusqua contradiction finale. dans la preuve c.est juste des contraintes pour casser toutes les soloutions trouvees
-                print(" ",c," ")
-                eq = solvesol(st,varmap)
+                eq = findfullassi(system,invsys,st,c,varmap)
+                systemlink[c] = [-1]
             elseif !(ss[1:2] in ["ps","* ","f ","de","ou","co","en"])
                 println("unknown: ",ss)
             end
@@ -306,11 +338,11 @@ function smolproof4(system,invsys,systemlink,nbopb)
             if i>nbopb
                 reset([antecedants,isassi,assi])
                 if isassigned(systemlink,i)
-                    for j in systemlink[i]
-                        antecedants[j] = true
+                    if systemlink[i][1]!=-1
+                        for j in systemlink[i]
+                            antecedants[j] = true
+                        end
                     end
-                elseif i in [26,22,20,16,14,11,9] # ATTENTION hardcode des solx
-                    updumb(system,invsys,antecedants,i,isassi,assi)
                 else
                     rupdumb(system,invsys,antecedants,i,isassi,assi)
                 end
@@ -343,7 +375,7 @@ function updumb(system,invsys,antecedants)
             end
         end
     end
-    println(findall(assi))
+    # println(findall(assi))
     printstyled(" updumb Failed "; color = :red)
 end
 function rupdumb(system,invsys,antecedants,init,isassi,assi)
@@ -370,8 +402,8 @@ function rupdumb(system,invsys,antecedants,init,isassi,assi)
         end
     end
     printstyled("!rup "; color = :red)
-    print(" ",init," ")
-    printeq(system[init])
+    # print(" ",init," ")
+    # printeq(system[init])
 end
 function updumb(system,invsys,antecedants,init,isassi,assi)
     changes = true
@@ -455,20 +487,18 @@ function main()
     # println("threads available:",Threads.nthreads())
     # Threads.@threads 
     # for file in files
-    # for file in [files[i] for i in [1,2,5,6,11,13,14,15,16,19]]
-        file = files[11]
+    for file in [files[i] for i in [1,2,5,6,11,13,14,15,16,19]]
+        # file = files[11]
             print("\n",file,"    ")
         system,invsys,systemlink,nbopb = readinstance(path,file)
-        printsys(system)
         cone = @time makesmol(system,invsys,systemlink,nbopb)
-        printsys(system)
         if sum(cone)<100
             printcone(system,cone)
         end
         nto = sum(cone[1:nbopb])
         ntp = sum(cone[nbopb+1:end])
         println(file,"\n        ",round(Int,100-100*nto/nbopb)," %    (",nto,"/",nbopb,")\n        ",round(Int,100-100*ntp/(length(system)-nbopb))," %    (",ntp,"/",(length(system)-nbopb),")")
-    # end
+    end
 end
 
 main()
