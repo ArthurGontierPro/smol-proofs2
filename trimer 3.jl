@@ -358,6 +358,11 @@ function smolproof4(system,invsys,systemlink,nbopb)
     cone = zeros(Bool,n)
     cone[end] = true
     front = zeros(Bool,n)
+    firstcontradiction = findfirst(x->length(x.t)==0,system)
+    if firstcontradiction <= nbopb
+        cone[firstcontradiction] = true
+        return cone
+    end
     # updumb(system,invsys,front)                     #front now contains the antecedants of the final claim
     upsmart(system,invsys,front)
     println("initup:",sum(front),findall(front))
@@ -370,15 +375,15 @@ function smolproof4(system,invsys,systemlink,nbopb)
                 reset([antecedants,isassi,assi])
                 if isassigned(systemlink,i)
                     if systemlink[i][1]==-1
-                        updumb(system,invsys,antecedants,i,isassi,assi) # we consider sol as axioms ?
+                        # updumb(system,invsys,antecedants,i,isassi,assi) # we consider sol as axioms ?
                     else
                         for j in systemlink[i]
                             antecedants[j] = true
                         end
                     end
                 else
-                    # rupdumb(system,invsys,antecedants,i,isassi,assi)
-                    rupsmart(system,invsys,antecedants,i,isassi,assi)
+                    rupdumb(system,invsys,antecedants,i,isassi,assi)
+                    # rupsmart(system,invsys,antecedants,i,isassi,assi)
                 end
                 front = front .|| antecedants
             end
@@ -481,7 +486,7 @@ function upsmart(system,invsys,antecedants)       #extremely costly in freelit c
     isassi,assi = initassignement(invsys)
     n = length(system)
     front = zeros(Bool,n)
-    init = n
+    init = n-1
     while init>0
         front[init] = true
         while true in front
@@ -506,7 +511,7 @@ function upsmart(system,invsys,antecedants)       #extremely costly in freelit c
                             isassi[l.var] = true 
                             antecedants[i] = true
                             for j in invsys[l.var]          
-                                if j!=i
+                                if j!=i 
                                     front[j] = true
                                 end 
                             end
@@ -519,37 +524,10 @@ function upsmart(system,invsys,antecedants)       #extremely costly in freelit c
     end
     printstyled("!upsmartfront "; color = :red)
 end
-function rupdumb(system,invsys,antecedants,init,isassi,assi)
-    rev = reverse(system[init])
-    changes = true
-    while changes
-        changes = false
-        for i in 1:init
-            eq = i==init ? rev : system[i]
-            s = slack(eq,isassi,assi)
-            if s<0
-                antecedants[i] = true
-                return 
-            else
-                for l in eq.t
-                    if !isassi[l.var] && l.coef > s
-                        assi[l.var] = l.sign
-                        isassi[l.var] = true 
-                        antecedants[i] = true
-                        changes = true
-                    end
-                end
-            end
-        end
-    end
-    printstyled("!rup "; color = :red)
-    # print(" ",init," ")
-    # printeq(system[init])
-end
 function rupsmart(system,invsys,antecedants,init,isassi,assi) # This rup does not respect the order of the proof is that bad ?
     rev = reverse(system[init])
     n = length(system)
-    front = zeros(Bool,n)
+    front = zeros(Bool,init)
     front[init] = true
     while true in front
         tab = findall(front)
@@ -573,7 +551,7 @@ function rupsmart(system,invsys,antecedants,init,isassi,assi) # This rup does no
                         isassi[l.var] = true 
                         antecedants[i] = true
                         for j in invsys[l.var]          
-                            if j!=i
+                            if j!=i && j<=init
                                 front[j] = true
                             end 
                         end
@@ -708,11 +686,11 @@ function main()
     # println("threads available:",Threads.nthreads())
     # Threads.@threads 
     # for file in files
-    for file in [files[i] for i in [1,2,5,6,11,13,14]]#,15,16,19]]
+    for file in [files[i] for i in [1,2,5,6,11,13,14,15,16,19]]
         # file = files[11]
         println("==========================")
         printstyled(file," : "; color = :yellow)
-        run(`veripb $path/$file.opb $path/$file.veripb`)
+        @time run(`veripb $path/$file.opb $path/$file.veripb`)
         # run(`veripb --trace --useColor $path/$file.opb $path/$file.veripb`,wait=true)
         println()
 
@@ -725,7 +703,7 @@ function main()
 
         printstyled(file," (smol) : "; color = :yellow)
         try
-            run(`veripb $path/smol.$file.opb $path/smol.$file.veripb`)
+            @time run(`veripb $path/smol.$file.opb $path/smol.$file.veripb`)
             # run(`veripb --trace --useColor $path/smol.$file.opb $path/smol.$file.veripb`,wait=true)
         catch
             printstyled("catch (u cant see me)\n"; color = :red)
