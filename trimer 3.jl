@@ -26,10 +26,15 @@ function printsys(system)
         printeq(system[id])
     end
 end
-function printcone(system,cone) 
+function printcone(system,systemlink,cone) 
     for id in eachindex(system)
         if cone[id]
             print(id," ")
+            if isassigned(systemlink,id)
+                if systemlink[id][1]==-1
+                    print("sol ")
+                end
+            end
             printeq(system[id])
         end
     end
@@ -97,6 +102,10 @@ function readopb(path,file)
             if ss[1] != '*'                                     #do not parse comments
                 st = split(ss,' ')                              #structure of line is: int var int var ... >= int ; 
                 eq = readeq(st,varmap)
+                if length(eq.t)==0 && eq.b==1
+                    printstyled("0>=1 in opb "; color = :red)
+                end
+                normcoefeq(eq)
                 system[c] = eq
                 addinvsys(invsys,eq,c)
                 c+=1
@@ -171,6 +180,8 @@ function solvepol(st,system,systemlink,c)
     id = parse(Int,st[2])
     eq1 = deepcopy(system[id])
     systemlink[c] = [id]
+    println(systemlink[c])
+
     for i in 3:2:length(st)-1
         if st[i+1] == "+"
             id = parse(Int,st[i])
@@ -182,13 +193,24 @@ function solvepol(st,system,systemlink,c)
             println("unknown pol operator")
         end
     end
+    println(systemlink[c])
     return eq1
 end
-function proofsize(s)
+function proofsize(s,varmap)
     nbctr = 0
     for ss in s
         if ss[1:2] in ["p ","u ","re","so"]
             nbctr+=1
+            st = split(ss,' ')
+            for v in st
+                if !(v in ["p","u","red","solx","soli",">=",";"]) && !(tryparse(Int64,v) isa Number)
+                    var = split(v,'~')[end]
+                    if !(var in varmap)
+                        print("NEW VAR in proof ",var)    
+                        push!(varmap,var)
+                    end
+                end 
+            end
         end
     end
     return nbctr
@@ -211,6 +233,8 @@ function findfullassi(system,invsys,st,init,varmap)
             s = slack(eq,isassi,assi)
             if s<0
                 printstyled(" !sol"; color = :red)
+                println(isassi)
+                printeq(eq)
                 lits = [Lit(l.coef,!l.sign,l.var) for l in lits]
                 return Eq(lits,1)
             else
@@ -225,7 +249,7 @@ function findfullassi(system,invsys,st,init,varmap)
         end
     end
     if sum(isassi)!=length(isassi)
-        printstyled(" Assignement not full "; color = :red)
+        printstyled(" Assignement not full\n "; color = :red)
     end
     lits = Vector{Lit}(undef,sum(isassi))
     j=1
@@ -238,11 +262,12 @@ function findfullassi(system,invsys,st,init,varmap)
 end
 function readveripb(path,file,system,invsys,varmap)
     systemlink = Vector{Vector{Int}}
+    output = conclusion = ""
     open(string(path,file,".veripb"),"r") do f
         s = readlines(f)
         # nbctr = parse(Int,split(s[end],' ')[end-1])-1
         c = length(system)
-        nbctr = proofsize(s) + c
+        nbctr = proofsize(s,varmap) + c
         system = vcat(system,Vector{Eq}(undef,nbctr-c))
         systemlink = Vector{Vector{Int}}(undef,nbctr)
         c+=1
@@ -251,8 +276,7 @@ function readveripb(path,file,system,invsys,varmap)
             eq = Eq([],0)
             if ss[1:2] == "re"  
                 println("red not implemented yet")
-            end          
-            if ss[1:2] == "p "
+            elseif ss[1:2] == "p "
                 eq = solvepol(st,system,systemlink,c)
             elseif ss[1:2] == "u "
                 eq = readeq(st,varmap,2:2:length(st)-3)
@@ -262,17 +286,23 @@ function readveripb(path,file,system,invsys,varmap)
             elseif ss[1:2] == "so"                                  # on ajoute la negation au probleme pour chercher d'autres solutions. jusqua contradiction finale. dans la preuve c.est juste des contraintes pour casser toutes les soloutions trouvees
                 eq = findfullassi(system,invsys,st,c,varmap)
                 systemlink[c] = [-1]
-            elseif !(ss[1:2] in ["ps","* ","f ","de","ou","co","en"])
+            elseif st[1] == "output"
+                output = st[2]
+            elseif st[1] == "conclusion"
+                conclusion = st[2]
+            elseif !(ss[1:2] in ["ps","* ","f ","de","co","en"])
                 println("unknown: ",ss)
             end
             if length(eq.t)!=0 || eq.b!=0
+                normcoefeq(eq)
                 system[c] = eq
                 addinvsys(invsys,eq,c)
                 c+=1
             end
         end
     end
-    return system,invsys,systemlink
+    
+    return system,invsys,systemlink,output,conclusion
 end
 function slack(eq,isassi,assi)
     c=0
@@ -328,8 +358,9 @@ function smolproof4(system,invsys,systemlink,nbopb)
     cone = zeros(Bool,n)
     cone[end] = true
     front = zeros(Bool,n)
-    updumb(system,invsys,front)                     #front now contains the antecedants of the final claim
-    println("initup:",findall(front))
+    # updumb(system,invsys,front)                     #front now contains the antecedants of the final claim
+    upsmart(system,invsys,front)
+    println("initup:",sum(front),findall(front))
     while true in front
         i = findlast(front)
         front[i] = false
@@ -338,13 +369,16 @@ function smolproof4(system,invsys,systemlink,nbopb)
             if i>nbopb
                 reset([antecedants,isassi,assi])
                 if isassigned(systemlink,i)
-                    if systemlink[i][1]!=-1
+                    if systemlink[i][1]==-1
+                        updumb(system,invsys,antecedants,i,isassi,assi) # we consider sol as axioms ?
+                    else
                         for j in systemlink[i]
                             antecedants[j] = true
                         end
                     end
                 else
-                    rupdumb(system,invsys,antecedants,i,isassi,assi)
+                    # rupdumb(system,invsys,antecedants,i,isassi,assi)
+                    rupsmart(system,invsys,antecedants,i,isassi,assi)
                 end
                 front = front .|| antecedants
             end
@@ -428,10 +462,128 @@ function updumb(system,invsys,antecedants,init,isassi,assi)
         end
     end
     printstyled("!up "; color = :red)
-    print(" ",init," ")
-    printeq(system[init])
+    # print(" ",init," ")
+    # printeq(system[init])
 end
-
+function nbfreelits(eq,isassi)
+    s = 0
+    for l in eq.t
+        if !isassi[l.var]
+            s+=1
+        end
+    end
+    return s
+end
+function comparefreelits(eq1,eq2,system,isassi)
+    return nbfreelits(system[eq1],isassi) < nbfreelits(system[eq2],isassi)
+end
+function upsmart(system,invsys,antecedants)       #extremely costly in freelit comparisons
+    isassi,assi = initassignement(invsys)
+    n = length(system)
+    front = zeros(Bool,n)
+    init = n
+    while init>0
+        front[init] = true
+        while true in front
+            tab = findall(front)
+            sort!(tab,lt=(x,y)->comparefreelits(x,y,system,isassi))
+            change = false
+            sortid = 1
+            while !change && sortid<=length(tab)
+                i = tab[sortid]
+                sortid+=1
+                front[i] = false
+                eq = system[i]
+                s = slack(eq,isassi,assi)
+                if s<0
+                    antecedants[i] = true
+                    return 
+                else
+                    for l in eq.t
+                        if !isassi[l.var] && l.coef > s
+                            change = true
+                            assi[l.var] = l.sign
+                            isassi[l.var] = true 
+                            antecedants[i] = true
+                            for j in invsys[l.var]          
+                                if j!=i
+                                    front[j] = true
+                                end 
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        init-=1
+    end
+    printstyled("!upsmartfront "; color = :red)
+end
+function rupdumb(system,invsys,antecedants,init,isassi,assi)
+    rev = reverse(system[init])
+    changes = true
+    while changes
+        changes = false
+        for i in 1:init
+            eq = i==init ? rev : system[i]
+            s = slack(eq,isassi,assi)
+            if s<0
+                antecedants[i] = true
+                return 
+            else
+                for l in eq.t
+                    if !isassi[l.var] && l.coef > s
+                        assi[l.var] = l.sign
+                        isassi[l.var] = true 
+                        antecedants[i] = true
+                        changes = true
+                    end
+                end
+            end
+        end
+    end
+    printstyled("!rup "; color = :red)
+    # print(" ",init," ")
+    # printeq(system[init])
+end
+function rupsmart(system,invsys,antecedants,init,isassi,assi) # This rup does not respect the order of the proof is that bad ?
+    rev = reverse(system[init])
+    n = length(system)
+    front = zeros(Bool,n)
+    front[init] = true
+    while true in front
+        tab = findall(front)
+        sort!(tab,lt=(x,y)->comparefreelits(x,y,system,isassi))
+        change = false
+        sortid = 1
+        while !change && sortid<=length(tab)
+            i = tab[sortid]
+            sortid+=1
+            front[i] = false
+            eq = i==init ? rev : system[i]
+            s = slack(eq,isassi,assi)
+            if s<0
+                antecedants[i] = true
+                return 
+            else
+                for l in eq.t
+                    if !isassi[l.var] && l.coef > s
+                        change = true
+                        assi[l.var] = l.sign
+                        isassi[l.var] = true 
+                        antecedants[i] = true
+                        for j in invsys[l.var]          
+                            if j!=i
+                                front[j] = true
+                            end 
+                        end
+                    end
+                end
+            end
+        end
+    end
+    printstyled("!rups "; color = :red)
+end
 function inittest()
     system = Vector{Eq}(undef,10)
     invsys = Vector{Vector{Int}}(undef,3)
@@ -468,8 +620,8 @@ end
 function readinstance(path,file)
     system,invsys,varmap = readopb(path,file)
     nbopb = length(system)
-    system,invsys,systemlink = readveripb(path,file,system,invsys,varmap)
-    return system,invsys,systemlink,nbopb
+    system,invsys,systemlink,output,conclusion = readveripb(path,file,system,invsys,varmap)
+    return system,invsys,systemlink,nbopb,varmap,output,conclusion
 end
 function makesmol(system,invsys,systemlink,nbopb)
     normcoefsystem(system)
@@ -477,29 +629,111 @@ function makesmol(system,invsys,systemlink,nbopb)
     return smolproof4(system,invsys,systemlink,nbopb)
     # printsys(system,cone)
 end
+
+
+function writelit(l,varmap)
+    return string(l.coef," ",if l.sign "" else "~" end, varmap[l.var])
+end
+function writeeq(e,varmap)
+    s = ""
+    for l in e.t
+        s = string(s,writelit(l,varmap)," ")
+    end
+    return string(s,">= ",e.b," ;\n")
+end
+function writeu(e,varmap)
+    return string("u ",writeeq(e,varmap))
+end
+function writesol(e,varmap)
+    s = "solx"
+    for l in e.t
+        s = string(s,if l.sign " ~" else " " end, varmap[l.var])
+    end
+    return string(s,"\n")
+end
+function writepol(e,link,varmap)
+    s = "p"
+    for i in link
+        s = string(s," ",i)
+    end
+    return string(s,"\n")
+end
+function writecone(path,file,system,cone,systemlink,nbopb,varmap,output,conclusion)
+    open(string(path,"smol.",file,".opb"),"w") do f
+        for i in 1:nbopb
+            if cone[i]
+                eq = system[i]
+                write(f,writeeq(eq,varmap))
+            end
+        end
+    end
+    open(string(path,"smol.",file,".veripb"),"w") do f
+        write(f,"pseudo-Boolean proof version 2.0\n")
+        write(f,string("f ",sum(cone[1:nbopb])," 0\n"))
+        # write(f,string("f ",nbopb," 0\n"))
+        for i in nbopb+1:length(system)
+            if cone[i]
+                eq = system[i]
+                if isassigned(systemlink,i)
+                    if systemlink[i][1] == -1
+                        write(f,writesol(eq,varmap))
+                    else
+                        write(f,writepol(eq,systemlink[i],varmap))
+                    end
+                else
+                    write(f,writeu(eq,varmap))
+                end
+            end
+        end
+        write(f,string("output ",output,"\n"))
+        if conclusion == "SAT"
+            write(f,string("conclusion ",conclusion,"\n"))
+            # write(f,string("conclusion ",conclusion,"\n"))
+        else
+            write(f,string("conclusion ",conclusion," : ",sum(cone),"\n"))
+            # write(f,string("conclusion ",conclusion," : ",length(system),"\n"))
+        end
+        write(f,"end pseudo-Boolean proof\n")
+    end
+end
+
 function main()
     println("==========================")
     # inittest()
-    path = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\smol-proofs2\\Instances\\"
+    pathwin = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\smol-proofs2\\Instances\\"
+    path = "/home/arthur_gla/veriPB/trim/smol-proofs2/Instances/"
     files = cd(readdir, path)
     files = [s[1:end-4] for s in files if s[end-3:end]==".opb"]
 
     # println("threads available:",Threads.nthreads())
     # Threads.@threads 
     # for file in files
-    for file in [files[i] for i in [1,2,5,6,11,13,14,15,16,19]]
+    for file in [files[i] for i in [1,2,5,6,11,13,14]]#,15,16,19]]
         # file = files[11]
-            print("\n",file,"    ")
-        system,invsys,systemlink,nbopb = readinstance(path,file)
+        println("==========================")
+        printstyled(file," : "; color = :yellow)
+        run(`veripb $path/$file.opb $path/$file.veripb`)
+        # run(`veripb --trace --useColor $path/$file.opb $path/$file.veripb`,wait=true)
+        println()
+
+        system,invsys,systemlink,nbopb,varmap,output,conclusion = readinstance(path,file)
         cone = @time makesmol(system,invsys,systemlink,nbopb)
-        if sum(cone)<100
-            printcone(system,cone)
-        end
+        writecone(path,file,system,cone,systemlink,nbopb,varmap,output,conclusion)
         nto = sum(cone[1:nbopb])
         ntp = sum(cone[nbopb+1:end])
         println(file,"\n        ",round(Int,100-100*nto/nbopb)," %    (",nto,"/",nbopb,")\n        ",round(Int,100-100*ntp/(length(system)-nbopb))," %    (",ntp,"/",(length(system)-nbopb),")")
+
+        printstyled(file," (smol) : "; color = :yellow)
+        try
+            run(`veripb $path/smol.$file.opb $path/smol.$file.veripb`)
+            # run(`veripb --trace --useColor $path/smol.$file.opb $path/smol.$file.veripb`,wait=true)
+        catch
+            printstyled("catch (u cant see me)\n"; color = :red)
+            printcone(system,systemlink,cone)
+        end
+        println("==========================\n")
     end
 end
-
+#  julia 'trimer 3.jl'
 main()
 
