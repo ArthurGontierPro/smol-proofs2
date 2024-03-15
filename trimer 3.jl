@@ -180,7 +180,6 @@ function solvepol(st,system,systemlink,c)
     id = parse(Int,st[2])
     eq1 = deepcopy(system[id])
     systemlink[c] = [id]
-    println(systemlink[c])
 
     for i in 3:2:length(st)-1
         if st[i+1] == "+"
@@ -193,7 +192,6 @@ function solvepol(st,system,systemlink,c)
             println("unknown pol operator")
         end
     end
-    println(systemlink[c])
     return eq1
 end
 function proofsize(s,varmap)
@@ -206,7 +204,6 @@ function proofsize(s,varmap)
                 if !(v in ["p","u","red","solx","soli",">=",";"]) && !(tryparse(Int64,v) isa Number)
                     var = split(v,'~')[end]
                     if !(var in varmap)
-                        print("NEW VAR in proof ",var)    
                         push!(varmap,var)
                     end
                 end 
@@ -249,7 +246,7 @@ function findfullassi(system,invsys,st,init,varmap)
         end
     end
     if sum(isassi)!=length(isassi)
-        printstyled(" Assignement not full\n "; color = :red)
+        printstyled(" !fullAssi"; color = :red)
     end
     lits = Vector{Lit}(undef,sum(isassi))
     j=1
@@ -260,8 +257,15 @@ function findfullassi(system,invsys,st,init,varmap)
     eq = Eq(lits,1)
     return eq
 end
+function readred(st,varmap,redwitness,c)
+    i = findfirst(x->x==";",st)
+    eq = readeq(st[2:i],varmap)
+    redwitness[c] = join(st[i+1:end]," ")
+    return eq
+end
 function readveripb(path,file,system,invsys,varmap)
     systemlink = Vector{Vector{Int}}
+    redwitness = Vector{String}
     output = conclusion = ""
     open(string(path,file,".veripb"),"r") do f
         s = readlines(f)
@@ -269,17 +273,28 @@ function readveripb(path,file,system,invsys,varmap)
         c = length(system)
         nbctr = proofsize(s,varmap) + c
         system = vcat(system,Vector{Eq}(undef,nbctr-c))
+        invsys = vcat(invsys,Vector{Vector{Int}}(undef,length(varmap)-length(invsys)))
         systemlink = Vector{Vector{Int}}(undef,nbctr)
+        redwitness = Vector{String}(undef,nbctr)
         c+=1
         for ss in s
             st = split(ss,' ')
             eq = Eq([],0)
             if ss[1:2] == "re"  
-                println("red not implemented yet")
+                eq = readred(st,varmap,redwitness,c)
+                systemlink[c] = [-2]
             elseif ss[1:2] == "p "
                 eq = solvepol(st,system,systemlink,c)
             elseif ss[1:2] == "u "
                 eq = readeq(st,varmap,2:2:length(st)-3)
+                if length(eq.t)==0 && eq.b>0
+                    system[c] = eq
+                    addinvsys(invsys,eq,c)
+                    system = system[1:c]
+                    output = split(s[end-2],' ')[2]
+                    conclusion = split(s[end-1],' ')[2]
+                    return system,invsys,systemlink,output,conclusion
+                end
             elseif ss[1:2] == "j "
                 systemlink[c] = [parse(Int,st[2])]
                 eq = readeq(st,3:2:length(st)-3)
@@ -301,8 +316,7 @@ function readveripb(path,file,system,invsys,varmap)
             end
         end
     end
-    
-    return system,invsys,systemlink,output,conclusion
+    return system,invsys,systemlink,redwitness,output,conclusion
 end
 function slack(eq,isassi,assi)
     c=0
@@ -374,7 +388,7 @@ function smolproof4(system,invsys,systemlink,nbopb)
             if i>nbopb
                 reset([antecedants,isassi,assi])
                 if isassigned(systemlink,i)
-                    if systemlink[i][1]==-1
+                    if systemlink[i][1]<0 #sol and red cases
                         # updumb(system,invsys,antecedants,i,isassi,assi) # we consider sol as axioms ?
                     else
                         for j in systemlink[i]
@@ -598,8 +612,8 @@ end
 function readinstance(path,file)
     system,invsys,varmap = readopb(path,file)
     nbopb = length(system)
-    system,invsys,systemlink,output,conclusion = readveripb(path,file,system,invsys,varmap)
-    return system,invsys,systemlink,nbopb,varmap,output,conclusion
+    system,invsys,systemlink,redwitness,output,conclusion = readveripb(path,file,system,invsys,varmap)
+    return system,invsys,systemlink,redwitness,nbopb,varmap,output,conclusion
 end
 function makesmol(system,invsys,systemlink,nbopb)
     normcoefsystem(system)
@@ -629,6 +643,13 @@ function writesol(e,varmap)
     end
     return string(s,"\n")
 end
+function writered(e,varmap,witness)
+    s = "red"
+    for l in e.t
+        s = string(s," ",l.coef,if l.sign " ~" else " " end, varmap[l.var])
+    end
+    return string(s," >= ",e.b," ; ",witness,"\n")
+end
 function writepol(e,link,varmap)
     s = "p"
     for i in link
@@ -636,7 +657,7 @@ function writepol(e,link,varmap)
     end
     return string(s,"\n")
 end
-function writecone(path,file,system,cone,systemlink,nbopb,varmap,output,conclusion)
+function writecone(path,file,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
     open(string(path,"smol.",file,".opb"),"w") do f
         for i in 1:nbopb
             if cone[i]
@@ -653,8 +674,10 @@ function writecone(path,file,system,cone,systemlink,nbopb,varmap,output,conclusi
             if cone[i]
                 eq = system[i]
                 if isassigned(systemlink,i)
-                    if systemlink[i][1] == -1
+                    if systemlink[i][1] == -1           #solx
                         write(f,writesol(eq,varmap))
+                    elseif systemlink[i][1] == -2       #red
+                        write(f,writered(eq,varmap,redwitness[i]))
                     else
                         write(f,writepol(eq,systemlink[i],varmap))
                     end
@@ -686,17 +709,20 @@ function main()
     # println("threads available:",Threads.nthreads())
     # Threads.@threads 
     # for file in files
-    for file in [files[i] for i in [1,2,5,6,11,13,14,15,16,19]]
-        # file = files[11]
+    # for file in [files[i] for i in [1,2,3,5,6,11,13,14,15,16,19]]
+    for file in [files[i] for i in [4,7,8,9,10,12,18,20,21]] #red 17 has an error and 20 is too big for initup in 10 min
+    # for file in [files[i] for i in [8]] pol
+    # for file in [files[i] for i in [17]] problematic regular 6
+    # file = files[17]
         println("==========================")
         printstyled(file," : "; color = :yellow)
         @time run(`veripb $path/$file.opb $path/$file.veripb`)
         # run(`veripb --trace --useColor $path/$file.opb $path/$file.veripb`,wait=true)
         println()
 
-        system,invsys,systemlink,nbopb,varmap,output,conclusion = readinstance(path,file)
+        system,invsys,systemlink,redwitness,nbopb,varmap,output,conclusion = readinstance(path,file)
         cone = @time makesmol(system,invsys,systemlink,nbopb)
-        writecone(path,file,system,cone,systemlink,nbopb,varmap,output,conclusion)
+        writecone(path,file,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
         nto = sum(cone[1:nbopb])
         ntp = sum(cone[nbopb+1:end])
         println(file,"\n        ",round(Int,100-100*nto/nbopb)," %    (",nto,"/",nbopb,")\n        ",round(Int,100-100*ntp/(length(system)-nbopb))," %    (",ntp,"/",(length(system)-nbopb),")")
@@ -707,7 +733,9 @@ function main()
             # run(`veripb --trace --useColor $path/smol.$file.opb $path/smol.$file.veripb`,wait=true)
         catch
             printstyled("catch (u cant see me)\n"; color = :red)
-            printcone(system,systemlink,cone)
+            if sum(cone)<30
+                printcone(system,systemlink,cone)
+            end
         end
         println("==========================\n")
     end
