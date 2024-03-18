@@ -103,7 +103,7 @@ function readopb(path,file)
                 st = split(ss,' ')                              #structure of line is: int var int var ... >= int ; 
                 eq = readeq(st,varmap)
                 if length(eq.t)==0 && eq.b==1
-                    printstyled("0>=1 in opb "; color = :red)
+                    printstyled(" !opb"; color = :blue)
                 end
                 normcoefeq(eq)
                 system[c] = eq
@@ -246,7 +246,7 @@ function findfullassi(system,invsys,st,init,varmap)
         end
     end
     if sum(isassi)!=length(isassi)
-        printstyled(" !fullAssi"; color = :red)
+        printstyled(" !FA"; color = :blue)
     end
     lits = Vector{Lit}(undef,sum(isassi))
     j=1
@@ -377,9 +377,9 @@ function smolproof4(system,invsys,systemlink,nbopb)
         cone[firstcontradiction] = true
         return cone
     end
-    # updumb(system,invsys,front)                     #front now contains the antecedants of the final claim
-    upsmart(system,invsys,front)
-    println("initup:",sum(front),findall(front))
+    updumb(system,invsys,front)                     #front now contains the antecedants of the final claim
+    # upsmart(system,invsys,front)
+    println(" init contradiction: ",sum(front),findall(front))
     while true in front
         i = findlast(front)
         front[i] = false
@@ -428,7 +428,6 @@ function updumb(system,invsys,antecedants)
             end
         end
     end
-    # println(findall(assi))
     printstyled(" updumb Failed "; color = :red)
 end
 function rupdumb(system,invsys,antecedants,init,isassi,assi)
@@ -455,8 +454,6 @@ function rupdumb(system,invsys,antecedants,init,isassi,assi)
         end
     end
     printstyled("!rup "; color = :red)
-    # print(" ",init," ")
-    # printeq(system[init])
 end
 function updumb(system,invsys,antecedants,init,isassi,assi)
     changes = true
@@ -481,8 +478,6 @@ function updumb(system,invsys,antecedants,init,isassi,assi)
         end
     end
     printstyled("!up "; color = :red)
-    # print(" ",init," ")
-    # printeq(system[init])
 end
 function nbfreelits(eq,isassi)
     s = 0
@@ -500,7 +495,7 @@ function upsmart(system,invsys,antecedants)       #extremely costly in freelit c
     isassi,assi = initassignement(invsys)
     n = length(system)
     front = zeros(Bool,n)
-    init = n-1
+    init = n-1                          #je devrais commencer par un petit slack de tous le monde pour choisir le premier point de contradiction
     while init>0
         front[init] = true
         while true in front
@@ -616,7 +611,8 @@ function readinstance(path,file)
     return system,invsys,systemlink,redwitness,nbopb,varmap,output,conclusion
 end
 function makesmol(system,invsys,systemlink,nbopb)
-    normcoefsystem(system)
+    # printsys(system)
+    # normcoefsystem(system)
     # printsys(system)
     return smolproof4(system,invsys,systemlink,nbopb)
     # printsys(system,cone)
@@ -646,11 +642,12 @@ end
 function writered(e,varmap,witness)
     s = "red"
     for l in e.t
-        s = string(s," ",l.coef,if l.sign " ~" else " " end, varmap[l.var])
+        s = string(s," ",l.coef,if !l.sign " ~" else " " end, varmap[l.var])
     end
     return string(s," >= ",e.b," ; ",witness,"\n")
 end
 function writepol(e,link,varmap)
+    printstyled(" POL IDS ARE WRONG "; color = :red)
     s = "p"
     for i in link
         s = string(s," ",i)
@@ -669,7 +666,7 @@ function writecone(path,file,system,cone,systemlink,redwitness,nbopb,varmap,outp
     open(string(path,"smol.",file,".veripb"),"w") do f
         write(f,"pseudo-Boolean proof version 2.0\n")
         write(f,string("f ",sum(cone[1:nbopb])," 0\n"))
-        # write(f,string("f ",nbopb," 0\n"))
+        # write(f,string("f ",nbopb," 0\n")) # for full system
         for i in nbopb+1:length(system)
             if cone[i]
                 eq = system[i]
@@ -689,10 +686,9 @@ function writecone(path,file,system,cone,systemlink,redwitness,nbopb,varmap,outp
         write(f,string("output ",output,"\n"))
         if conclusion == "SAT"
             write(f,string("conclusion ",conclusion,"\n"))
-            # write(f,string("conclusion ",conclusion,"\n"))
         else
             write(f,string("conclusion ",conclusion," : ",sum(cone),"\n"))
-            # write(f,string("conclusion ",conclusion," : ",length(system),"\n"))
+            # write(f,string("conclusion ",conclusion," : ",length(system),"\n")) # for full system
         end
         write(f,"end pseudo-Boolean proof\n")
     end
@@ -704,16 +700,16 @@ function main()
     pathwin = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\smol-proofs2\\Instances\\"
     path = "/home/arthur_gla/veriPB/trim/smol-proofs2/Instances/"
     files = cd(readdir, path)
-    files = [s[1:end-4] for s in files if s[end-3:end]==".opb"]
+    files = [s[1:end-4] for s in files if s[end-3:end]==".opb" && s[1:5]!="smol."]
 
     # println("threads available:",Threads.nthreads())
     # Threads.@threads 
-    # for file in files
+    for file in files  if !(file in ["regular_6_vars","smart_table_6"])
     # for file in [files[i] for i in [1,2,3,5,6,11,13,14,15,16,19]]
-    for file in [files[i] for i in [4,7,8,9,10,12,18,20,21]] #red 17 has an error and 20 is too big for initup in 10 min
+    # for file in [files[i] for i in [4,7,8,9,10,12,18,20,21]] #red 17 has an error and 20 is too big for initup in 10 min
     # for file in [files[i] for i in [8]] pol
     # for file in [files[i] for i in [17]] problematic regular 6
-    # file = files[17]
+    # file = files[4]
         println("==========================")
         printstyled(file," : "; color = :yellow)
         @time run(`veripb $path/$file.opb $path/$file.veripb`)
@@ -721,6 +717,7 @@ function main()
         println()
 
         system,invsys,systemlink,redwitness,nbopb,varmap,output,conclusion = readinstance(path,file)
+        println(" size ",nbopb," ",length(system)-nbopb)
         cone = @time makesmol(system,invsys,systemlink,nbopb)
         writecone(path,file,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
         nto = sum(cone[1:nbopb])
@@ -738,7 +735,7 @@ function main()
             end
         end
         println("==========================\n")
-    end
+    end end
 end
 #  julia 'trimer 3.jl'
 main()
