@@ -699,7 +699,7 @@ function main()
     # inittest()
     # pathwin = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\smol-proofs2\\Instances\\"
     # pathlin = "/home/arthur_gla/veriPB/trim/smol-proofs2/Instances/"
-    path = "/users/grad/arthur/smol-proofs2/Instances"
+    path = "/users/grad/arthur/smol-proofs2/Instances/"
     files = cd(readdir, path)
     files = [s[1:end-4] for s in files if s[end-3:end]==".opb" && s[1:5]!="smol."]
 
