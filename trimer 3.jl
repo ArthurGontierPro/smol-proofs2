@@ -188,6 +188,7 @@ function solvepol(st,system,systemlink,c)
             push!(systemlink[c],id)
         elseif st[i+1] == "d"
             eq1 = divide(eq1,parse(Int,st[i]))
+            printstyled("Divide in pol not supported yet ";color = :red)
         else
             println("unknown pol operator")
         end
@@ -646,11 +647,10 @@ function writered(e,varmap,witness)
     end
     return string(s," >= ",e.b," ; ",witness,"\n")
 end
-function writepol(e,link,varmap)
-    printstyled(" POL IDS ARE WRONG "; color = :red)
-    s = "p"
-    for i in link
-        s = string(s," ",i)
+function writepol(link,cone)
+    s = string("p ",sum(cone[1:link[1]]))
+    for i in 2:length(link)
+        s = string(s," ",sum(cone[1:link[i]])," +")
     end
     return string(s,"\n")
 end
@@ -676,7 +676,7 @@ function writecone(path,file,system,cone,systemlink,redwitness,nbopb,varmap,outp
                     elseif systemlink[i][1] == -2       #red
                         write(f,writered(eq,varmap,redwitness[i]))
                     else
-                        write(f,writepol(eq,systemlink[i],varmap))
+                        write(f,writepol(systemlink[i],cone))
                     end
                 else
                     write(f,writeu(eq,varmap))
@@ -697,15 +697,16 @@ end
 function main()
     println("==========================")
     # inittest()
-    pathwin = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\smol-proofs2\\Instances\\"
-    path = "/home/arthur_gla/veriPB/trim/smol-proofs2/Instances/"
+    # pathwin = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\smol-proofs2\\Instances\\"
+    # pathlin = "/home/arthur_gla/veriPB/trim/smol-proofs2/Instances/"
+    path = "/users/grad/arthur/smol-proofs2/Instances"
     files = cd(readdir, path)
     files = [s[1:end-4] for s in files if s[end-3:end]==".opb" && s[1:5]!="smol."]
 
     # println("threads available:",Threads.nthreads())
     # Threads.@threads 
     for file in files  if !(file in ["regular_6_vars","smart_table_6"])
-    # for file in [files[i] for i in [1,2,3,5,6,11,13,14,15,16,19]]
+            # for file in [files[i] for i in [1,2,3,5,6,11,13,14,15,16,19]]
     # for file in [files[i] for i in [4,7,8,9,10,12,18,20,21]] #red 17 has an error and 20 is too big for initup in 10 min
     # for file in [files[i] for i in [8]] pol
     # for file in [files[i] for i in [17]] problematic regular 6
@@ -739,4 +740,5 @@ function main()
 end
 #  julia 'trimer 3.jl'
 main()
-
+ 
+# scp -r \\wsl.localhost\Ubuntu\home\arthur_gla\veriPB\trim\smol-proofs2\Instances\ arthur@fataepyc-01.dcs.gla.ac.uk:/users/grad/arthur/smol-proofs2

@@ -111,17 +111,17 @@ Verification succeeded.
 ==========================
 knapsack_test : Running VeriPB version 2.0.0.post221+git.487290
 Verification succeeded.
-  0.042837 seconds (82 allocations: 3.766 KiB)
+  0.118375 seconds (82 allocations: 3.766 KiB)
 
  !FA !FA size 13 272
  init contradiction: 29[9, 11, 13, 15, 19, 23, 44, 48, 52, 79, 83, 95, 106, 111, 122, 129, 133, 137, 158, 162, 166, 252, 257, 263, 269, 278, 280, 282, 284]
-  0.000683 seconds (608 allocations: 408.891 KiB)
- POL IDS ARE WRONG  POL IDS ARE WRONG  POL IDS ARE WRONG  POL IDS ARE WRONG  POL IDS ARE WRONG  POL IDS ARE WRONG  POL IDS ARE WRONG knapsack_test
+  0.002566 seconds (608 allocations: 408.891 KiB)
+knapsack_test
         54 %    (6/13)
         66 %    (92/272)
 knapsack_test (smol) : Running VeriPB version 2.0.0.post221+git.487290
-ERROR:root:/home/arthur_gla/veriPB/trim/smol-proofs2/Instances//smol.knapsack_test.veripb:?:1: Stack should contain exactly one element at end of polish notation.
-catch (u cant see me)
+Verification succeeded.
+  0.106757 seconds (82 allocations: 3.781 KiB)
 ==========================
 
 ==========================
