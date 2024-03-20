@@ -267,10 +267,10 @@ end
 function readveripb(path,file,system,invsys,varmap)
     systemlink = Vector{Vector{Int}}
     redwitness = Vector{String}
-    output = conclusion = ""
+    version = output = conclusion = ""
     open(string(path,file,".veripb"),"r") do f
         s = readlines(f)
-        # nbctr = parse(Int,split(s[end],' ')[end-1])-1
+        version = split(s[1],' ')[end]
         c = length(system)
         nbctr = proofsize(s,varmap) + c
         system = vcat(system,Vector{Eq}(undef,nbctr-c))
@@ -317,7 +317,7 @@ function readveripb(path,file,system,invsys,varmap)
             end
         end
     end
-    return system,invsys,systemlink,redwitness,output,conclusion
+    return system,invsys,systemlink,redwitness,output,conclusion,version
 end
 function slack(eq,isassi,assi)
     c=0
@@ -608,8 +608,8 @@ end
 function readinstance(path,file)
     system,invsys,varmap = readopb(path,file)
     nbopb = length(system)
-    system,invsys,systemlink,redwitness,output,conclusion = readveripb(path,file,system,invsys,varmap)
-    return system,invsys,systemlink,redwitness,nbopb,varmap,output,conclusion
+    system,invsys,systemlink,redwitness,output,conclusion,version = readveripb(path,file,system,invsys,varmap)
+    return system,invsys,systemlink,redwitness,nbopb,varmap,output,conclusion,version
 end
 function makesmol(system,invsys,systemlink,nbopb)
     # printsys(system)
@@ -654,7 +654,7 @@ function writepol(link,cone)
     end
     return string(s,"\n")
 end
-function writecone(path,file,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
+function writecone(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
     open(string(path,"smol.",file,".opb"),"w") do f
         for i in 1:nbopb
             if cone[i]
@@ -663,8 +663,8 @@ function writecone(path,file,system,cone,systemlink,redwitness,nbopb,varmap,outp
             end
         end
     end
-    open(string(path,"smol.",file,".veripb"),"w") do f
-        write(f,"pseudo-Boolean proof version 2.0\n")
+    open(string(path,"smol.",file,extention),"w") do f
+        write(f,string("pseudo-Boolean proof version ",version,"\n"))
         write(f,string("f ",sum(cone[1:nbopb])," 0\n"))
         # write(f,string("f ",nbopb," 0\n")) # for full system
         for i in nbopb+1:length(system)
@@ -698,37 +698,41 @@ function main()
     println("==========================")
     # inittest()
     # pathwin = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\smol-proofs2\\Instances\\"
-    # pathlin = "/home/arthur_gla/veriPB/trim/smol-proofs2/Instances/"
-    path = "/users/grad/arthur/smol-proofs2/Instances/"
-    files = cd(readdir, path)
-    files = [s[1:end-4] for s in files if s[end-3:end]==".opb" && s[1:5]!="smol."]
+    path = "/home/arthur_gla/veriPB/trim/smol-proofs2/Instances/"
+    # path = "/home/arthur_gla/veriPB/VeriPB/tests/integration_tests/correct" # au secours
+    # path = "/users/grad/arthur/smol-proofs2/Instances/"
+    rawfiles = cd(readdir, path)
+    files = [s[1:end-4] for s in rawfiles if s[end-3:end]==".opb" && s[1:5]!="smol."]
 
     # println("threads available:",Threads.nthreads())
     # Threads.@threads 
-    for file in files  if !(file in ["regular_6_vars","smart_table_6"])
-            # for file in [files[i] for i in [1,2,3,5,6,11,13,14,15,16,19]]
-    # for file in [files[i] for i in [4,7,8,9,10,12,18,20,21]] #red 17 has an error and 20 is too big for initup in 10 min
-    # for file in [files[i] for i in [8]] pol
-    # for file in [files[i] for i in [17]] problematic regular 6
-    # file = files[4]
+    for file in files  if !(file in ["regular_5_vars","regular_6_vars","smart_table_6"])
+        extention = ""
+        if string(file,".veripb") in rawfiles
+            extention = ".veripb"
+        elseif string(file,".pbp") in rawfiles
+            extention = ".pbp"
+        else
+            printstyled(file," Extention not supported \n"; color = :red)
+            return 
+        end
         println("==========================")
         printstyled(file," : "; color = :yellow)
-        @time run(`veripb $path/$file.opb $path/$file.veripb`)
-        # run(`veripb --trace --useColor $path/$file.opb $path/$file.veripb`,wait=true)
-        println()
-
-        system,invsys,systemlink,redwitness,nbopb,varmap,output,conclusion = readinstance(path,file)
-        println(" size ",nbopb," ",length(system)-nbopb)
+        try
+            @time run(`veripb $path/$file.opb $path/$file$extention`)
+        catch
+            printstyled("catch veriPB fail\n"; color = :red)
+        end
+        system,invsys,systemlink,redwitness,nbopb,varmap,output,conclusion,version = readinstance(path,file)
+        println("\n size ",nbopb," ",length(system)-nbopb)
         cone = @time makesmol(system,invsys,systemlink,nbopb)
-        writecone(path,file,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
+        writecone(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
         nto = sum(cone[1:nbopb])
         ntp = sum(cone[nbopb+1:end])
         println(file,"\n        ",round(Int,100-100*nto/nbopb)," %    (",nto,"/",nbopb,")\n        ",round(Int,100-100*ntp/(length(system)-nbopb))," %    (",ntp,"/",(length(system)-nbopb),")")
-
         printstyled(file," (smol) : "; color = :yellow)
         try
-            @time run(`veripb $path/smol.$file.opb $path/smol.$file.veripb`)
-            # run(`veripb --trace --useColor $path/smol.$file.opb $path/smol.$file.veripb`,wait=true)
+            @time run(`veripb $path/smol.$file.opb $path/smol.$file$extention`)
         catch
             printstyled("catch (u cant see me)\n"; color = :red)
             if sum(cone)<30
@@ -740,5 +744,5 @@ function main()
 end
 #  julia 'trimer 3.jl'
 main()
- 
+
 # scp -r \\wsl.localhost\Ubuntu\home\arthur_gla\veriPB\trim\smol-proofs2\Instances\ arthur@fataepyc-01.dcs.gla.ac.uk:/users/grad/arthur/smol-proofs2
