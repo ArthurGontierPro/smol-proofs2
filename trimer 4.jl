@@ -91,7 +91,7 @@ function readopb(path,file)
     system = Vector{Eq}
     invsys = Vector{Vector{Int}}
     varmap = Vector{String}
-    open(string(path,file,".opb"),"r") do f
+    open(string(path,'/',file,".opb"),"r") do f
         s = readlines(f)
         nbctr,varmap = opbsize(s)
         nbvar = length(varmap)
@@ -189,8 +189,8 @@ function solvepol(st,system,systemlink,c)
         elseif st[i+1] == "d"
             eq1 = divide(eq1,parse(Int,st[i]))
             printstyled("Divide in pol not supported yet ";color = :red)
-        else
-            println("unknown pol operator")
+        elseif st[i+1] != "0"
+            println("unknown pol operator ",st[i+1])
         end
     end
     return eq1
@@ -198,7 +198,7 @@ end
 function proofsize(s,varmap)
     nbctr = 0
     for ss in s
-        if ss[1:2] in ["p ","u ","re","so"]
+        if ss[1:2] in ["p ","u ","ia","re","so"]
             nbctr+=1
             st = split(ss,' ')
             for v in st
@@ -268,7 +268,7 @@ function readveripb(path,file,system,invsys,varmap)
     systemlink = Vector{Vector{Int}}
     redwitness = Vector{String}
     version = output = conclusion = ""
-    open(string(path,file,".veripb"),"r") do f
+    open(string(path,'/',file,".veripb"),"r") do f
         s = readlines(f)
         version = split(s[1],' ')[end]
         c = length(system)
@@ -281,12 +281,12 @@ function readveripb(path,file,system,invsys,varmap)
         for ss in s
             st = split(ss,' ')
             eq = Eq([],0)
-            if ss[1:2] == "re"  
+            if ss[1:3] == "red"  
                 eq = readred(st,varmap,redwitness,c)
                 systemlink[c] = [-2]
-            elseif ss[1:2] == "p "
+            elseif ss[1:2] == "p " || ss[1:3] == "pol"
                 eq = solvepol(st,system,systemlink,c)
-            elseif ss[1:2] == "u "
+            elseif ss[1:2] == "u " || ss[1:3] == "rup"
                 eq = readeq(st,varmap,2:2:length(st)-3)
                 if length(eq.t)==0 && eq.b>0
                     system[c] = eq
@@ -296,17 +296,17 @@ function readveripb(path,file,system,invsys,varmap)
                     conclusion = split(s[end-1],' ')[2]
                     return system,invsys,systemlink,output,conclusion
                 end
-            elseif ss[1:2] == "j " || ss[1:2] == "ia"
+            elseif ss[1:2] == "ia"
                 systemlink[c] = [parse(Int,st[2])]
-                eq = readeq(st,3:2:length(st)-3)
-            elseif ss[1:2] == "so"                                  # on ajoute la negation au probleme pour chercher d'autres solutions. jusqua contradiction finale. dans la preuve c.est juste des contraintes pour casser toutes les soloutions trouvees
+                eq = readeq(st,varmap,4:2:length(st)-3)
+            elseif ss[1:3] == "sol"                                  # on ajoute la negation au probleme pour chercher d'autres solutions. jusqua contradiction finale. dans la preuve c.est juste des contraintes pour casser toutes les soloutions trouvees
                 eq = findfullassi(system,invsys,st,c,varmap)
                 systemlink[c] = [-1]
             elseif st[1] == "output"
                 output = st[2]
             elseif st[1] == "conclusion"
                 conclusion = st[2]
-            elseif !(ss[1:2] in ["ps","* ","f ","de","co","en"])
+            elseif !(ss[1:2] in ["# ","w ","ps","* ","f ","de","co","en"])
                 println("unknown: ",ss)
             end
             if length(eq.t)!=0 || eq.b!=0
@@ -634,7 +634,7 @@ function writeu(e,varmap)
     return string("u ",writeeq(e,varmap))
 end
 function writeia(e,link,cone,varmap)
-    return string("ia ",sum(cone[1:link[i]])," ",writeeq(e,varmap))
+    return string("ia ",sum(cone[1:link])," ",writeeq(e,varmap))
 end
 function writesol(e,varmap)
     s = "solx"
@@ -658,7 +658,7 @@ function writepol(link,cone)
     return string(s,"\n")
 end
 function writecone(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
-    open(string(path,"smol.",file,".opb"),"w") do f
+    open(string(path,"/smol.",file,".opb"),"w") do f
         for i in 1:nbopb
             if cone[i]
                 eq = system[i]
@@ -666,7 +666,7 @@ function writecone(path,file,extention,version,system,cone,systemlink,redwitness
             end
         end
     end
-    open(string(path,"smol.",file,extention),"w") do f
+    open(string(path,"/smol.",file,extention),"w") do f
         write(f,string("pseudo-Boolean proof version ",version,"\n"))
         write(f,string("f ",sum(cone[1:nbopb])," 0\n"))
         # write(f,string("f ",nbopb," 0\n")) # for full system
@@ -679,7 +679,7 @@ function writecone(path,file,extention,version,system,cone,systemlink,redwitness
                     elseif systemlink[i][1] == -2       #red
                         write(f,writered(eq,varmap,redwitness[i]))
                     elseif length(systemlink[i])==1     #ia
-                        write(f,writeia(eq,systemlink[i],cone,varmap))
+                        write(f,writeia(eq,systemlink[i][1],cone,varmap))
                     else
                         write(f,writepol(systemlink[i],cone))
                     end
@@ -699,68 +699,54 @@ function writecone(path,file,extention,version,system,cone,systemlink,redwitness
     end
 end
 
+function runtrimmer(path,file)
+    extention = ".veripb"
+
+    println("==========================")
+    printstyled(file," : "; color = :yellow)
+    try
+        # @time run(`veripb $path/$file.opb $path/$file$extention`)
+    catch
+        printstyled("catch veriPB fail\n"; color = :red)
+    end
+    system,invsys,systemlink,redwitness,nbopb,varmap,output,conclusion,version = readinstance(path,file)
+    println("\n size ",nbopb," ",length(system)-nbopb)
+    cone = @time makesmol(system,invsys,systemlink,nbopb)
+    writecone(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
+    nto = sum(cone[1:nbopb])
+    ntp = sum(cone[nbopb+1:end])
+    println(file,"\n        ",round(Int,100-100*nto/nbopb)," %    (",nto,"/",nbopb,")\n        ",round(Int,100-100*ntp/(length(system)-nbopb))," %    (",ntp,"/",(length(system)-nbopb),")")
+    printstyled(file," (smol) : "; color = :yellow)
+    try
+        @time run(`veripb $path/smol.$file.opb $path/smol.$file$extention`)
+    catch
+        printstyled("catch (u cant see me)\n"; color = :red)
+        if sum(cone)<30
+            printcone(system,systemlink,cone)
+        end
+    end
+    println("==========================\n")
+end
+
 function main()
     println("==========================")
-    # inittest()
-    # pathwin = "\\\\wsl.localhost\\Ubuntu\\home\\arthur_gla\\veriPB\\trim\\smol-proofs2\\Instances\\"
-    path = "/home/arthur_gla/veriPB/trim/smol-proofs2/Instances/"
-    # path = "/home/arthur_gla/veriPB/VeriPB/tests/integration_tests/correct" # au secours
-    # path = "/users/grad/arthur/smol-proofs2/Instances/"
-    rawfiles = cd(readdir, path)
-    files = [s[1:end-4] for s in rawfiles if s[end-3:end]==".opb" && s[1:5]!="smol."]
-
-    # println("threads available:",Threads.nthreads())
-    # Threads.@threads 
-    for file in files  if !(file in ["regular_5_vars","regular_6_vars","smart_table_6"])
-        extention = ""
-        if string(file,".veripb") in rawfiles
-            extention = ".veripb"
-        elseif string(file,".pbp") in rawfiles
-            extention = ".pbp"
-        else
-            printstyled(file," Extention not supported \n"; color = :red)
-            return 
+    sipath = "veriPB/newSIPbenchmarks/si"
+    solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+    proofs = "veriPB/proofs"    
+    cd()
+    inst = cd(readdir, string(sipath))
+    inst = [i for i in inst if i[1]!='.']
+    for ins in inst
+        inst2 = cd(readdir, string(sipath,"/",ins))
+        inst2 = [i for i in inst2 if i[1]!='.']
+        for ins2 in inst2
+            @time run(`./$solver --prove $proofs/$ins2 --no-clique-detection --proof-names --format lad $sipath/$ins/$ins2/pattern $sipath/$ins/$ins2/target`)
+            runtrimmer(proofs,ins2)
         end
-        println("==========================")
-        printstyled(file," : "; color = :yellow)
-        try
-            @time run(`veripb $path/$file.opb $path/$file$extention`)
-        catch
-            printstyled("catch veriPB fail\n"; color = :red)
-        end
-        system,invsys,systemlink,redwitness,nbopb,varmap,output,conclusion,version = readinstance(path,file)
-        println("\n size ",nbopb," ",length(system)-nbopb)
-        cone = @time makesmol(system,invsys,systemlink,nbopb)
-        writecone(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
-        nto = sum(cone[1:nbopb])
-        ntp = sum(cone[nbopb+1:end])
-        println(file,"\n        ",round(Int,100-100*nto/nbopb)," %    (",nto,"/",nbopb,")\n        ",round(Int,100-100*ntp/(length(system)-nbopb))," %    (",ntp,"/",(length(system)-nbopb),")")
-        printstyled(file," (smol) : "; color = :yellow)
-        try
-            @time run(`veripb $path/smol.$file.opb $path/smol.$file$extention`)
-        catch
-            printstyled("catch (u cant see me)\n"; color = :red)
-            if sum(cone)<30
-                printcone(system,systemlink,cone)
-            end
-        end
-        println("==========================\n")
-    end end
+    end
 end
-#  julia 'trimer 3.jl'
+#  julia 'home/arthur_gla/veriPB/trim/smol-proofs2/trimer 4.jl'
+# julia 'trimer 4.jl'
 main()
-
-# ./home/arthur_gla/veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver home/arthur_gla/veriPB/newSIPbenchmarks/si/si2_rand_r001_200/si2_r001_m200.00/pattern home/arthur_gla/veriPB/newSIPbenchmarks/si/si2_rand_r001_200/si2_r001_m200.00/target
-# ./subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver \
-# --no-supplementals --no-clique-detection --no-nds --prove myproof --proof-solutions \
-# newSIPbenchmarks/si/si2_rand_r001_200/si2_r001_m200.00/pattern newSIPbenchmarks/si/si2_rand_r001_200/si2_r001_m200.00/target
-
-# ./subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver --no-clique-detection --prove myproof newSIPbenchmarks/si/si2_rand_r001_200/si2_r001_m200.00/pattern newSIPbenchmarks/si/si2_rand_r001_200/si2_r001_m200.00/target
-
-# ./subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver --format lad /newSIPbenchmarks/si/si2_rand_r001_200/si2_r001_m200.00/pattern /newSIPbenchmarks/si/si2_rand_r001_200/si2_r001_m200.00/target
-
-# ./subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver --count-solutions --induced --format csv /subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver/integration_tests/c3.csv /subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver/integration_tests/c3c2.csv
-
-# ./subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver --count-solutions --induced subgraphsolver/glasgow-subgraph-solver/test-instances/c3.csv subgraphsolver/glasgow-subgraph-solver/test-instances/c3c2.csv
 
 # scp -r \\wsl.localhost\Ubuntu\home\arthur_gla\veriPB\trim\smol-proofs2\Instances\ arthur@fataepyc-01.dcs.gla.ac.uk:/users/grad/arthur/smol-proofs2
