@@ -169,6 +169,13 @@ function addeq(eq1,eq2)
     # lits=sort(lits,lt=islexicolesslit)                          # optionnal sorting of literrals
     return Eq(lits,eq1.b+eq2.b-c)
 end
+function multiply(eq,d)
+    lits = copy(eq.t)
+    for l in lits
+        l.coef = l.coef*d
+    end
+    return Eq(lits,eq.b*d)
+end
 function divide(eq,d)
     lits = copy(eq.t)
     for l in lits
@@ -176,24 +183,43 @@ function divide(eq,d)
     end
     return Eq(lits,ceil(Int,eq.b/d))
 end
+function saturate(eq)
+    for l in eq.t
+        l.coef = min(l.coef,eq.b)
+    end
+end
 function solvepol(st,system,systemlink,c)
     id = parse(Int,st[2])
-    eq1 = deepcopy(system[id])
+    eq = deepcopy(system[id])
+    stack = [eq]
     systemlink[c] = [id]
-
-    for i in 3:2:length(st)-1
-        if st[i+1] == "+"
-            id = parse(Int,st[i])
-            eq1 = addeq(eq1,system[id])
+    for j in 3:length(st)
+        i=st[j]
+        if i=="+"
+            stack[end] = addeq(stack[end],pop!(stack))
+            push!(systemlink[c],-1)
+        elseif i=="*"
+            stack[end] = multiply(stack[end],systemlink[c][end])
+            push!(systemlink[c],-2)
+        elseif i=="d"
+            stack[end] = divide(stack[end],systemlink[c][end])
+            push!(systemlink[c],-3)
+        elseif i=="s"
+            normcoefeq(stack[end])
+            saturate(stack[end])
+            push!(systemlink[c],-4)
+        elseif i!="0"
+            id = parse(Int,i)
             push!(systemlink[c],id)
-        elseif st[i+1] == "d"
-            eq1 = divide(eq1,parse(Int,st[i]))
-            printstyled("Divide in pol not supported yet ";color = :red)
-        elseif st[i+1] != "0"
-            println("unknown pol operator ",st[i+1])
+            if !(st[j+1] in ["*","d"])
+                push!(stack,deepcopy(system[id]))    
+            end
         end
     end
-    return eq1
+    eq = pop!(stack)
+    lits = eq.t
+    lits2 = removenulllits(lits)
+    return Eq(lits2,eq.b)
 end
 function proofsize(s,varmap)
     nbctr = 0
@@ -202,7 +228,7 @@ function proofsize(s,varmap)
             nbctr+=1
             st = split(ss,' ')
             for v in st
-                if !(v in ["p","u","red","solx","soli",">=",";"]) && !(tryparse(Int64,v) isa Number)
+                if !(v in ["p","u","red","sol","solx","soli",">=",";"]) && !(tryparse(Int64,v) isa Number)
                     var = split(v,'~')[end]
                     if !(var in varmap)
                         push!(varmap,var)
@@ -231,7 +257,7 @@ function findfullassi(system,invsys,st,init,varmap)
             s = slack(eq,isassi,assi)
             if s<0
                 printstyled(" !sol"; color = :red)
-                println(isassi)
+                print(" ",i," ")
                 printeq(eq)
                 lits = [Lit(l.coef,!l.sign,l.var) for l in lits]
                 return Eq(lits,1)
@@ -651,9 +677,24 @@ function writered(e,varmap,witness)
     return string(s," >= ",e.b," ; ",witness,"\n")
 end
 function writepol(link,cone)
-    s = string("p ",sum(cone[1:link[1]]))
-    for i in 2:length(link)
-        s = string(s," ",sum(cone[1:link[i]])," +")
+    s = string("p")
+    for i in eachindex(link)
+        t = link[i]
+        if t==-1
+            s = string(s," +")
+        elseif t==-2
+            s = string(s," *")
+        elseif t==-3
+            s = string(s," d")
+        elseif t==-4
+            s = string(s," s")
+        else
+            if link[i+1] in [-2,-3]
+                s = string(s," ",t)
+            else
+                s = string(s," ",sum(cone[1:t]))
+            end
+        end
     end
     return string(s,"\n")
 end
