@@ -782,16 +782,8 @@ function runtrimmer(path,file,extention)
     println("==========================\n")
 end
 
-function main()
-    println("==========================")
-    # sipath = "veriPB/newSIPbenchmarks/si"
-    # solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-    # proofs = "veriPB/proofs"    
-    sipath = "newSIPbenchmarks/si"
-    solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-    proofs = "proofs"    
-    extention = ".veripb"
-
+function run_si(benchs,solver,proofs,extention)
+    sipath = string(benchs,"/si")
     cd()
     inst = cd(readdir, string(sipath))
     for ins in inst
@@ -806,6 +798,40 @@ function main()
             runtrimmer(proofs,ins2,extention)
         end
     end
+end
+function run_LV(benchs,solver,proofs,extention)
+    lvpath = string(benchs,"/LV")
+    cd()
+
+end
+function run_scalefree(benchs,solver,proofs,extention)
+    scpath = string(benchs,"/scalefree")
+    cd()
+    inst = cd(readdir, string(scpath))
+    for ins in inst
+        if !isfile(string(proofs,"/",ins,".opb")) || 
+            (isfile(string(proofs,"/",ins,extention)) && 
+            (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
+            read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
+            @time run(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $scpath/$ins/pattern $scpath/$ins/target`)
+        end
+        runtrimmer(proofs,ins,extention)
+    end
+end
+
+function main()
+    # benchs = "veriPB/newSIPbenchmarks"
+    # solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+    # proofs = "veriPB/proofs"    
+    benchs = "newSIPbenchmarks"
+    solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+    proofs = "proofs"    
+    extention = ".veripb"
+
+    # run_si(benchs,solver,proofs,extention)        # all si are sat ?
+    run_scalefree(benchs,solver,proofs,extention)
+
+
 end
 #  julia 'home/arthur_gla/veriPB/trim/smol-proofs2/trimer 4.jl'
 # julia 'trimer 4.jl'
