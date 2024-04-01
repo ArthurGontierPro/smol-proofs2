@@ -748,7 +748,7 @@ end
 function runtrimmer(path,file,extention)
     println("==========================")
     printstyled(file," : "; color = :yellow)
-    println("path = \"",path,"\"\nfile = \"",file,"\"\n")
+    # println("path = \"",path,"\"\nfile = \"",file,"\"\n")
     # path = "veriPB/proofs"
     # file = "si2_b03_m200.00"
 
@@ -781,7 +781,35 @@ function runtrimmer(path,file,extention)
     end
     println("==========================\n")
 end
-
+function run_phase(benchs,solver,proofs,extention)
+    path = string(benchs,"/phase")
+    cd()
+    rawfiles = cd(readdir, path)
+    files = [s[1:end-7] for s in rawfiles if s[end-6:end]=="target"]
+    for ins in files
+        if !isfile(string(proofs,"/",ins,".opb")) || 
+            (isfile(string(proofs,"/",ins,extention)) && 
+            (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
+            read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
+            @time run(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $path/$ins-pattern $path/$ins-target`)
+        end
+        runtrimmer(proofs,ins,extention)
+    end
+end
+function run_scalefree(benchs,solver,proofs,extention)
+    scpath = string(benchs,"/scalefree")
+    cd()
+    inst = cd(readdir, string(scpath))
+    for ins in inst
+        if !isfile(string(proofs,"/",ins,".opb")) || 
+            (isfile(string(proofs,"/",ins,extention)) && 
+            (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
+            read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
+            @time run(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $scpath/$ins/pattern $scpath/$ins/target`)
+        end
+        runtrimmer(proofs,ins,extention)
+    end
+end
 function run_si(benchs,solver,proofs,extention)
     sipath = string(benchs,"/si")
     cd()
@@ -799,25 +827,6 @@ function run_si(benchs,solver,proofs,extention)
         end
     end
 end
-function run_LV(benchs,solver,proofs,extention)
-    lvpath = string(benchs,"/LV")
-    cd()
-
-end
-function run_scalefree(benchs,solver,proofs,extention)
-    scpath = string(benchs,"/scalefree")
-    cd()
-    inst = cd(readdir, string(scpath))
-    for ins in inst
-        if !isfile(string(proofs,"/",ins,".opb")) || 
-            (isfile(string(proofs,"/",ins,extention)) && 
-            (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
-            read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
-            @time run(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $scpath/$ins/pattern $scpath/$ins/target`)
-        end
-        runtrimmer(proofs,ins,extention)
-    end
-end
 
 function main()
     # benchs = "veriPB/newSIPbenchmarks"
@@ -829,8 +838,8 @@ function main()
     extention = ".veripb"
 
     # run_si(benchs,solver,proofs,extention)        # all si are sat ?
-    run_scalefree(benchs,solver,proofs,extention)
-
+    # run_scalefree(benchs,solver,proofs,extention)
+    run_phase(benchs,solver,proofs,extention)
 
 end
 #  julia 'home/arthur_gla/veriPB/trim/smol-proofs2/trimer 4.jl'
