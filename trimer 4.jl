@@ -798,7 +798,9 @@ function main()
     for ins in inst
         inst2 = cd(readdir, string(sipath,"/",ins))
         for ins2 in inst2
-            @time run(`./$solver --prove $proofs/$ins2 --no-clique-detection --proof-names --format lad $sipath/$ins/$ins2/pattern $sipath/$ins/$ins2/target`)
+            if !isfile(string(proofs,"/",ins2))
+                @time run(`./$solver --prove $proofs/$ins2 --no-clique-detection --proof-names --format lad $sipath/$ins/$ins2/pattern $sipath/$ins/$ins2/target`)
+            end
             runtrimmer(proofs,ins2)
         end
     end
