@@ -785,7 +785,9 @@ function run_phase(benchs,solver,proofs,extention)
     path = string(benchs,"/phase")
     cd()
     rawfiles = cd(readdir, path)
-    files = [s[1:end-7] for s in rawfiles if s[end-6:end]=="target"]
+    println(rawfiles)
+    files = [s[1:end-7] for s in rawfiles if s[end-5:end]=="target"]
+    println(files)
     for ins in files
         if !isfile(string(proofs,"/",ins,".opb")) || 
             (isfile(string(proofs,"/",ins,extention)) && 
@@ -829,12 +831,12 @@ function run_si(benchs,solver,proofs,extention)
 end
 
 function main()
-    # benchs = "veriPB/newSIPbenchmarks"
-    # solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-    # proofs = "veriPB/proofs"    
-    benchs = "newSIPbenchmarks"
-    solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-    proofs = "proofs"    
+    benchs = "veriPB/newSIPbenchmarks"
+    solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+    proofs = "veriPB/proofs"    
+    # benchs = "newSIPbenchmarks"
+    # solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+    # proofs = "proofs"    
     extention = ".veripb"
 
     # run_si(benchs,solver,proofs,extention)        # all si are sat ?
