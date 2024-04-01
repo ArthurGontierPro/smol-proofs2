@@ -788,13 +788,29 @@ function run_images(benchs,solver,proofs,extention)
     targets = cd(readdir, string(path,"/targets"))
     for target in targets
         for pattern in patterns
-            ins = string("meshes",pattern,target)
+            ins = string("images-CVIU11",pattern,target)
             if !isfile(string(proofs,"/",ins,".opb")) || 
                 (isfile(string(proofs,"/",ins,extention)) && 
                 (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
                 read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
                 @time run(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $path/patterns/$pattern $path/targets/$target`)
             end
+            runtrimmer(proofs,ins,extention)
+        end
+    end
+end
+function run_images2(benchs,solver,proofs,extention)
+    path = string(benchs,"/images-PR15")
+    cd()
+    patterns = [string("pattern",i) for i in 1:24]
+    target = "target"
+    for pattern in patterns
+        ins = string("images-PR15",pattern,target)
+        if !isfile(string(proofs,"/",ins,".opb")) || 
+            (isfile(string(proofs,"/",ins,extention)) && 
+            (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
+            read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
+            @time run(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $path/$pattern $path/$target`)
         end
         runtrimmer(proofs,ins,extention)
     end
@@ -813,8 +829,8 @@ function run_meshes(benchs,solver,proofs,extention)
                 read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
                 @time run(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $path/patterns/$pattern $path/targets/$target`)
             end
+            runtrimmer(proofs,ins,extention)
         end
-        runtrimmer(proofs,ins,extention)
     end
 end
 function run_phase(benchs,solver,proofs,extention)
@@ -876,8 +892,9 @@ function main()
     # run_si(benchs,solver,proofs,extention)        # all si are sat ?
     # run_scalefree(benchs,solver,proofs,extention)
     # run_phase(benchs,solver,proofs,extention)
-    # run_meshes(benchs,solver,proofs,extention)
-    run_images(benchs,solver,proofs,extention)
+    run_meshes(benchs,solver,proofs,extention)
+    # run_images(benchs,solver,proofs,extention)
+    # run_images2(benchs,solver,proofs,extention)
 
 
 end
