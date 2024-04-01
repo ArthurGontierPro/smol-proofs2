@@ -892,8 +892,8 @@ function main()
     # run_si(benchs,solver,proofs,extention)        # all si are sat ?
     # run_scalefree(benchs,solver,proofs,extention)
     # run_phase(benchs,solver,proofs,extention)
-    run_meshes(benchs,solver,proofs,extention)
-    # run_images(benchs,solver,proofs,extention)
+    # run_meshes(benchs,solver,proofs,extention)
+    run_images(benchs,solver,proofs,extention)
     # run_images2(benchs,solver,proofs,extention)
 
 
