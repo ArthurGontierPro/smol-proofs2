@@ -745,18 +745,15 @@ function writecone(path,file,extention,version,system,cone,systemlink,redwitness
     end
 end
 
-function runtrimmer(path,file)
+function runtrimmer(path,file,extention)
     println("==========================")
     printstyled(file," : "; color = :yellow)
     println("path = \"",path,"\"\nfile = \"",file,"\"\n")
     # path = "veriPB/proofs"
     # file = "si2_b03_m200.00"
-    extention = ".veripb"
-    sat = false
-    open(string(path,'/',file,".veripb"),"r") do f
-        s = @time readlines(f)
-        sat = s[end-1] == "conclusion SAT"
-    end
+
+    sat = read(`tail -n 2 $path/$file$extention`,String)[1:14] == "conclusion SAT"
+    
     if !sat
         try
             @time run(`veripb $path/$file.opb $path/$file$extention`)
@@ -793,15 +790,20 @@ function main()
     sipath = "newSIPbenchmarks/si"
     solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
     proofs = "proofs"    
+    extention = ".veripb"
+
     cd()
     inst = cd(readdir, string(sipath))
     for ins in inst
         inst2 = cd(readdir, string(sipath,"/",ins))
         for ins2 in inst2
-            if !isfile(string(proofs,"/",ins2,".opb"))
-                # @time run(`./$solver --prove $proofs/$ins2 --no-clique-detection --proof-names --format lad $sipath/$ins/$ins2/pattern $sipath/$ins/$ins2/target`)
+            if !isfile(string(proofs,"/",ins2,".opb")) || 
+                (isfile(string(proofs,"/",ins2,extention)) && 
+                (length(read(`tail -n 1 $proofs/$ins2$extention`,String))) < 24 || 
+                read(`tail -n 1 $proofs/$ins2$extention`,String)[1:24] != "end pseudo-Boolean proof")
+                @time run(`./$solver --prove $proofs/$ins2 --no-clique-detection --proof-names --format lad $sipath/$ins/$ins2/pattern $sipath/$ins/$ins2/target`)
             end
-            runtrimmer(proofs,ins2)
+            runtrimmer(proofs,ins2,extention)
         end
     end
 end
