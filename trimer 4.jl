@@ -815,6 +815,26 @@ function run_images2(benchs,solver,proofs,extention)
         runtrimmer(proofs,ins,extention)
     end
 end
+function run_LV(benchs,solver,proofs,extention)
+    path = string(benchs,"/LV")
+    cd()
+    graphs = cd(readdir, path)
+    for i in 50:111
+        for j in 1:49
+            target = graphs[i]
+            pattern = graphs[j]
+            ins = string("LV",pattern,target)
+            println(ins)
+            if !isfile(string(proofs,"/",ins,".opb")) || 
+                (isfile(string(proofs,"/",ins,extention)) && 
+                (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
+                read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
+                @time run(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $path/$pattern $path/$target`)
+            end
+            runtrimmer(proofs,ins,extention)
+        end
+    end
+end
 function run_meshes(benchs,solver,proofs,extention)
     path = string(benchs,"/meshes-CVIU11")
     cd()
@@ -894,8 +914,8 @@ function main()
     # run_phase(benchs,solver,proofs,extention)
     # run_meshes(benchs,solver,proofs,extention)
     # run_images(benchs,solver,proofs,extention)
-    run_images2(benchs,solver,proofs,extention)
-
+    # run_images2(benchs,solver,proofs,extention)
+    run_LV(benchs,solver,proofs,extention)
 
 end
 #  julia 'home/arthur_gla/veriPB/trim/smol-proofs2/trimer 4.jl'
