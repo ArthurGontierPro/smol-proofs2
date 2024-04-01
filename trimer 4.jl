@@ -893,8 +893,8 @@ function main()
     # run_scalefree(benchs,solver,proofs,extention)
     # run_phase(benchs,solver,proofs,extention)
     # run_meshes(benchs,solver,proofs,extention)
-    run_images(benchs,solver,proofs,extention)
-    # run_images2(benchs,solver,proofs,extention)
+    # run_images(benchs,solver,proofs,extention)
+    run_images2(benchs,solver,proofs,extention)
 
 
 end
