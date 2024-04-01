@@ -781,13 +781,29 @@ function runtrimmer(path,file,extention)
     end
     println("==========================\n")
 end
+function run_meshes(benchs,solver,proofs,extention)
+    path = string(benchs,"/meshes-CVIU11")
+    cd()
+    patterns = cd(readdir, string(path,"/patterns"))
+    targets = cd(readdir, string(path,"/targets"))
+    for target in targets
+        for pattern in patterns
+            ins = string("meshes",pattern,target)
+            if !isfile(string(proofs,"/",ins,".opb")) || 
+                (isfile(string(proofs,"/",ins,extention)) && 
+                (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
+                read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
+                @time run(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $path/patterns/$pattern $path/targets/$target`)
+            end
+        end
+        runtrimmer(proofs,ins,extention)
+    end
+end
 function run_phase(benchs,solver,proofs,extention)
     path = string(benchs,"/phase")
     cd()
     rawfiles = cd(readdir, path)
-    println(rawfiles)
     files = [s[1:end-7] for s in rawfiles if s[end-5:end]=="target"]
-    println(files)
     for ins in files
         if !isfile(string(proofs,"/",ins,".opb")) || 
             (isfile(string(proofs,"/",ins,extention)) && 
@@ -831,18 +847,18 @@ function run_si(benchs,solver,proofs,extention)
 end
 
 function main()
-    # benchs = "veriPB/newSIPbenchmarks"
-    # solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-    # proofs = "veriPB/proofs"    
-    benchs = "newSIPbenchmarks"
-    solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-    proofs = "proofs"    
+    benchs = "veriPB/newSIPbenchmarks"
+    solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+    proofs = "veriPB/proofs"    
+    # benchs = "newSIPbenchmarks"
+    # solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+    # proofs = "proofs"    
     extention = ".veripb"
 
     # run_si(benchs,solver,proofs,extention)        # all si are sat ?
     # run_scalefree(benchs,solver,proofs,extention)
-    run_phase(benchs,solver,proofs,extention)
-
+    # run_phase(benchs,solver,proofs,extention)
+    run_meshes(benchs,solver,proofs,extention)
 end
 #  julia 'home/arthur_gla/veriPB/trim/smol-proofs2/trimer 4.jl'
 # julia 'trimer 4.jl'
