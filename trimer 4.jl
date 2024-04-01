@@ -847,12 +847,12 @@ function run_si(benchs,solver,proofs,extention)
 end
 
 function main()
-    benchs = "veriPB/newSIPbenchmarks"
-    solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-    proofs = "veriPB/proofs"    
-    # benchs = "newSIPbenchmarks"
-    # solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-    # proofs = "proofs"    
+    # benchs = "veriPB/newSIPbenchmarks"
+    # solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+    # proofs = "veriPB/proofs"    
+    benchs = "newSIPbenchmarks"
+    solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+    proofs = "proofs"    
     extention = ".veripb"
 
     # run_si(benchs,solver,proofs,extention)        # all si are sat ?
