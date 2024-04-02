@@ -608,39 +608,6 @@ function rupsmart(system,invsys,antecedants,init,isassi,assi) # This rup does no
     end
     printstyled("!rups "; color = :red)
 end
-function inittest()
-    system = Vector{Eq}(undef,10)
-    invsys = Vector{Vector{Int}}(undef,3)
-    # system[1] = Eq([Lit(1,false,Var(2,0)),Lit(1,false,Var(3,0))],1)
-    system[1] = Eq([Lit(1,false,2),Lit(1,true,3)],1)#corr
-    system[2] = Eq([Lit(1,true ,1),Lit(1,true ,3)],1)
-    system[3] = Eq([Lit(1,false,1),Lit(1,true ,2)],1)
-    system[4] = Eq([Lit(1,false,1),Lit(1,false,2)],1)
-    system[5] = Eq([Lit(1,true ,1),Lit(1,false,2)],1)
-    # system[6] = Eq([Lit(1,true ,Var(2,0)),Lit(1,true ,Var(3,0))],1)
-    system[6] = Eq([Lit(1,true ,2),Lit(1,false ,3)],1)#corr
-    invsys[1] = [2,3,4,5,8]
-    invsys[2] = [1,3,4,5,6]
-    invsys[3] = [1,2,6,10]
-    systemlink = Vector{Vector{Int}}(undef,11)
-    system[7] = addeq(system[4],system[5])
-    systemlink[7] = [4,5]
-    addinvsys(invsys,system[7],7)
-    system[8] = Eq([Lit(1,false,1)],1)
-    system[9] = addeq(addeq(system[1],system[2]),system[3])
-    systemlink[9] = [1,2,3]
-    addinvsys(invsys,system[9],9)
-    system[10] = Eq([Lit(1,true,3)],1)
-    systemlink[10] = [9]
-    # system[11] = Eq([],1)
-    nbopb = 6
-    file = "inittest"
-    cone =  makesmol(system,invsys,systemlink,nbopb)
-    nto = sum(cone[1:nbopb])
-    ntp = sum(cone[nbopb+1:end])
-    println(file,"\n        ",round(Int,100-100*nto/nbopb)," %    (",nto,"/",nbopb,")\n        ",round(Int,100-100*ntp/(length(system)-nbopb))," %    (",ntp,"/",(length(system)-nbopb),")")
-    println(findall(cone))
-end
 function readinstance(path,file)
     words = ["p","u","red","sol","solx","soli",">=",";",":","+","s","ia"]
     system,invsys,varmap = readopb(path,file)
@@ -925,19 +892,35 @@ function main()
     # proofs = "veriPB/proofs"    
     benchs = "newSIPbenchmarks"
     solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-    proofs = "proofs"    
+    proofs = "/cluster/proofs"
     extention = ".veripb"
 
-    # run_si(benchs,solver,proofs,extention)        # all si are sat ?
-    run_scalefree(benchs,solver,proofs,extention)
-    # run_phase(benchs,solver,proofs,extention)
-    # run_meshes(benchs,solver,proofs,extention)
-    # run_images(benchs,solver,proofs,extention)
-    # run_images2(benchs,solver,proofs,extention)
-    # run_LV(benchs,solver,proofs,extention)
-    # run_bio(benchs,solver,proofs,extention)
+    b,s,p,e = benchs,solver,proofs,extention
+    if length(ARGS) == 1
+        if ARGS[1] == "bio" #program argument parsing
+            run_bio(b,s,p,e)
+        elseif  ARGS[1] == "im1"
+            run_images(b,s,p,e)
+        elseif  ARGS[1] == "im2"
+            run_images2(b,s,p,e)
+        elseif  ARGS[1] == "lv"
+            run_LV(b,s,p,e)
+        elseif  ARGS[1] == "meshes"
+            run_meshes(b,s,p,e)
+        elseif  ARGS[1] == "phase"
+            run_phase(b,s,p,e)
+        elseif  ARGS[1] == "scalefree"
+            run_scalefree(b,s,p,e)
+        elseif  ARGS[1] == "si"
+            run_si(b,s,p,e)        # all si are sat ?
+        else
+            println("Arguments are: bio im1 im2 lv meshes phase scalefree si")
+        end
+    else
+        println("Arguments are: bio im1 im2 lv meshes phase scalefree si")
+    end
 end
-#  julia 'home/arthur_gla/veriPB/trim/smol-proofs2/trimer 4.jl'
+
 # julia 'trimer 4.jl'
 main()
 
