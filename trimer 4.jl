@@ -133,7 +133,7 @@ function normcoefeq(eq)
     for l in eq.t
         c+= normcoef(l)
     end
-    eq.b = max(c+eq.b,0)
+    eq.b = c+eq.b
 end
 function normcoefsystem(s)
     for eq in s
@@ -196,7 +196,7 @@ function solvepol(st,system,systemlink,c)
     for j in 3:length(st)
         i=st[j]
         if i=="+"
-            stack[end] = addeq(stack[end],pop!(stack))
+            stack[end] = addeq(pop!(stack),stack[end])      #order is important for stack
             push!(systemlink[c],-1)
         elseif i=="*"
             stack[end] = multiply(stack[end],systemlink[c][end])
@@ -395,7 +395,7 @@ end
 function comparefreelits(eq1,eq2,system,isassi)
     return nbfreelits(system[eq1],isassi) < nbfreelits(system[eq2],isassi)
 end
-function smolproof4(system,invsys,systemlink,nbopb)
+function makesmol(system,invsys,systemlink,nbopb)
     n = length(system)
     antecedants = zeros(Bool,n)
     isassi,assi = initassignement(invsys)
@@ -404,11 +404,17 @@ function smolproof4(system,invsys,systemlink,nbopb)
     cone[end] = true
     front = zeros(Bool,n)
     firstcontradiction = findfirst(x->length(x.t)==0,system)
-    if firstcontradiction <= nbopb
-        cone[firstcontradiction] = true
-        return cone
+    cone[firstcontradiction] = true
+    if length(systemlink[firstcontradiction])>1
+        for i in systemlink[firstcontradiction]
+            if i>0
+                front[i] = true
+            end
+        end
+    else
+        updumb(system,invsys,front)                     #front now contains the antecedants of the final claim
     end
-    updumb(system,invsys,front)                     #front now contains the antecedants of the final claim
+
     # upsmart(system,invsys,front)
     println(" init contradiction: ",sum(front),findall(front))
     while true in front
@@ -642,15 +648,6 @@ function readinstance(path,file)
     system,invsys,systemlink,redwitness,output,conclusion,version = readveripb(path,file,system,invsys,varmap,words)
     return system,invsys,systemlink,redwitness,nbopb,varmap,output,conclusion,version
 end
-function makesmol(system,invsys,systemlink,nbopb)
-    # printsys(system)
-    # normcoefsystem(system)
-    # printsys(system)
-    return smolproof4(system,invsys,systemlink,nbopb)
-    # printsys(system,cone)
-end
-
-
 function writelit(l,varmap)
     return string(l.coef," ",if l.sign "" else "~" end, varmap[l.var])
 end
@@ -744,7 +741,6 @@ function writecone(path,file,extention,version,system,cone,systemlink,redwitness
         write(f,"end pseudo-Boolean proof\n")
     end
 end
-
 function runtrimmer(path,file,extention)
     println("==========================")
     printstyled(file," : "; color = :yellow)
@@ -762,6 +758,7 @@ function runtrimmer(path,file,extention)
         end
         system,invsys,systemlink,redwitness,nbopb,varmap,output,conclusion,version = readinstance(path,file)
         println("\n size ",nbopb," ",length(system)-nbopb)
+        normcoefsystem(system)
         cone = @time makesmol(system,invsys,systemlink,nbopb)
         writecone(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
         nto = sum(cone[1:nbopb])
@@ -790,8 +787,7 @@ function run_bio(benchs,solver,proofs,extention)
             if i!=j
                 target = graphs[i]
                 pattern = graphs[j]
-                ins = string("LV",pattern,target)
-                println(ins)
+                ins = string("bio",pattern[1:end-4],target[1:end-4])
                 if !isfile(string(proofs,"/",ins,".opb")) || 
                     (isfile(string(proofs,"/",ins,extention)) && 
                     (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
@@ -845,8 +841,9 @@ function run_LV(benchs,solver,proofs,extention)
         for j in 1:49
             target = graphs[i]
             pattern = graphs[j]
+            # target = "target"
+            # pattern = "pattern"
             ins = string("LV",pattern,target)
-            println(ins)
             if !isfile(string(proofs,"/",ins,".opb")) || 
                 (isfile(string(proofs,"/",ins,extention)) && 
                 (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
@@ -923,22 +920,22 @@ function run_si(benchs,solver,proofs,extention)
 end
 
 function main()
-    # benchs = "veriPB/newSIPbenchmarks"
-    # solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-    # proofs = "veriPB/proofs"    
-    benchs = "newSIPbenchmarks"
-    solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-    proofs = "proofs"    
+    benchs = "veriPB/newSIPbenchmarks"
+    solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+    proofs = "veriPB/proofs"    
+    # benchs = "newSIPbenchmarks"
+    # solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+    # proofs = "proofs"    
     extention = ".veripb"
 
     # run_si(benchs,solver,proofs,extention)        # all si are sat ?
-    # run_scalefree(benchs,solver,proofs,extention)
+    run_scalefree(benchs,solver,proofs,extention)
     # run_phase(benchs,solver,proofs,extention)
     # run_meshes(benchs,solver,proofs,extention)
     # run_images(benchs,solver,proofs,extention)
     # run_images2(benchs,solver,proofs,extention)
     # run_LV(benchs,solver,proofs,extention)
-    run_bio(benchs,solver,proofs,extention)
+    # run_bio(benchs,solver,proofs,extention)
 end
 #  julia 'home/arthur_gla/veriPB/trim/smol-proofs2/trimer 4.jl'
 # julia 'trimer 4.jl'
