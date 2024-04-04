@@ -329,6 +329,9 @@ function readveripb(path,file,system,invsys,varmap,words)
             elseif ss[1:2] == "ia"
                 systemlink[c] = [parse(Int,st[2])]
                 eq = readeq(st,varmap,4:2:length(st)-3)
+                if c==12
+                    printeq(eq)
+                end
             elseif ss[1:3] == "sol"                                  # on ajoute la negation au probleme pour chercher d'autres solutions. jusqua contradiction finale. dans la preuve c.est juste des contraintes pour casser toutes les soloutions trouvees
                 eq = findfullassi(system,invsys,st,c,varmap)
                 systemlink[c] = [-1]
@@ -336,7 +339,7 @@ function readveripb(path,file,system,invsys,varmap,words)
                 output = st[2]
             elseif st[1] == "conclusion"
                 conclusion = st[2]
-            elseif !(ss[1:2] in ["# ","w ","ps","* ","f ","de","co","en"])
+            elseif !(ss[1:2] in ["# ","w ","ps","* ","f ","d ","de","co","en"])
                 println("unknown: ",ss)
             end
             if length(eq.t)!=0 || eq.b!=0
@@ -405,7 +408,7 @@ function makesmol(system,invsys,systemlink,nbopb)
     front = zeros(Bool,n)
     firstcontradiction = findfirst(x->length(x.t)==0,system)
     cone[firstcontradiction] = true
-    if length(systemlink[firstcontradiction])>1
+    if isassigned(systemlink,firstcontradiction) && length(systemlink[firstcontradiction])>1
         for i in systemlink[firstcontradiction]
             if i>0
                 front[i] = true
@@ -416,7 +419,7 @@ function makesmol(system,invsys,systemlink,nbopb)
     end
 
     # upsmart(system,invsys,front)
-    println(" init contradiction: ",sum(front),findall(front))
+    print("  init:",sum(front))#,findall(front))
     while true in front
         i = findlast(front)
         front[i] = false
@@ -428,8 +431,11 @@ function makesmol(system,invsys,systemlink,nbopb)
                     if systemlink[i][1]<0 #sol and red cases
                         # updumb(system,invsys,antecedants,i,isassi,assi) # we consider sol as axioms ?
                     else
-                        for j in systemlink[i]
-                            antecedants[j] = true
+                        for j in eachindex(systemlink[i])
+                            t = systemlink[i][j]
+                            if t>0 && !(j<length(systemlink[i]) && (systemlink[i][j+1] == -2 || systemlink[i][j+1] == -3))
+                                antecedants[t] = true
+                            end
                         end
                     end
                 else
@@ -629,7 +635,7 @@ function writeu(e,varmap)
     return string("u ",writeeq(e,varmap))
 end
 function writeia(e,link,cone,varmap)
-    return string("ia ",sum(cone[1:link])," ",writeeq(e,varmap))
+    return string("ia ",sum(cone[1:link])," : ",writeeq(e,varmap))
 end
 function writesol(e,varmap)
     s = "solx"
@@ -657,7 +663,7 @@ function writepol(link,cone)
             s = string(s," d")
         elseif t==-4
             s = string(s," s")
-        else
+        elseif t>0
             if link[i+1] in [-2,-3]
                 s = string(s," ",t)
             else
@@ -709,7 +715,7 @@ function writecone(path,file,extention,version,system,cone,systemlink,redwitness
     end
 end
 function runtrimmer(path,file,extention)
-    println("==========================")
+    # println("==========================")
     printstyled(file," : "; color = :yellow)
     # println("path = \"",path,"\"\nfile = \"",file,"\"\n")
     # path = "veriPB/proofs"
@@ -724,13 +730,13 @@ function runtrimmer(path,file,extention)
             printstyled("catch veriPB fail\n"; color = :red)
         end
         system,invsys,systemlink,redwitness,nbopb,varmap,output,conclusion,version = readinstance(path,file)
-        println("\n size ",nbopb," ",length(system)-nbopb)
+        print("size:",nbopb,"|",length(system)-nbopb)
         normcoefsystem(system)
         cone = @time makesmol(system,invsys,systemlink,nbopb)
         writecone(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
         nto = sum(cone[1:nbopb])
         ntp = sum(cone[nbopb+1:end])
-        println(file,"\n        ",round(Int,100-100*nto/nbopb)," %    (",nto,"/",nbopb,")\n        ",round(Int,100-100*ntp/(length(system)-nbopb))," %    (",ntp,"/",(length(system)-nbopb),")")
+        println("        ",round(Int,100-100*nto/nbopb)," %    (",nto,"/",nbopb,")\n        ",round(Int,100-100*ntp/(length(system)-nbopb))," %    (",ntp,"/",(length(system)-nbopb),")")
         printstyled(file," (smol) : "; color = :yellow)
         try
             @time run(`veripb $path/smol.$file.opb $path/smol.$file$extention`)
@@ -743,7 +749,7 @@ function runtrimmer(path,file,extention)
     else
         println("SAT")
     end
-    println("==========================\n")
+    println("==========================")
 end
 function run_bio(benchs,solver,proofs,extention)
     path = string(benchs,"/biochemicalReactions")
@@ -929,3 +935,5 @@ main()
 # find . -name "*Zone.Identifier" -type f -delete 
 # find . -name ".*" -type f -delete 
 # ssh arthur@fataepyc-01.dcs.gla.ac.uk
+
+# cd /home/arthur_gla/veriPB/trim/smol-proofs2/
