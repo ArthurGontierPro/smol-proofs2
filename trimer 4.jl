@@ -87,6 +87,10 @@ function opbsize(s)
     end
     return nbctr,varmap
 end
+function removespaces(st)
+    r = findall(x->x=="",st)
+    deleteat!(st,r)
+end
 function readopb(path,file)
     system = Vector{Eq}
     invsys = Vector{Vector{Int}}
@@ -101,6 +105,7 @@ function readopb(path,file)
         for ss in s
             if ss[1] != '*'                                     #do not parse comments
                 st = split(ss,' ')                              #structure of line is: int var int var ... >= int ; 
+                removespaces(st)
                 eq = readeq(st,varmap)
                 if length(eq.t)==0 && eq.b==1
                     printstyled(" !opb"; color = :blue)
@@ -310,6 +315,7 @@ function readveripb(path,file,system,invsys,varmap,words)
         c+=1
         for ss in s
             st = split(ss,' ')
+            removespaces(st)
             eq = Eq([],0)
             if ss[1:3] == "red"  
                 eq = readred(st,varmap,redwitness,c)
@@ -329,9 +335,6 @@ function readveripb(path,file,system,invsys,varmap,words)
             elseif ss[1:2] == "ia"
                 systemlink[c] = [parse(Int,st[2])]
                 eq = readeq(st,varmap,4:2:length(st)-3)
-                if c==12
-                    printeq(eq)
-                end
             elseif ss[1:3] == "sol"                                  # on ajoute la negation au probleme pour chercher d'autres solutions. jusqua contradiction finale. dans la preuve c.est juste des contraintes pour casser toutes les soloutions trouvees
                 eq = findfullassi(system,invsys,st,c,varmap)
                 systemlink[c] = [-1]
@@ -419,7 +422,7 @@ function makesmol(system,invsys,systemlink,nbopb)
     end
 
     # upsmart(system,invsys,front)
-    print("  init:",sum(front))#,findall(front))
+    print("  init : ",sum(front))#,findall(front))
     while true in front
         i = findlast(front)
         front[i] = false
@@ -714,9 +717,20 @@ function writecone(path,file,extention,version,system,cone,systemlink,redwitness
         write(f,"end pseudo-Boolean proof\n")
     end
 end
+function prettybytes(b)
+    if b>=10^9
+        return string(round(b/(10^9); sigdigits=4)," GB")
+    elseif b>=10^6
+        return string(round(b/(10^6); sigdigits=4)," MB")
+    elseif b>=10^3
+        return string(round(b/(10^3); sigdigits=4)," KB")
+    else
+        return  string(round(b; sigdigits=4)," B")
+    end
+end
 function runtrimmer(path,file,extention)
     # println("==========================")
-    printstyled(file," : "; color = :yellow)
+    printstyled(file,"        : "; color = :yellow)
     # println("path = \"",path,"\"\nfile = \"",file,"\"\n")
     # path = "veriPB/proofs"
     # file = "si2_b03_m200.00"
@@ -724,22 +738,37 @@ function runtrimmer(path,file,extention)
     sat = read(`tail -n 2 $path/$file$extention`,String)[1:14] == "conclusion SAT"
     
     if !sat
+        t1=t2=t3 = 0.0
         try
-            @time run(`veripb $path/$file.opb $path/$file$extention`)
+            t1 = @elapsed run(`veripb $path/$file.opb $path/$file$extention`)
         catch
             printstyled("catch veriPB fail\n"; color = :red)
         end
         system,invsys,systemlink,redwitness,nbopb,varmap,output,conclusion,version = readinstance(path,file)
-        print("size:",nbopb,"|",length(system)-nbopb)
+        print("   size : ",nbopb,"|",length(system)-nbopb)
         normcoefsystem(system)
-        cone = @time makesmol(system,invsys,systemlink,nbopb)
+        t2 = @elapsed begin
+            cone = makesmol(system,invsys,systemlink,nbopb)
+        end
         writecone(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
         nto = sum(cone[1:nbopb])
         ntp = sum(cone[nbopb+1:end])
-        println("        ",round(Int,100-100*nto/nbopb)," %    (",nto,"/",nbopb,")\n        ",round(Int,100-100*ntp/(length(system)-nbopb))," %    (",ntp,"/",(length(system)-nbopb),")")
+        println("   opb : ",nto,"/",nbopb," (",round(Int,100*nto/nbopb),"%)",
+                "   pbp : ",ntp,"/",(length(system)-nbopb)," (",round(Int,100*ntp/(length(system)-nbopb)),"%)",
+                "   time : ",round(t2; digits=3)," s")
         printstyled(file," (smol) : "; color = :yellow)
         try
-            @time run(`veripb $path/smol.$file.opb $path/smol.$file$extention`)
+            t3 = @elapsed run(`veripb $path/smol.$file.opb $path/smol.$file$extention`)
+            so = stat(string(path,"/",file,".opb")).size + stat(string(path,"/",file,extention)).size
+            st = stat(string(path,"/smol.",file,".opb")).size + stat(string(path,"/smol.",file,extention)).size
+            println("   trim : ",prettybytes(so),"  ->  ",prettybytes(st),
+                    "       ",round(t1; sigdigits=4)," s  ->  ",round(t3; sigdigits=4)," s")
+            open(string(path,"/times"), "a") do f
+                write(f,string(file,"/",t1,"/",t2,","))
+            end
+            open(string(path,"/bytes"), "a") do f
+                write(f,string(file,"/",so/10^6,"/",st/10^6,","))
+            end
         catch
             printstyled("catch (u cant see me)\n"; color = :red)
             if sum(cone)<30
@@ -749,7 +778,7 @@ function runtrimmer(path,file,extention)
     else
         println("SAT")
     end
-    println("==========================")
+    # println("==========================")
 end
 function run_bio(benchs,solver,proofs,extention)
     path = string(benchs,"/biochemicalReactions")
