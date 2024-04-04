@@ -784,8 +784,8 @@ function run_bio(benchs,solver,proofs,extention)
     path = string(benchs,"/biochemicalReactions")
     cd()
     graphs = cd(readdir, path)
-    for i in 1:196
-        for j in 1:196
+    for i in eachindex(graphs)
+        for j in eachindex(graphs)
             if i!=j
                 target = graphs[i]
                 pattern = graphs[j]
