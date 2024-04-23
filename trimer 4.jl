@@ -1,4 +1,3 @@
-
 mutable struct Lit
     coef::Int
     sign::Bool
@@ -193,31 +192,31 @@ function saturate(eq)
         l.coef = min(l.coef,eq.b)
     end
 end
-function solvepol(st,system,systemlink,c)
+function solvepol(st,system,link)
     id = parse(Int,st[2])
     eq = deepcopy(system[id])
     stack = [eq]
-    systemlink[c] = [id]
+    push!(link,id)
     for j in 3:length(st)
         i=st[j]
         if i=="+"
             stack[end] = addeq(pop!(stack),stack[end])      #order is important for stack
-            push!(systemlink[c],-1)
+            push!(link,-1)
         elseif i=="*"
             stack[end] = multiply(stack[end],systemlink[c][end])
-            push!(systemlink[c],-2)
+            push!(link,-2)
         elseif i=="d"
             stack[end] = divide(stack[end],systemlink[c][end])
-            push!(systemlink[c],-3)
+            push!(link,-3)
         elseif i=="s"
             normcoefeq(stack[end])
             saturate(stack[end])
-            push!(systemlink[c],-4)
+            push!(link,-4)
         elseif i=="w"
             printstyled(" !weak"; color = :blue)
         elseif i!="0"
             id = parse(Int,i)
-            push!(systemlink[c],id)
+            push!(link,id)
             if !(st[j+1] in ["*","d"])
                 push!(stack,deepcopy(system[id]))    
             end
@@ -317,14 +316,10 @@ function readveripb(path,file,system,invsys,varmap,words)
             st = split(ss,' ')
             removespaces(st)
             eq = Eq([],0)
-            if ss[1:3] == "red"  
-                eq = readred(st,varmap,redwitness,c)
-                systemlink[c] = [-2]
-            elseif ss[1:2] == "p " || ss[1:3] == "pol"
-                eq = solvepol(st,system,systemlink,c)
-            elseif ss[1:2] == "u " || ss[1:3] == "rup"
+            if ss[1:2] == "u " || ss[1:3] == "rup"
                 eq = readeq(st,varmap,2:2:length(st)-3)
-                if length(eq.t)==0 && eq.b>0
+                systemlink[c] = [-1]
+                if length(eq.t)==0 && eq.b>0            # contradiction case
                     system[c] = eq
                     addinvsys(invsys,eq,c)
                     system = system[1:c]
@@ -332,12 +327,18 @@ function readveripb(path,file,system,invsys,varmap,words)
                     conclusion = split(s[end-1],' ')[2]
                     return system,invsys,systemlink,output,conclusion
                 end
+            elseif ss[1:2] == "p " || ss[1:3] == "pol"
+                systemlink[c] = [-2]
+                eq = solvepol(st,system,systemlink[c])
             elseif ss[1:2] == "ia"
-                systemlink[c] = [parse(Int,st[2])]
+                systemlink[c] = [-3,parse(Int,st[2])]
                 eq = readeq(st,varmap,4:2:length(st)-3)
+            elseif ss[1:3] == "red"  
+                systemlink[c] = [-4]
+                eq = readred(st,varmap,redwitness,c)
             elseif ss[1:3] == "sol"                                  # on ajoute la negation au probleme pour chercher d'autres solutions. jusqua contradiction finale. dans la preuve c.est juste des contraintes pour casser toutes les soloutions trouvees
+                systemlink[c] = [-5]
                 eq = findfullassi(system,invsys,st,c,varmap)
-                systemlink[c] = [-1]
             elseif st[1] == "output"
                 output = st[2]
             elseif st[1] == "conclusion"
@@ -429,23 +430,24 @@ function makesmol(system,invsys,systemlink,nbopb)
         if !cone[i] 
             cone[i] = true
             if i>nbopb
-                reset([antecedants,isassi,assi])
-                if isassigned(systemlink,i)
-                    if systemlink[i][1]<0 #sol and red cases
-                        # updumb(system,invsys,antecedants,i,isassi,assi) # we consider sol as axioms ?
-                    else
-                        for j in eachindex(systemlink[i])
-                            t = systemlink[i][j]
-                            if t>0 && !(j<length(systemlink[i]) && (systemlink[i][j+1] == -2 || systemlink[i][j+1] == -3))
-                                antecedants[t] = true
-                            end
+                tlink = systemlink[i][1]
+                if tlink == -1 
+                    antecedants .=false
+                    isassi .=false
+                    assi.=false
+                    rupdumb(system,invsys,antecedants,i,isassi,assi)
+                    append!(systemlink[i],findall(antecedants))
+                    front = front .|| antecedants
+                elseif tlink >= -3
+                    antecedants .=false
+                    for j in eachindex(systemlink[i])
+                        t = systemlink[i][j]
+                        if t>0 && !(j<length(systemlink[i]) && (systemlink[i][j+1] == -2 || systemlink[i][j+1] == -3))
+                            antecedants[t] = true
                         end
                     end
-                else
-                    rupdumb(system,invsys,antecedants,i,isassi,assi)
-                    # rupsmart(system,invsys,antecedants,i,isassi,assi)
+                    front = front .|| antecedants
                 end
-                front = front .|| antecedants
             end
         end
     end
@@ -656,7 +658,7 @@ function writered(e,varmap,witness)
 end
 function writepol(link,cone)
     s = string("p")
-    for i in eachindex(link)
+    for i in 2:length(link)
         t = link[i]
         if t==-1
             s = string(s," +")
@@ -692,18 +694,17 @@ function writecone(path,file,extention,version,system,cone,systemlink,redwitness
         for i in nbopb+1:length(system)
             if cone[i]
                 eq = system[i]
-                if isassigned(systemlink,i)
-                    if systemlink[i][1] == -1           #solx
-                        write(f,writesol(eq,varmap))
-                    elseif systemlink[i][1] == -2       #red
-                        write(f,writered(eq,varmap,redwitness[i]))
-                    elseif length(systemlink[i])==1     #ia
-                        write(f,writeia(eq,systemlink[i][1],cone,varmap))
-                    else
-                        write(f,writepol(systemlink[i],cone))
-                    end
-                else
+                tlink = systemlink[i][1]
+                if tlink == -1               # rup
                     write(f,writeu(eq,varmap))
+                elseif tlink == -2           # red
+                    write(f,writepol(systemlink[i],cone))
+                elseif tlink == -3           # ia
+                    write(f,writeia(eq,systemlink[i][2],cone,varmap))
+                elseif tlink == -4           # red
+                    write(f,writered(eq,varmap,redwitness[i]))
+                elseif tlink == -5           # solx
+                    write(f,writesol(eq,varmap))
                 end
             end
         end
@@ -784,11 +785,13 @@ function run_bio(benchs,solver,proofs,extention)
     path = string(benchs,"/biochemicalReactions")
     cd()
     graphs = cd(readdir, path)
-    for i in eachindex(graphs)
-        for j in eachindex(graphs)
-            if i!=j
-                target = graphs[i]
-                pattern = graphs[j]
+    # for i in eachindex(graphs)
+    #     for j in eachindex(graphs)
+    #         if i!=j
+    #             target = graphs[i]
+    #             pattern = graphs[j]
+                target = "002.txt"
+                pattern = "171.txt"
                 ins = string("bio",pattern[1:end-4],target[1:end-4])
                 if !isfile(string(proofs,"/",ins,".opb")) || 
                     (isfile(string(proofs,"/",ins,extention)) && 
@@ -797,9 +800,9 @@ function run_bio(benchs,solver,proofs,extention)
                     @time run(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $path/$pattern $path/$target`)
                 end
                 runtrimmer(proofs,ins,extention)
-            end
-        end
-    end
+    #         end
+    #     end
+    # end
 end
 function run_images(benchs,solver,proofs,extention)
     path = string(benchs,"/images-CVIU11")
@@ -922,12 +925,12 @@ function run_si(benchs,solver,proofs,extention)
 end
 
 function main()
-    # benchs = "veriPB/newSIPbenchmarks"
-    # solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-    # proofs = "veriPB/proofs"    
-    benchs = "newSIPbenchmarks"
-    solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-    proofs = "/cluster/proofs"
+    benchs = "veriPB/newSIPbenchmarks"
+    solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+    proofs = "veriPB/proofs"    
+    # benchs = "newSIPbenchmarks"
+    # solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+    # proofs = "/cluster/proofs"
     extention = ".veripb"
 
     b,s,p,e = benchs,solver,proofs,extention
@@ -964,5 +967,17 @@ main()
 # find . -name "*Zone.Identifier" -type f -delete 
 # find . -name ".*" -type f -delete 
 # ssh arthur@fataepyc-01.dcs.gla.ac.uk
-
+# scp arthur@fataepyc-01.dcs.gla.ac.uk:/cluster/proofs/smol.bio063002.veripb smol.bio063002.veripb
+# scp arthur@fataepyc-01.dcs.gla.ac.uk:/cluster/proofs/times times2
 # cd /home/arthur_gla/veriPB/trim/smol-proofs2/
+
+
+#=
+bio171002        : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 3971|62092  init : 655   opb : 3778/3971 (95%)   pbp : 13543/62092 (22%)   time : 59.023 s
+bio171002 (smol) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 5.852 MB  ->  880.8 KB       2.324 s  ->  11.08 s
+=#
+
