@@ -225,6 +225,9 @@ function solvepol(st,system,link)
     eq = pop!(stack)
     lits = eq.t
     lits2 = removenulllits(lits)
+    if length(link)==2
+        link[1] = -3
+    end
     return Eq(lits2,eq.b)
 end
 function proofsize(s,varmap,words)
@@ -356,7 +359,7 @@ function readveripb(path,file,system,invsys,varmap,words)
     end
     return system,invsys,systemlink,redwitness,output,conclusion,version
 end
-function slack(eq,isassi,assi)
+function slack(eq::Eq,isassi::Vector{Bool},assi::Vector{Bool})
     c=0
     for l in eq.t
         if isassi[l.var]
@@ -372,7 +375,7 @@ function slack(eq,isassi,assi)
     end
     return c
 end
-function reverse(eq)
+function reverse(eq::Eq)
     c=0
     lits = [Lit(l.coef,l.sign,l.var) for l in eq.t]
     for l in lits
@@ -402,27 +405,42 @@ end
 function comparefreelits(eq1,eq2,system,isassi)
     return nbfreelits(system[eq1],isassi) < nbfreelits(system[eq2],isassi)
 end
+function fixante(systemlink::Vector{Vector{Int}},antecedants::Vector{Bool},i)
+    for j in eachindex(systemlink[i])
+        t = systemlink[i][j]
+        if t>0 && !(j<length(systemlink[i]) && (systemlink[i][j+1] == -2 || systemlink[i][j+1] == -3))
+            antecedants[t] = true
+        end
+    end
+end
+function fixfront(front::Vector{Bool},antecedants::Vector{Bool})
+    for i in eachindex(antecedants)
+        if antecedants[i]
+            front[i] = true
+        end
+    end
+end
+function fixfront(front::Vector{Bool},antecedants::Vector{Int})
+    for i in antecedants
+        if i>0
+            front[i] = true
+        end
+    end
+end
 function makesmol(system,invsys,systemlink,nbopb)
     n = length(system)
     antecedants = zeros(Bool,n)
     isassi,assi = initassignement(invsys)
-
     cone = zeros(Bool,n)
     cone[end] = true
     front = zeros(Bool,n)
     firstcontradiction = findfirst(x->length(x.t)==0,system)
     cone[firstcontradiction] = true
-    if isassigned(systemlink,firstcontradiction) && length(systemlink[firstcontradiction])>1
-        for i in systemlink[firstcontradiction]
-            if i>0
-                front[i] = true
-            end
-        end
+    if systemlink[firstcontradiction][1] == -2         # pol case
+        fixfront(front,systemlink[firstcontradiction])
     else
         updumb(system,invsys,front)                     #front now contains the antecedants of the final claim
     end
-
-    # upsmart(system,invsys,front)
     print("  init : ",sum(front))#,findall(front))
     while true in front
         i = findlast(front)
@@ -432,21 +450,14 @@ function makesmol(system,invsys,systemlink,nbopb)
             if i>nbopb
                 tlink = systemlink[i][1]
                 if tlink == -1 
-                    antecedants .=false
-                    isassi .=false
-                    assi.=false
-                    rupdumb(system,invsys,antecedants,i,isassi,assi)
+                    antecedants .=false ; isassi .=false ; assi.=false
+                    rupdumb(system,antecedants,i,isassi,assi)
                     append!(systemlink[i],findall(antecedants))
-                    front = front .|| antecedants
+                    fixfront(front,antecedants)
                 elseif tlink >= -3
-                    antecedants .=false
-                    for j in eachindex(systemlink[i])
-                        t = systemlink[i][j]
-                        if t>0 && !(j<length(systemlink[i]) && (systemlink[i][j+1] == -2 || systemlink[i][j+1] == -3))
-                            antecedants[t] = true
-                        end
-                    end
-                    front = front .|| antecedants
+                    antecedants .= false
+                    fixante(systemlink,antecedants,i)
+                    fixfront(front,antecedants)
                 end
             end
         end
@@ -478,7 +489,7 @@ function updumb(system,invsys,antecedants)
     end
     printstyled(" updumb Failed "; color = :red)
 end
-function rupdumb(system,invsys,antecedants,init,isassi,assi)
+function rupdumb(system::Vector{Eq},antecedants::Vector{Bool},init,isassi::Vector{Bool},assi::Vector{Bool})
     rev = reverse(system[init])
     changes = true
     while changes
@@ -678,6 +689,43 @@ function writepol(link,cone)
     end
     return string(s,"\n")
 end
+function invlink(systemlink,succ::Vector{Vector{Int}})
+    for i in eachindex(systemlink)
+        if isassigned(systemlink,i)
+            t = systemlink[i]
+            for j in t
+                if j>0
+                    if isassigned(succ,j)
+                        push!(succ[j],i)
+                    else
+                        succ[j] = [i]
+                    end
+                end
+            end
+        end
+    end
+end
+function writedel(f,systemlink,i,succ,cone,nbopb,dels)
+    isdel = false
+    for p in systemlink[i]
+        if p>0
+            m = maximum(succ[p])
+            if m <=i
+                if p>nbopb && p<i && !dels[p] 
+                    if !isdel
+                        write(f,string("del id "))
+                        isdel = true
+                    end
+                    dels[p] = true
+                    write(f,string(sum(cone[1:p])," "))
+                end
+            end
+        end
+    end
+    if isdel
+        write(f,string("\n"))
+    end
+end
 function writecone(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
     open(string(path,"/smol.",file,".opb"),"w") do f
         for i in 1:nbopb
@@ -687,20 +735,27 @@ function writecone(path,file,extention,version,system,cone,systemlink,redwitness
             end
         end
     end
+    succ = Vector{Vector{Int}}(undef,length(systemlink))
+    dels = zeros(Bool,length(systemlink))
+    invlink(systemlink,succ)
     open(string(path,"/smol.",file,extention),"w") do f
         write(f,string("pseudo-Boolean proof version ",version,"\n"))
         write(f,string("f ",sum(cone[1:nbopb])," 0\n"))
-        # write(f,string("f ",nbopb," 0\n")) # for full system
         for i in nbopb+1:length(system)
             if cone[i]
                 eq = system[i]
                 tlink = systemlink[i][1]
                 if tlink == -1               # rup
                     write(f,writeu(eq,varmap))
-                elseif tlink == -2           # red
+                    if sum(cone[i:end])!=2          # do not delete the last rup
+                        # writedel(f,systemlink,i,succ,cone,nbopb,dels)
+                    end
+                elseif tlink == -2           # pol
                     write(f,writepol(systemlink[i],cone))
+                    # writedel(f,systemlink,i,succ,cone,nbopb,dels)
                 elseif tlink == -3           # ia
                     write(f,writeia(eq,systemlink[i][2],cone,varmap))
+                    # writedel(f,systemlink,i,succ,cone,nbopb,dels)
                 elseif tlink == -4           # red
                     write(f,writered(eq,varmap,redwitness[i]))
                 elseif tlink == -5           # solx
@@ -730,14 +785,11 @@ function prettybytes(b)
     end
 end
 function runtrimmer(path,file,extention)
-    # println("==========================")
     printstyled(file,"        : "; color = :yellow)
     # println("path = \"",path,"\"\nfile = \"",file,"\"\n")
     # path = "veriPB/proofs"
     # file = "si2_b03_m200.00"
-
     sat = read(`tail -n 2 $path/$file$extention`,String)[1:14] == "conclusion SAT"
-    
     if !sat
         t1=t2=t3 = 0.0
         try
@@ -765,13 +817,16 @@ function runtrimmer(path,file,extention)
             println("   trim : ",prettybytes(so),"  ->  ",prettybytes(st),
                     "       ",round(t1; sigdigits=4)," s  ->  ",round(t3; sigdigits=4)," s")
             open(string(path,"/times"), "a") do f
-                write(f,string(file,"/",t1,"/",t2,","))
+                write(f,string(file,"/",round(t1; sigdigits=4),"/",round(t2; sigdigits=4),"/",round(t3; sigdigits=4),","))
             end
             open(string(path,"/bytes"), "a") do f
                 write(f,string(file,"/",so/10^6,"/",st/10^6,","))
             end
         catch
             printstyled("catch (u cant see me)\n"; color = :red)
+            open(string(path,"/failedtrims"), "a") do f
+                write(f,string(file," "))
+            end
             if sum(cone)<30
                 printcone(system,systemlink,cone)
             end
@@ -779,19 +834,19 @@ function runtrimmer(path,file,extention)
     else
         println("SAT")
     end
-    # println("==========================")
 end
 function run_bio(benchs,solver,proofs,extention)
     path = string(benchs,"/biochemicalReactions")
     cd()
     graphs = cd(readdir, path)
-    # for i in eachindex(graphs)
-    #     for j in eachindex(graphs)
-    #         if i!=j
-    #             target = graphs[i]
-    #             pattern = graphs[j]
-                target = "002.txt"
-                pattern = "171.txt"
+    for i in eachindex(graphs)
+        for j in eachindex(graphs)
+            if i!=j
+                target = graphs[i]
+                pattern = graphs[j]
+                # target = "002.txt"
+                # pattern = "030.txt"
+                # pattern = "116.txt"
                 ins = string("bio",pattern[1:end-4],target[1:end-4])
                 if !isfile(string(proofs,"/",ins,".opb")) || 
                     (isfile(string(proofs,"/",ins,extention)) && 
@@ -800,9 +855,9 @@ function run_bio(benchs,solver,proofs,extention)
                     @time run(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $path/$pattern $path/$target`)
                 end
                 runtrimmer(proofs,ins,extention)
-    #         end
-    #     end
-    # end
+            end
+        end
+    end
 end
 function run_images(benchs,solver,proofs,extention)
     path = string(benchs,"/images-CVIU11")
@@ -979,5 +1034,85 @@ Verification succeeded.
 bio171002 (smol) : Running VeriPB version 2.0.0.post221+git.487290
 Verification succeeded.
    trim : 5.852 MB  ->  880.8 KB       2.324 s  ->  11.08 s
-=#
+del id
+
+
+trim problems
+bio116002
+bio007002
+bio057007
+bio037007
+bio121007
+bio170007
+bio035009
+bio072009
+bio108009
+
+
+
+
+  0.077492 seconds (113 allocations: 7.125 KiB)
+bio037002        : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 2539|37522  init : 1095   opb : 2259/2539 (89%)   pbp : 8491/37522 (23%)   time : 167.666 s
+bio037002 (smol) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 3.554 MB  ->  666.8 KB       2.462 s  ->  4.129 s
+
+  0.196476 seconds (113 allocations: 7.125 KiB)
+bio041002        : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 4331|130077  init : 786   opb : 3438/4331 (79%)   pbp : 14438/130077 (11%)   time : 2.099 s
+bio041002 (smol) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 9.438 MB  ->  1.118 MB       9.3 s  ->  1.272 s
+
+  0.127089 seconds (113 allocations: 7.125 KiB)
+bio046002        : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 4621|94361  init : 889   opb : 3965/4621 (86%)   pbp : 13661/94361 (14%)   time : 1.256 s
+bio046002 (smol) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 7.714 MB  ->  1.012 MB       6.635 s  ->  0.6311 s
+
+     0.205192 seconds (113 allocations: 7.125 KiB)
+bio063002        : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 4609|250361  init : 760   opb : 4271/4609 (93%)   pbp : 21695/250361 (9%)   time : 4.19 s
+bio063002 (smol) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 17.26 MB  ->  1.607 MB       17.4 s  ->  2.1 s
+   
+     0.105112 seconds (113 allocations: 7.125 KiB)
+bio065002        : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 2729|33440  init : 432   opb : 2549/2729 (93%)   pbp : 6813/33440 (20%)   time : 44.615 s
+bio065002 (smol) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 3.216 MB  ->  503.1 KB       2.199 s  ->  1.6 s
+
+     0.184300 seconds (113 allocations: 7.125 KiB)
+bio071002        : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 5765|163909  init : 989   opb : 4577/5765 (79%)   pbp : 21158/163909 (13%)   time : 2.659 s
+bio071002 (smol) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 12.07 MB  ->  1.617 MB       12.62 s  ->  1.951 s
+
+ 0.113359 seconds (114 allocations: 7.422 KiB)
+bio075002        : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 4425|166447  init : 697   opb : 3667/4425 (83%)   pbp : 14313/166447 (9%)   time : 1.642 s
+bio075002 (smol) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 11.64 MB  ->  1.129 MB       10.51 s  ->  1.44 s
+
+ 0.174116 seconds (113 allocations: 7.125 KiB)
+bio084002        : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 3287|107140  init : 704   opb : 3012/3287 (92%)   pbp : 18354/107140 (17%)   time : 1.395 s
+bio084002 (smol) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 7.293 MB  ->  1.302 MB       7.632 s  ->  1.554 s
+   =#
 
