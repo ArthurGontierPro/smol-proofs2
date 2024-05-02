@@ -770,49 +770,50 @@ function writeconedel(path,file,extention,version,system,cone,systemlink,redwitn
         write(f,"end pseudo-Boolean proof\n")
     end
 end
-function writecone(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
-    open(string(path,"/smol.",file,".opb"),"w") do f
-        for i in 1:nbopb
-            if cone[i]
-                eq = system[i]
-                write(f,writeeq(eq,varmap))
+function writerepartition(path,file,cone,nbopb)
+    open(string(path,"/repartition"), "a") do f
+        write(f,string(file,"\n"))
+        for i in eachindex(cone)
+            if cone[i] 
+                write(f,string("1"))
+            else
+                write(f,string("."))
+            end
+            if i==nbopb
+                write(f,string("\n"))
             end
         end
+        write(f,string("\n"))
     end
-    succ = Vector{Vector{Int}}(undef,length(systemlink))
-    dels = ones(Bool,length(systemlink))
-    invlink(systemlink,succ)
-    open(string(path,"/smol.",file,extention),"w") do f
-        write(f,string("pseudo-Boolean proof version ",version,"\n"))
-        write(f,string("f ",sum(cone[1:nbopb])," 0\n"))
-        for i in nbopb+1:length(system)
-            if cone[i]
-                eq = system[i]
-                tlink = systemlink[i][1]
-                if tlink == -1               # rup
-                    write(f,writeu(eq,varmap))
-                    writedel(f,systemlink,i,succ,cone,nbopb,dels)
-                elseif tlink == -2           # pol
-                    write(f,writepol(systemlink[i],cone))
-                    writedel(f,systemlink,i,succ,cone,nbopb,dels)
-                elseif tlink == -3           # ia
-                    write(f,writeia(eq,systemlink[i][2],cone,varmap))
-                    writedel(f,systemlink,i,succ,cone,nbopb,dels)
-                elseif tlink == -4           # red
-                    write(f,writered(eq,varmap,redwitness[i]))
-                elseif tlink == -5           # solx
-                    write(f,writesol(eq,varmap))
+end
+function writeshortrepartition(path,file,cone,nbopb)
+    open(string(path,"/repartition"), "a") do f
+        chunk = nbopb ÷ 100
+        proofchunk = (length(cone)-nbopb) ÷ 100
+        write(f,string(file," opb and proof chunks are :",chunk," ",proofchunk,"\n"))
+        s = 0
+        j = 1
+        for i in eachindex(cone)
+            if cone[i] 
+                s += cone[i]
+            end
+            if i-j==chunk
+                if s == 0
+                    write(f,string("."))
+                else
+                    write(f,string(" ",100s÷chunk))
                 end
+                s = 0 
+                j = i
+            end
+            if i==nbopb
+                write(f,string(" ",s,"\n"))
+                chunk = proofchunk
+                s = 0
+                j = i
             end
         end
-        write(f,string("output ",output,"\n"))
-        if conclusion == "SAT"
-            write(f,string("conclusion ",conclusion,"\n"))
-        else
-            write(f,string("conclusion ",conclusion," : -1\n"))#,sum(cone),"\n"))
-            # write(f,string("conclusion ",conclusion," : ",length(system),"\n")) # for full system
-        end
-        write(f,"end pseudo-Boolean proof\n")
+        write(f,string(" ",s,"\n"))
     end
 end
 function prettybytes(b)
@@ -848,40 +849,15 @@ function runtrimmer(path,file,extention)
         t2 = @elapsed begin
             cone = makesmol(system,invsys,systemlink,nbopb)
         end
-        writecone(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
+        writeconedel(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
         nto = sum(cone[1:nbopb])
         ntp = sum(cone[nbopb+1:end])
         println("   opb : ",nto,"/",nbopb," (",round(Int,100*nto/nbopb),"%)",
                 "   pbp : ",ntp,"/",(length(system)-nbopb)," (",round(Int,100*ntp/(length(system)-nbopb)),"%)",
                 "   time : ",round(t2; digits=3)," s")
         printstyled(file," (smol)         : "; color = :yellow)
-        try
-            t3 = @elapsed run(`veripb $path/smol.$file.opb $path/smol.$file$extention`)
-            so = stat(string(path,"/",file,".opb")).size + stat(string(path,"/",file,extention)).size
-            st = stat(string(path,"/smol.",file,".opb")).size + stat(string(path,"/smol.",file,extention)).size
-            println("   trim : ",prettybytes(so),"  ->  ",prettybytes(st),
-                    "       ",round(t1; sigdigits=4)," s  ->  ",round(t3; sigdigits=4)," s")
-            open(string(path,"/times"), "a") do f
-                write(f,string(file,"/",round(t1; sigdigits=4),"/",round(t2; sigdigits=4),"/",round(t3; sigdigits=4),","))
-            end
-            open(string(path,"/bytes"), "a") do f
-                write(f,string(file,"/",so/10^6,"/",st/10^6,","))
-            end
-        catch
-            printstyled("catch (u cant see me)\n"; color = :red)
-            open(string(path,"/failedtrims"), "a") do f
-                write(f,string(file," "))
-            end
-            if sum(cone)<30
-                printcone(system,systemlink,cone)
-            end
-        end
+        writeshortrepartition(path,file,cone,nbopb)
 
-        writeconedel(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
-        nto = sum(cone[1:nbopb])
-        ntp = sum(cone[nbopb+1:end])
-        printstyled(file," (smol) & "; color = :yellow)
-        printstyled("(del) : "; color = :red)
         try
             t3 = @elapsed run(`veripb $path/smol.$file.opb $path/smol.$file$extention`)
             so = stat(string(path,"/",file,".opb")).size + stat(string(path,"/",file,extention)).size
@@ -913,14 +889,14 @@ function run_bio(benchs,solver,proofs,extention)
     path = string(benchs,"/biochemicalReactions")
     cd()
     graphs = cd(readdir, path)
-    # for i in eachindex(graphs)
-    #     for j in eachindex(graphs)
-    #         if i!=j
-    #             target = graphs[i]
-    #             pattern = graphs[j]
-                target = "002.txt"
+    for i in eachindex(graphs)
+        for j in eachindex(graphs)
+            if i!=j
+                target = graphs[i]
+                pattern = graphs[j]
+                # target = "002.txt"
                 # pattern = "030.txt"
-                pattern = "171.txt"
+                # pattern = "171.txt"
                 ins = string("bio",pattern[1:end-4],target[1:end-4])
                 if !isfile(string(proofs,"/",ins,".opb")) || 
                     (isfile(string(proofs,"/",ins,extention)) && 
@@ -929,9 +905,9 @@ function run_bio(benchs,solver,proofs,extention)
                     @time run(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $path/$pattern $path/$target`)
                 end
                 runtrimmer(proofs,ins,extention)
-    #         end
-    #     end
-    # end
+            end
+        end
+    end
 end
 function run_images(benchs,solver,proofs,extention)
     path = string(benchs,"/images-CVIU11")
@@ -1226,5 +1202,13 @@ Verification succeeded.
 bio084002 (smol) : Running VeriPB version 2.0.0.post221+git.487290
 Verification succeeded.
    trim : 7.293 MB  ->  1.302 MB       7.632 s  ->  1.554 s
+
+
+   bio167002                : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 2719|61630  init : 791   opb : 2600/2719 (96%)   pbp : 10301/61630 (17%)   time : 28.294 s
+bio167002 (smol)         : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 4.603 MB  ->  758.2 KB       2.598 s  ->  1.051 s
    =#
 
