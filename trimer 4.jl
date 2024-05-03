@@ -787,7 +787,7 @@ function writerepartition(path,file,cone,nbopb)
     end
 end
 function writeshortrepartition(path,file,cone,nbopb)
-    open(string(path,"/repartition"), "a") do f
+    open(string(path,"/arepartition"), "a") do f
         chunk = nbopb ÷ 100
         proofchunk = (length(cone)-nbopb) ÷ 100
         write(f,string(file," opb and proof chunks are :",chunk," ",proofchunk,"\n"))
@@ -841,7 +841,7 @@ function runtrimmer(path,file,extention)
         try
             t1 = @elapsed run(`veripb $path/$file.opb $path/$file$extention`)
         catch
-            printstyled("catch veriPB fail\n"; color = :red)
+            printstyled(file,"veriPB fail\n"; color = :red)
         end
         system,invsys,systemlink,redwitness,nbopb,varmap,output,conclusion,version = readinstance(path,file)
         print("   size : ",nbopb,"|",length(system)-nbopb)
@@ -857,26 +857,32 @@ function runtrimmer(path,file,extention)
                 "   time : ",round(t2; digits=3)," s")
         printstyled(file," (smol)         : "; color = :yellow)
         writeshortrepartition(path,file,cone,nbopb)
-
         try
             t3 = @elapsed run(`veripb $path/smol.$file.opb $path/smol.$file$extention`)
             so = stat(string(path,"/",file,".opb")).size + stat(string(path,"/",file,extention)).size
             st = stat(string(path,"/smol.",file,".opb")).size + stat(string(path,"/smol.",file,extention)).size
-            println("   trim : ",prettybytes(so),"  ->  ",prettybytes(st),
-                    "       ",round(t1; sigdigits=4)," s  ->  ",round(t3; sigdigits=4)," s")
-            open(string(path,"/times"), "a") do f
-                write(f,string(file,"/",round(t1; sigdigits=4),"/",round(t2; sigdigits=4),"/",round(t3; sigdigits=4),","))
+            if t1>t3
+                printstyled("   trim : ",prettybytes(so),"  ->  ",prettybytes(st),
+                "       ",round(t1; sigdigits=4)," s  ->  ",round(t3; sigdigits=4)," s\n"; color = :green)
+            else
+                printstyled("   trim : ",prettybytes(so),"  ->  ",prettybytes(st),
+                "       ",round(t1; sigdigits=4)," s  ->  ",round(t3; sigdigits=4)," s\n"; color = :red)
             end
-            open(string(path,"/bytes"), "a") do f
-                write(f,string(file,"/",so/10^6,"/",st/10^6,","))
+            open(string(path,"/abytes"), "a") do f
+                write(f,string(file,"/",so/10^6,"/",st/10^6,",\n"))
+            end
+            open(string(path,"/atimes"), "a") do f
+                write(f,string(file,"/",round(t1; sigdigits=4),"/",round(t2; sigdigits=4),"/",round(t3; sigdigits=4),",\n"))
+            end
+            if t1<t2 || t1<t3                
+                open(string(path,"/aworst"), "a") do f
+                    write(f,string(file,"/",round(t1; sigdigits=4),"/",round(t2; sigdigits=4),"/",round(t3; sigdigits=4),",\n"))
+                end
             end
         catch
             printstyled("catch (u cant see me)\n"; color = :red)
-            open(string(path,"/failedtrims"), "a") do f
-                write(f,string(file," "))
-            end
-            if sum(cone)<30
-                printcone(system,systemlink,cone)
+            open(string(path,"/afailedtrims"), "a") do f
+                write(f,string(file," \n"))
             end
         end
     elseif sat
@@ -889,7 +895,8 @@ function run_bio(benchs,solver,proofs,extention)
     path = string(benchs,"/biochemicalReactions")
     cd()
     graphs = cd(readdir, path)
-    for i in eachindex(graphs)
+    println("threads available:",Threads.nthreads())
+    Threads.@threads for i in eachindex(graphs)
         for j in eachindex(graphs)
             if i!=j
                 target = graphs[i]
@@ -902,7 +909,7 @@ function run_bio(benchs,solver,proofs,extention)
                     (isfile(string(proofs,"/",ins,extention)) && 
                     (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
                     read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
-                    @time run(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $path/$pattern $path/$target`)
+                    run(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $path/$pattern $path/$target`)
                 end
                 runtrimmer(proofs,ins,extention)
             end
@@ -1030,12 +1037,12 @@ function run_si(benchs,solver,proofs,extention)
 end
 
 function main()
-    benchs = "veriPB/newSIPbenchmarks"
-    solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-    proofs = "veriPB/proofs"    
-    # benchs = "newSIPbenchmarks"
-    # solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-    # proofs = "/cluster/proofs"
+    # benchs = "veriPB/newSIPbenchmarks"
+    # solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+    # proofs = "veriPB/proofs"    
+    benchs = "newSIPbenchmarks"
+    solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+    proofs = "/cluster/proofs"
     extention = ".veripb"
 
     b,s,p,e = benchs,solver,proofs,extention
@@ -1064,7 +1071,10 @@ function main()
     end
 end
 
-# julia 'trimer 4.jl'
+#=
+export JULIA_NUM_THREADS=192
+julia 'trimer 4.jl'
+=#
 main()
 
 # scp -r \\wsl.localhost\Ubuntu\home\arthur_gla\veriPB\trim\smol-proofs2\Instances\ arthur@fataepyc-01.dcs.gla.ac.uk:/users/grad/arthur/smol-proofs2
