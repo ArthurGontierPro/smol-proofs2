@@ -442,7 +442,7 @@ function makesmol(system,invsys,systemlink,nbopb)
         updumb(system,invsys,front)                     #front now contains the antecedants of the final claim
         append!(systemlink[firstcontradiction],findall(front))
     end
-    print("  init : ",sum(front))#,findall(front))
+    # print("  init : ",sum(front))#,findall(front))
     while true in front
         i = findlast(front)
         front[i] = false
@@ -828,7 +828,7 @@ function prettybytes(b)
     end
 end
 function runtrimmer(path,file,extention)
-    printstyled(file,"                : "; color = :yellow)
+    # printstyled(file,"                : \n"; color = :yellow)
     # println("path = \"",path,"\"\nfile = \"",file,"\"\n")
     # path = "veriPB/proofs"
     # file = "si2_b03_m200.00"
@@ -838,13 +838,16 @@ function runtrimmer(path,file,extention)
 
     if !sat && nline>10
         t1=t2=t3 = 0.0
+        v1=v2=""
         try
-            t1 = @elapsed run(`veripb $path/$file.opb $path/$file$extention`)
+            t1 = @elapsed begin
+                v1 = read(`veripb $path/$file.opb $path/$file$extention`)
+            end        
         catch
             printstyled(file,"veriPB fail\n"; color = :red)
         end
         system,invsys,systemlink,redwitness,nbopb,varmap,output,conclusion,version = readinstance(path,file)
-        print("   size : ",nbopb,"|",length(system)-nbopb)
+        # print("   size : ",nbopb,"|",length(system)-nbopb)
         normcoefsystem(system)
         t2 = @elapsed begin
             cone = makesmol(system,invsys,systemlink,nbopb)
@@ -852,21 +855,23 @@ function runtrimmer(path,file,extention)
         writeconedel(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
         nto = sum(cone[1:nbopb])
         ntp = sum(cone[nbopb+1:end])
-        println("   opb : ",nto,"/",nbopb," (",round(Int,100*nto/nbopb),"%)",
-                "   pbp : ",ntp,"/",(length(system)-nbopb)," (",round(Int,100*ntp/(length(system)-nbopb)),"%)",
-                "   time : ",round(t2; digits=3)," s")
-        printstyled(file," (smol)         : "; color = :yellow)
+        # println("   opb : ",nto,"/",nbopb," (",round(Int,100*nto/nbopb),"%)",
+        #         "   pbp : ",ntp,"/",(length(system)-nbopb)," (",round(Int,100*ntp/(length(system)-nbopb)),"%)",
+        #         "   time : ",round(t2; digits=3)," s")
+        # printstyled(file," (smol)         : "; color = :yellow)
         writeshortrepartition(path,file,cone,nbopb)
         try
-            t3 = @elapsed run(`veripb $path/smol.$file.opb $path/smol.$file$extention`)
+            t3 = @elapsed begin
+                v2 = read(`veripb $path/smol.$file.opb $path/smol.$file$extention`)
+            end
             so = stat(string(path,"/",file,".opb")).size + stat(string(path,"/",file,extention)).size
             st = stat(string(path,"/smol.",file,".opb")).size + stat(string(path,"/smol.",file,extention)).size
             if t1>t3
-                printstyled("   trim : ",prettybytes(so),"  ->  ",prettybytes(st),
-                "       ",round(t1; sigdigits=4)," s  ->  ",round(t3; sigdigits=4)," s\n"; color = :green)
+                printstyled(file,"   trim : ",prettybytes(so),"  ->  ",prettybytes(st),
+                "       ",round(t1; sigdigits=4)," s  ->  ",round(t3; sigdigits=4)," s      ",round(t2; sigdigits=4)," s\n"; color = :green)
             else
-                printstyled("   trim : ",prettybytes(so),"  ->  ",prettybytes(st),
-                "       ",round(t1; sigdigits=4)," s  ->  ",round(t3; sigdigits=4)," s\n"; color = :red)
+                printstyled(file,"   trim : ",prettybytes(so),"  ->  ",prettybytes(st),
+                "       ",round(t1; sigdigits=4)," s  ->  ",round(t3; sigdigits=4)," s      ",round(t2; sigdigits=4)," s\n"; color = :red)
             end
             open(string(path,"/abytes"), "a") do f
                 write(f,string(file,"/",so/10^6,"/",st/10^6,",\n"))
@@ -879,6 +884,12 @@ function runtrimmer(path,file,extention)
                     write(f,string(file,"/",round(t1; sigdigits=4),"/",round(t2; sigdigits=4),"/",round(t3; sigdigits=4),",\n"))
                 end
             end
+            if v1!=v2
+                printstyled("catch (u cant see me)\n"; color = :red)
+                open(string(path,"/afailedtrims"), "a") do f
+                    write(f,string(file," \n"))
+                end
+            end
         catch
             printstyled("catch (u cant see me)\n"; color = :red)
             open(string(path,"/afailedtrims"), "a") do f
@@ -886,9 +897,9 @@ function runtrimmer(path,file,extention)
             end
         end
     elseif sat
-        println("SAT")
+        # println("SAT")
     else
-        println("atomic")
+        # println("atomic")
     end
 end
 function run_bio(benchs,solver,proofs,extention)
@@ -909,7 +920,7 @@ function run_bio(benchs,solver,proofs,extention)
                     (isfile(string(proofs,"/",ins,extention)) && 
                     (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
                     read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
-                    run(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $path/$pattern $path/$target`)
+                    run(pipeline(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $path/$pattern $path/$target`; stdout="/dev/null"))
                 end
                 runtrimmer(proofs,ins,extention)
             end
@@ -1073,7 +1084,7 @@ end
 
 #=
 export JULIA_NUM_THREADS=192
-julia 'trimer 4.jl'
+julia 'trimer 4.jl' bio
 =#
 main()
 
