@@ -1,3 +1,4 @@
+
 mutable struct Lit
     coef::Int
     sign::Bool
@@ -837,6 +838,23 @@ function runtrimmer(path,file,extention)
     nline = parse(Int,split(read(`wc -l $path/$file$extention`,String)," ")[1])
 
     if !sat && nline>10
+        @time system,invsys,systemlink,redwitness,nbopb,varmap,output,conclusion,version = readinstance(path,file)
+
+        @time Threads.@threads for i in 1:64
+        system,invsys,systemlink,redwitness,nbopb,varmap,output,conclusion,version = readinstance(path,file)
+        end
+
+        @time v1 = read(`veripb $path/$file.opb $path/$file$extention`)
+        @time Threads.@threads for i in 1:64
+        v1 = read(`veripb $path/$file.opb $path/$file$extention`)
+        end
+
+        @time cone = makesmol(system,invsys,systemlink,nbopb)
+        @time Threads.@threads for i in 1:64
+            cone = makesmol(system,invsys,systemlink,nbopb)
+        end
+
+        #=
         t1=t2=t3 = 0.0
         v1=v2=""
         try
@@ -895,7 +913,7 @@ function runtrimmer(path,file,extention)
             open(string(path,"/afailedtrims"), "a") do f
                 write(f,string(file," \n"))
             end
-        end
+        end=#
     elseif sat
         # println("SAT")
     else
@@ -907,25 +925,24 @@ function run_bio(benchs,solver,proofs,extention)
     cd()
     graphs = cd(readdir, path)
     println("threads available:",Threads.nthreads())
-    Threads.@threads for i in eachindex(graphs)
-        for j in eachindex(graphs)
-            if i!=j
-                target = graphs[i]
-                pattern = graphs[j]
-                # target = "002.txt"
-                # pattern = "030.txt"
-                # pattern = "171.txt"
+    # for i in 1:1 #eachindex(graphs)
+    #     for j in 1:1 #eachindex(graphs)
+    #         if i!=j
+    #             target = graphs[i]
+    #             pattern = graphs[j]
+                pattern = "096.txt"
+                target = "061.txt"
                 ins = string("bio",pattern[1:end-4],target[1:end-4])
                 if !isfile(string(proofs,"/",ins,".opb")) || 
                     (isfile(string(proofs,"/",ins,extention)) && 
                     (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
                     read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
-                    run(pipeline(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $path/$pattern $path/$target`; stdout="/dev/null"))
+                    run(pipeline(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $path/$pattern $path/$target`, devnull))
                 end
                 runtrimmer(proofs,ins,extention)
-            end
-        end
-    end
+    #         end
+    #     end
+    # end
 end
 function run_images(benchs,solver,proofs,extention)
     path = string(benchs,"/images-CVIU11")
@@ -1085,6 +1102,14 @@ end
 #=
 export JULIA_NUM_THREADS=192
 julia 'trimer 4.jl' bio
+
+rm atimes
+rm abytes
+rm afailedtrims
+rm aworst
+rm arepartition
+
+
 =#
 main()
 
@@ -1096,6 +1121,67 @@ main()
 # scp arthur@fataepyc-01.dcs.gla.ac.uk:/cluster/proofs/smol.bio063002.veripb smol.bio063002.veripb
 # scp arthur@fataepyc-01.dcs.gla.ac.uk:/cluster/proofs/times times2
 # cd /home/arthur_gla/veriPB/trim/smol-proofs2/
+
+
+#=
+
+
+
+threads available:1
+bio096061   trim : 11.78 MB  ->  2.591 MB       4.471 s  ->  1.192 s      2.89 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       4.324 s  ->  1.177 s      2.791 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       4.262 s  ->  1.188 s      2.785 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       4.18 s  ->  1.276 s      2.786 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       4.578 s  ->  1.341 s      2.848 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       4.48 s  ->  1.395 s      2.932 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       4.584 s  ->  1.368 s      2.927 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       4.627 s  ->  1.429 s      3.087 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       5.025 s  ->  1.346 s      3.239 s
+200.983978 seconds (206.94 M allocations: 70.214 GiB, 4.85% gc time, 0.39% compilation time)
+
+
+
+threads available:12
+bio096061   trim : 11.78 MB  ->  2.591 MB       9.49 s  ->  1.474 s      6.649 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       9.311 s  ->  2.87 s      6.53 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       9.578 s  ->  2.894 s      6.687 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       9.338 s  ->  3.275 s      6.675 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       9.351 s  ->  3.363 s      6.313 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       8.975 s  ->  3.496 s      6.864 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       9.07 s  ->  3.221 s      6.534 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       8.966 s  ->  2.862 s      6.7 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       9.251 s  ->  2.951 s      6.591 s
+ 86.292714 seconds (207.11 M allocations: 70.235 GiB, 17.97% gc time, 4.78% compilation time)
+
+
+threads available:12
+bio096061   trim : 11.78 MB  ->  2.591 MB       17.78 s  ->  4.364 s      3.253 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       21.96 s  ->  2.456 s      8.878 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       21.94 s  ->  3.951 s      8.87 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       21.94 s  ->  4.107 s      8.73 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       21.96 s  ->  4.567 s      8.874 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       21.94 s  ->  4.157 s      8.866 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       21.96 s  ->  4.205 s      8.893 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       21.96 s  ->  4.272 s      8.911 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       21.94 s  ->  4.385 s      8.866 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       21.96 s  ->  4.524 s      8.905 s
+ 56.580600 seconds (44.41 M allocations: 58.904 GiB, 2.68% gc time, 13.45% compilation time)
+
+threads available:6
+bio096061   trim : 11.78 MB  ->  2.591 MB       13.64 s  ->  3.452 s      6.17 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       13.09 s  ->  3.575 s      6.264 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       12.26 s  ->  3.448 s      6.311 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       12.94 s  ->  3.574 s      6.122 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       12.8 s  ->  3.848 s      6.347 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       13.87 s  ->  3.841 s      5.953 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       10.88 s  ->  2.614 s      5.127 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       9.874 s  ->  2.836 s      4.937 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       9.985 s  ->  2.724 s      4.919 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       9.973 s  ->  2.92 s      4.947 s
+ 61.665076 seconds (44.42 M allocations: 58.913 GiB, 2.41% gc time, 8.70% compilation time)
+
+
+ =#
 
 
 #=
@@ -1231,5 +1317,19 @@ Verification succeeded.
 bio167002 (smol)         : Running VeriPB version 2.0.0.post221+git.487290
 Verification succeeded.
    trim : 4.603 MB  ->  758.2 KB       2.598 s  ->  1.051 s
+   =#
+
+
+#=
+   bio144093   trim : 1.101 MB  ->  115.5 KB       67.31 s  ->  0.08961 s      0.01088 s
+   bio091033   trim : 12.41 MB  ->  740.6 KB       71.14 s  ->  0.7427 s      1.23 s
+   bio096061   trim : 11.78 MB  ->  2.591 MB       141.7 s  ->  68.18 s      4.112 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       3.921 s  ->  1.137 s      2.739 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       5.5e-8 s  ->  5.3e-8 s      5.207 s 4t
+
+bio035164   trim : 9.835 MB  ->  1.842 MB       64.34 s  ->  71.77 s      75600.0 s
+bio097061   trim : 11.78 MB  ->  2.591 MB       71.41 s  ->  71.56 s      354.8 s
+
+bio149094   trim : 969.6 KB  ->  90.24 KB       67.63 s  ->  0.08493 s      0.006856 s
    =#
 
