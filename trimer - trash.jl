@@ -417,3 +417,304 @@ i belive it matters
 
 
 =#
+
+
+
+function readveripb(path,file,system,invsys,varmap,words)
+    systemlink = Vector{Vector{Int}}
+    redwitness = Vector{String}
+    version = output = conclusion = ""
+    # s = lines(string(path,'/',file,".veripb"))
+    version = "2.0" #split(s[1],' ')[end]
+    c = length(system)
+    nbctr = 0
+    open(string(path,'/',file,".veripb"),"r"; lock = false) do f
+        @time for ss in eachline(f)
+            if ss[1:2] in ["p ","u ","ia","re","so"]
+                nbctr+=1
+                st = split(ss,' ')
+                for v in st
+                    if !(v in words) && !(tryparse(Int64,v) isa Number)
+                        var = split(v,'~')[end]
+                        if !(var in varmap)
+                            push!(varmap,var)
+                        end
+                    end 
+                end
+            end
+        end
+        # @time nbctr = proofsize(f,varmap,words) + c
+        nbctr +=c
+    end
+    open(string(path,'/',file,".veripb"),"r"; lock = false) do f
+        system = vcat(system,Vector{Eq}(undef,nbctr-c))
+        invsys = vcat(invsys,Vector{Vector{Int}}(undef,length(varmap)-length(invsys)))
+        systemlink = Vector{Vector{Int}}(undef,nbctr)
+        redwitness = Vector{String}(undef,nbctr)
+        c+=1
+        @time for ss in eachline(f)
+            st = split(ss,' ')
+            removespaces(st)
+            eq = Eq([],0)
+            if ss[1:2] == "u " || ss[1:3] == "rup"
+                eq = readeq(st,varmap,2:2:length(st)-3)
+                systemlink[c] = [-1]
+            elseif ss[1:2] == "p " || ss[1:3] == "pol"
+                systemlink[c] = [-2]
+                eq = solvepol(st,system,systemlink[c])
+            elseif ss[1:2] == "ia"
+                systemlink[c] = [-3,parse(Int,st[2])]
+                eq = readeq(st,varmap,4:2:length(st)-3)
+            elseif ss[1:3] == "red"  
+                systemlink[c] = [-4]
+                eq = readred(st,varmap,redwitness,c)
+            elseif ss[1:3] == "sol"                                  # on ajoute la negation au probleme pour chercher d'autres solutions. jusqua contradiction finale. dans la preuve c.est juste des contraintes pour casser toutes les soloutions trouvees
+                systemlink[c] = [-5]
+                eq = findfullassi(system,invsys,st,c,varmap)
+            elseif st[1] == "output"
+                output = st[2]
+            elseif st[1] == "conclusion"
+                conclusion = st[2]
+            elseif !(ss[1:2] in ["# ","w ","ps","* ","f ","d ","de","co","en"])
+                println("unknown: ",ss)
+            end
+            if length(eq.t)!=0 || eq.b!=0
+                normcoefeq(eq)
+                system[c] = eq
+                addinvsys(invsys,eq,c)
+                c+=1
+            end
+        end
+    end
+    return system,invsys,systemlink,redwitness,output,conclusion,version
+end
+
+
+
+#=
+
+threads available:6
+ 10.853439 seconds (21.23 M allocations: 2.172 GiB, 5.59% gc time, 3.09% compilation time)
+ 23.658517 seconds (123.99 M allocations: 12.788 GiB, 12.22% gc time, 0.63% compilation time)
+  4.287888 seconds (97 allocations: 204.312 KiB)
+  9.784691 seconds (110.84 k allocations: 8.765 MiB, 1.57% compilation time)
+  2.917663 seconds (102.22 k allocations: 7.627 MiB, 4.69% compilation time)
+  4.836015 seconds (8.59 k allocations: 7.617 MiB, 1.70% compilation time)
+
+  threads available:192
+ 17.662524 seconds (21.23 M allocations: 2.166 GiB, 7.46% gc time, 2.70% compilation time)
+102.705816 seconds (1.32 G allocations: 136.473 GiB, 37.51% gc time, 57.83% compilation time)
+  6.750308 seconds (97 allocations: 204.320 KiB)
+ 11.682530 seconds (120.48 k allocations: 20.205 MiB, 49.10% compilation time)
+  4.158347 seconds (102.23 k allocations: 7.641 MiB, 4.53% compilation time)
+
+threads available:1
+bio096061   trim : 11.78 MB  ->  2.591 MB       4.471 s  ->  1.192 s      2.89 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       4.324 s  ->  1.177 s      2.791 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       4.262 s  ->  1.188 s      2.785 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       4.18 s  ->  1.276 s      2.786 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       4.578 s  ->  1.341 s      2.848 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       4.48 s  ->  1.395 s      2.932 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       4.584 s  ->  1.368 s      2.927 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       4.627 s  ->  1.429 s      3.087 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       5.025 s  ->  1.346 s      3.239 s
+200.983978 seconds (206.94 M allocations: 70.214 GiB, 4.85% gc time, 0.39% compilation time)
+
+
+
+threads available:12
+bio096061   trim : 11.78 MB  ->  2.591 MB       9.49 s  ->  1.474 s      6.649 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       9.311 s  ->  2.87 s      6.53 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       9.578 s  ->  2.894 s      6.687 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       9.338 s  ->  3.275 s      6.675 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       9.351 s  ->  3.363 s      6.313 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       8.975 s  ->  3.496 s      6.864 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       9.07 s  ->  3.221 s      6.534 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       8.966 s  ->  2.862 s      6.7 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       9.251 s  ->  2.951 s      6.591 s
+ 86.292714 seconds (207.11 M allocations: 70.235 GiB, 17.97% gc time, 4.78% compilation time)
+
+
+threads available:12
+bio096061   trim : 11.78 MB  ->  2.591 MB       17.78 s  ->  4.364 s      3.253 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       21.96 s  ->  2.456 s      8.878 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       21.94 s  ->  3.951 s      8.87 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       21.94 s  ->  4.107 s      8.73 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       21.96 s  ->  4.567 s      8.874 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       21.94 s  ->  4.157 s      8.866 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       21.96 s  ->  4.205 s      8.893 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       21.96 s  ->  4.272 s      8.911 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       21.94 s  ->  4.385 s      8.866 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       21.96 s  ->  4.524 s      8.905 s
+ 56.580600 seconds (44.41 M allocations: 58.904 GiB, 2.68% gc time, 13.45% compilation time)
+
+threads available:6
+bio096061   trim : 11.78 MB  ->  2.591 MB       13.64 s  ->  3.452 s      6.17 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       13.09 s  ->  3.575 s      6.264 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       12.26 s  ->  3.448 s      6.311 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       12.94 s  ->  3.574 s      6.122 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       12.8 s  ->  3.848 s      6.347 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       13.87 s  ->  3.841 s      5.953 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       10.88 s  ->  2.614 s      5.127 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       9.874 s  ->  2.836 s      4.937 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       9.985 s  ->  2.724 s      4.919 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       9.973 s  ->  2.92 s      4.947 s
+ 61.665076 seconds (44.42 M allocations: 58.913 GiB, 2.41% gc time, 8.70% compilation time)
+
+
+ =#
+
+
+#=
+bio171002        : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 3971|62092  init : 655   opb : 3778/3971 (95%)   pbp : 13543/62092 (22%)   time : 59.023 s
+bio171002 (smol) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 5.852 MB  ->  880.8 KB       2.324 s  ->  11.08 s
+del id
+
+bio021002                : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 4255|73903  init : 761   opb : 3967/4255 (93%)   pbp : 10557/73903 (14%)   time : 20.965 s
+bio021002 (smol)         : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 6.354 MB  ->  704.1 KB       3.073 s  ->  2.812 s
+bio021002 (smol) & (del) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 6.354 MB  ->  814.0 KB       3.073 s  ->  1.725 s
+
+bio037002                : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 2539|37522  init : 1095   opb : 2259/2539 (89%)   pbp : 8491/37522 (23%)   time : 64.39 s
+bio037002 (smol)         : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 3.554 MB  ->  596.1 KB       1.843 s  ->  11.77 s
+bio037002 (smol) & (del) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 3.554 MB  ->  669.4 KB       1.843 s  ->  2.562 s
+
+bio063002                : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 4609|250361  init : 760   opb : 4271/4609 (93%)   pbp : 21695/250361 (9%)   time : 3.424 s
+bio063002 (smol)         : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 17.26 MB  ->  1.387 MB       10.93 s  ->  1.176 s
+bio063002 (smol) & (del) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 17.26 MB  ->  1.611 MB       10.93 s  ->  1.361 s
+
+bio065002                : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 2729|33440  init : 432   opb : 2549/2729 (93%)   pbp : 6813/33440 (20%)   time : 18.321 s
+bio065002 (smol)         : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 3.216 MB  ->  444.3 KB       1.333 s  ->  2.11 s
+bio065002 (smol) & (del) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 3.216 MB  ->  505.7 KB       1.333 s  ->  1.344 s
+
+bio171002                : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 3971|62092  init : 655   opb : 3778/3971 (95%)   pbp : 13543/62092 (22%)   time : 51.182 s
+bio171002 (smol)         : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 5.852 MB  ->  880.8 KB       2.109 s  ->  12.56 s
+bio171002 (smol) & (del) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 5.852 MB  ->  1.016 MB       2.109 s  ->  6.925 s
+
+
+
+
+  0.077492 seconds (113 allocations: 7.125 KiB)
+bio037002        : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 2539|37522  init : 1095   opb : 2259/2539 (89%)   pbp : 8491/37522 (23%)   time : 167.666 s
+bio037002 (smol) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 3.554 MB  ->  666.8 KB       2.462 s  ->  4.129 s
+
+  0.196476 seconds (113 allocations: 7.125 KiB)
+bio041002        : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 4331|130077  init : 786   opb : 3438/4331 (79%)   pbp : 14438/130077 (11%)   time : 2.099 s
+bio041002 (smol) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 9.438 MB  ->  1.118 MB       9.3 s  ->  1.272 s
+
+  0.127089 seconds (113 allocations: 7.125 KiB)
+bio046002        : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 4621|94361  init : 889   opb : 3965/4621 (86%)   pbp : 13661/94361 (14%)   time : 1.256 s
+bio046002 (smol) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 7.714 MB  ->  1.012 MB       6.635 s  ->  0.6311 s
+
+     0.205192 seconds (113 allocations: 7.125 KiB)
+bio063002        : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 4609|250361  init : 760   opb : 4271/4609 (93%)   pbp : 21695/250361 (9%)   time : 4.19 s
+bio063002 (smol) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 17.26 MB  ->  1.607 MB       17.4 s  ->  2.1 s
+   
+     0.105112 seconds (113 allocations: 7.125 KiB)
+bio065002        : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 2729|33440  init : 432   opb : 2549/2729 (93%)   pbp : 6813/33440 (20%)   time : 44.615 s
+bio065002 (smol) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 3.216 MB  ->  503.1 KB       2.199 s  ->  1.6 s
+
+     0.184300 seconds (113 allocations: 7.125 KiB)
+bio071002        : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 5765|163909  init : 989   opb : 4577/5765 (79%)   pbp : 21158/163909 (13%)   time : 2.659 s
+bio071002 (smol) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 12.07 MB  ->  1.617 MB       12.62 s  ->  1.951 s
+
+ 0.113359 seconds (114 allocations: 7.422 KiB)
+bio075002        : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 4425|166447  init : 697   opb : 3667/4425 (83%)   pbp : 14313/166447 (9%)   time : 1.642 s
+bio075002 (smol) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 11.64 MB  ->  1.129 MB       10.51 s  ->  1.44 s
+
+ 0.174116 seconds (113 allocations: 7.125 KiB)
+bio084002        : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 3287|107140  init : 704   opb : 3012/3287 (92%)   pbp : 18354/107140 (17%)   time : 1.395 s
+bio084002 (smol) : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 7.293 MB  ->  1.302 MB       7.632 s  ->  1.554 s
+
+
+   bio167002                : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   size : 2719|61630  init : 791   opb : 2600/2719 (96%)   pbp : 10301/61630 (17%)   time : 28.294 s
+bio167002 (smol)         : Running VeriPB version 2.0.0.post221+git.487290
+Verification succeeded.
+   trim : 4.603 MB  ->  758.2 KB       2.598 s  ->  1.051 s
+   =#
+
+
+#=
+   bio144093   trim : 1.101 MB  ->  115.5 KB       67.31 s  ->  0.08961 s      0.01088 s
+   bio091033   trim : 12.41 MB  ->  740.6 KB       71.14 s  ->  0.7427 s      1.23 s
+   bio096061   trim : 11.78 MB  ->  2.591 MB       141.7 s  ->  68.18 s      4.112 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       3.921 s  ->  1.137 s      2.739 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       5.5e-8 s  ->  5.3e-8 s      5.207 s 4t
+
+bio035164   trim : 9.835 MB  ->  1.842 MB       64.34 s  ->  71.77 s      75600.0 s
+bio097061   trim : 11.78 MB  ->  2.591 MB       71.41 s  ->  71.56 s      354.8 s
+
+bio149094   trim : 969.6 KB  ->  90.24 KB       67.63 s  ->  0.08493 s      0.006856 s
+
+try / scratch
+
+
+   =#
+
