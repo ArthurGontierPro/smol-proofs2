@@ -628,13 +628,72 @@ function prettybytes(b)
         return  string(round(b; sigdigits=4)," B")
     end
 end 
+function runtrimer(file)
+    tri = @elapsed begin
+        system,systemlink,redwitness,nbopb,varmap,output,conclusion,version = readinstance(path,file)
+    end
+    normcoefsystem(system)
+    tms = @elapsed begin
+        cone = makesmol(system,varmap,systemlink,nbopb)
+    end
+    twc = @elapsed begin
+        writeconedel(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
+    end
+    writeshortrepartition(path,file,cone,nbopb)
+    
+    open(string(path,"/attimes"), "a") do f
+        write(f,string(file,"/",round(tri; sigdigits=4),"/",
+        round(tms; sigdigits=4),"/",round(twc; sigdigits=4),",\n"))
+    end
+end
+function runveriPB(file)
+    sat = read(`tail -n 2 $path/$file$extention`,String)[1:14] == "conclusion SAT"
+    nline = parse(Int,split(read(`wc -l $path/$file$extention`,String)," ")[1])
+    if !sat && nline>10
+        tvp = @elapsed begin
+            v1 = read(`veripb $path/$file.opb $path/$file$extention`)
+        end
+        tvs = @elapsed begin
+            v2 = read(`veripb $path/smol.$file.opb $path/smol.$file$extention`)
+        end
+        so = stat(string(path,"/",file,".opb")).size + stat(string(path,"/",file,extention)).size
+        st = stat(string(path,"/smol.",file,".opb")).size + stat(string(path,"/smol.",file,extention)).size
+        color = 1
+        if tvp>tvs
+            color = 2
+        end
+        printstyled(file,"   trim : ",prettybytes(so),"  ->  ",prettybytes(st),"       ",
+            round(tvp; sigdigits=4)," s  ->  ",round(tvs; sigdigits=4)," s\n"; color = color)
+        open(string(path,"/abytes"), "a") do f
+            write(f,string(file,"/",so/10^6,"/",st/10^6,",\n"))
+        end
+        open(string(path,"/avtimes"), "a") do f
+            write(f,string(file,"/",round(tvp; sigdigits=4),"/",round(tvs; sigdigits=4),",\n"))
+        end
+        if color == 1
+            open(string(path,"/aworst"), "a") do f
+                write(f,string(file,"\n")) 
+            end
+        end
+        if v1!=v2
+            printstyled("catch (u cant see me)\n"; color = :red)
+            open(string(path,"/afailedtrims"), "a") do f
+                write(f,string(file," \n"))
+            end
+        end
+    elseif sat
+        # println("SAT")
+    else
+        # println("atomic")
+    end
+end
 function runtrimmer(path,file,extention)
     sat = read(`tail -n 2 $path/$file$extention`,String)[1:14] == "conclusion SAT"
     nline = parse(Int,split(read(`wc -l $path/$file$extention`,String)," ")[1])
     if !sat && nline>10
         tvp = @elapsed begin
             v1 = read(`veripb $path/$file.opb $path/$file$extention`)
-        end     
+        end
         tri = @elapsed begin
             system,systemlink,redwitness,nbopb,varmap,output,conclusion,version = readinstance(path,file)
         end
@@ -661,26 +720,26 @@ function runtrimmer(path,file,extention)
         printstyled(file,"   trim : ",prettybytes(so),"  ->  ",prettybytes(st),"       ",
             round(tvp; sigdigits=4)," s  ->  ",round(tvs; sigdigits=4)," s      ",
             round(tri; sigdigits=4),"+",round(tms; sigdigits=4),"+",round(twc; sigdigits=4)," s\n"; color = color)
-        open(string(path,"/abytes"), "a") do f
-            write(f,string(file,"/",so/10^6,"/",st/10^6,",\n"))
-        end
-        open(string(path,"/atimes"), "a") do f
-            write(f,string(file,"/",
-            round(tvp; sigdigits=4),"/",round(tri; sigdigits=4),"/",
-            round(tms; sigdigits=4),"/",round(twc; sigdigits=4),"/",
-            round(tvs; sigdigits=4),",\n"))
-        end
-        if color == 1            
-            open(string(path,"/aworst"), "a") do f
-                write(f,string(file,"/",round(t1; sigdigits=4),"/",round(t2; sigdigits=4),"/",round(t3; sigdigits=4),",\n"))
-            end
-        end
-        if v1!=v2
-            printstyled("catch (u cant see me)\n"; color = :red)
-            open(string(path,"/afailedtrims"), "a") do f
-                write(f,string(file," \n"))
-            end
-        end
+        # open(string(path,"/abytes"), "a") do f
+        #     write(f,string(file,"/",so/10^6,"/",st/10^6,",\n"))
+        # end
+        # open(string(path,"/atimes"), "a") do f
+        #     write(f,string(file,"/",
+        #     round(tvp; sigdigits=4),"/",round(tri; sigdigits=4),"/",
+        #     round(tms; sigdigits=4),"/",round(twc; sigdigits=4),"/",
+        #     round(tvs; sigdigits=4),",\n"))
+        # end
+        # if color == 1
+        #     open(string(path,"/aworst"), "a") do f
+        #         write(f,string(file,"\n"))       
+        #     end
+        # end
+        # if v1!=v2
+        #     printstyled("catch (u cant see me)\n"; color = :red)
+        #     open(string(path,"/afailedtrims"), "a") do f
+        #         write(f,string(file," \n"))
+        #     end
+        # end
     elseif sat
         # println("SAT")
     else
@@ -692,9 +751,9 @@ function run_bio(benchs,solver,proofs,extention)
     cd()
     graphs = cd(readdir, path)
     println("threads available:",Threads.nthreads()) 
-    for i in eachindex(graphs)
+    for i in 2:2#eachindex(graphs)
         target = graphs[i]
-        Threads.@threads for j in eachindex(graphs)
+        Threads.@threads for j in 1:40#eachindex(graphs)
             if i!=j
                 pattern = graphs[j]
                 # pattern = "001.txt"
@@ -831,19 +890,20 @@ function run_si(benchs,solver,proofs,extention)
     end
 end
 
-const benchs = "veriPB/newSIPbenchmarks"
-const solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-const proofs = "veriPB/proofs"    
-# benchs = "newSIPbenchmarks"
-# solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-# proofs = "/cluster/proofs"
+# const benchs = "veriPB/newSIPbenchmarks"
+# const solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+# const proofs = "veriPB/proofs"    
+# const proofs = "veriPB/prooframdisk"    
+const benchs = "newSIPbenchmarks"
+const solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+const proofs = "/cluster/proofs"
 const extention = ".veripb"
 
 function main()
     b,s,p,e = benchs,solver,proofs,extention
     if length(ARGS) == 1
         if ARGS[1] == "bio" #program argument parsing
-            run_bio(b,s,p,e)
+            @time run_bio(b,s,p,e)
         elseif  ARGS[1] == "im1"
             run_images(b,s,p,e)
         elseif  ARGS[1] == "im2"
@@ -904,8 +964,10 @@ bio001061   trim : 14.8 MB  ->  5.055 MB       5.553 s  ->  2.529 s      11.89+7
     cd()
     graphs = cd(readdir, path)
     println("threads available:",Threads.nthreads())
-                pattern = "096.txt"
-                target = "061.txt"
+                pattern = "007.txt"
+                target = "030.txt"
+                # pattern = "096.txt"
+                # target = "061.txt"
                 # pattern = "144.txt"
                 # target = "093.txt"
                 ins = string("bio",pattern[1:end-4],target[1:end-4])
@@ -943,4 +1005,47 @@ julia>         @time testtrim(system,invsys,systemlink,nbopb,32)
   4.133111 seconds (2.27 k allocations: 67.544 MiB)
 julia>         @time testtrim(system,invsys,systemlink,nbopb,64)
   5.028341 seconds (4.17 k allocations: 163.692 MiB)
+
+  ramdisk
+bio028002   trim : 463.3 KB  ->  77.96 KB       0.1658 s  ->  0.1338 s      0.1548+0.006754+0.2604 s
+bio038002   trim : 424.4 KB  ->  104.4 KB       0.3408 s  ->  0.2184 s      0.2014+0.007979+0.05013 s
+bio044002   trim : 2.525 MB  ->  472.5 KB       2.563 s  ->  1.343 s      4.859+1.307+0.3612 s
+bio031002   trim : 3.178 MB  ->  556.3 KB       4.385 s  ->  1.906 s      14.91+0.7756+1.469 s
+bio035002   trim : 5.298 MB  ->  887.0 KB       4.613 s  ->  1.863 s      13.41+2.276+1.55 s
+bio007002   trim : 6.438 MB  ->  817.1 KB       6.434 s  ->  1.472 s      17.28+1.254+1.455 s
+bio025002   trim : 4.968 MB  ->  1.63 MB       8.412 s  ->  4.341 s      21.35+2.492+2.702 s
+bio008002   trim : 3.116 MB  ->  474.5 KB       4.718 s  ->  1.455 s      9.439+0.9916+0.9183 s
+bio046002   trim : 7.714 MB  ->  1.017 MB       13.03 s  ->  2.362 s      21.91+2.805+2.006 s
+bio041002   trim : 9.438 MB  ->  1.123 MB       17.76 s  ->  2.286 s      36.21+2.966+2.017 s
+bio010002   trim : 3.525 MB  ->  662.5 KB       6.77 s  ->  1.003 s      9.906+1.944+0.7735 s
+bio017002   trim : 10.32 MB  ->  654.1 KB       19.74 s  ->  1.285 s      43.44+1.146+1.647 s
+bio021002   trim : 6.354 MB  ->  814.0 KB       7.358 s  ->  3.348 s      19.22+43.91+1.339 s
+bio022002   trim : 382.1 KB  ->  61.2 KB       0.1652 s  ->  0.1063 s      0.1007+0.004035+0.00396 s
+bio023002   trim : 415.8 KB  ->  74.28 KB       0.1607 s  ->  0.1234 s      0.2591+0.005265+0.004593 s
+bio029002   trim : 10.17 MB  ->  664.6 KB       24.34 s  ->  1.018 s      49.3+1.633+1.324 s
+bio026002   trim : 10.27 MB  ->  1.254 MB       19.31 s  ->  1.16 s      23.69+1.739+0.8301 s
+bio027002   trim : 3.423 MB  ->  643.4 KB       3.394 s  ->  0.8598 s      6.116+0.4506+0.8279 s
+bio037002   trim : 3.554 MB  ->  669.4 KB       4.83 s  ->  2.513 s      10.78+83.73+1.597 s
+
+  ssd
+bio028002   trim : 463.3 KB  ->  77.96 KB       0.2903 s  ->  0.1396 s      0.2066+0.005378+0.2075 s
+bio038002   trim : 424.4 KB  ->  104.4 KB       0.3132 s  ->  0.1612 s      0.2665+0.008237+0.1932 s
+bio044002   trim : 2.525 MB  ->  472.5 KB       2.584 s  ->  1.426 s      4.221+1.303+0.4921 s
+bio035002   trim : 5.298 MB  ->  887.0 KB       4.57 s  ->  1.88 s      13.22+1.848+1.13 s
+bio031002   trim : 3.178 MB  ->  556.3 KB       4.349 s  ->  2.045 s      15.8+0.5555+0.881 s
+bio007002   trim : 6.438 MB  ->  817.1 KB       5.393 s  ->  1.841 s      18.28+1.517+1.421 s
+bio025002   trim : 4.968 MB  ->  1.63 MB       7.884 s  ->  3.977 s      21.91+2.671+2.528 s
+bio008002   trim : 3.116 MB  ->  474.5 KB       4.394 s  ->  1.337 s      9.526+1.055+0.7747 s
+bio046002   trim : 7.714 MB  ->  1.017 MB       13.89 s  ->  2.467 s      22.99+2.846+2.732 s
+bio041002   trim : 9.438 MB  ->  1.123 MB       19.95 s  ->  2.153 s      36.65+3.272+2.093 s
+bio010002   trim : 3.525 MB  ->  662.5 KB       6.96 s  ->  1.402 s      9.89+1.794+0.5124 s
+bio017002   trim : 10.32 MB  ->  654.1 KB       20.86 s  ->  1.706 s      44.24+1.72+1.485 s
+bio021002   trim : 6.354 MB  ->  814.0 KB       5.91 s  ->  3.703 s      20.47+45.02+1.192 s
+bio022002   trim : 382.1 KB  ->  61.2 KB       0.1542 s  ->  0.08337 s      0.1218+0.003745+0.004114 s
+bio023002   trim : 415.8 KB  ->  74.28 KB       0.3594 s  ->  0.1401 s      0.2128+0.006075+0.006485 s
+bio029002   trim : 10.17 MB  ->  664.6 KB       24.78 s  ->  0.9442 s      49.28+1.413+1.339 s
+bio026002   trim : 10.27 MB  ->  1.254 MB       19.88 s  ->  1.287 s      24.57+1.765+0.9253 s
+bio027002   trim : 3.423 MB  ->  643.4 KB       3.263 s  ->  0.97 s      6.456+0.3612+0.4317 s
+bio037002   trim : 3.554 MB  ->  669.4 KB       6.015 s  ->  2.496 s      10.89+83.47+1.642 s
 =#
+
