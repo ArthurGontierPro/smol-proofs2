@@ -712,7 +712,7 @@ function runtrimmer(path,file,extention)
         color = 1
         if tvp>tvs
             color = 2
-            if tvp>tvs+tms
+            if tvp>tri+tms+twc
                 color = 3
             end
         end
@@ -750,11 +750,11 @@ function run_bio(benchs,solver,proofs,extention)
     path = string(benchs,"/biochemicalReactions")
     cd()
     graphs = cd(readdir, path)
-    println("threads available:",Threads.nthreads()) 
-    for i in 1:1#eachindex(graphs)
+    # println("threads available:",Threads.nthreads()) 
+    for i in eachindex(graphs)
         target = graphs[i]
         # Threads.@threads 
-        for j in 1:40#eachindex(graphs)
+        for j in eachindex(graphs)
             if i!=j
                 pattern = graphs[j]
                 # pattern = "001.txt"
@@ -940,7 +940,7 @@ rm arepartition
 
 
 =#
-# main()
+main()
 
 
 function readrepartition()
@@ -1040,5 +1040,27 @@ bio029002   trim : 10.17 MB  ->  664.6 KB       24.78 s  ->  0.9442 s      49.28
 bio026002   trim : 10.27 MB  ->  1.254 MB       19.88 s  ->  1.287 s      24.57+1.765+0.9253 s
 bio027002   trim : 3.423 MB  ->  643.4 KB       3.263 s  ->  0.97 s      6.456+0.3612+0.4317 s
 bio037002   trim : 3.554 MB  ->  669.4 KB       6.015 s  ->  2.496 s      10.89+83.47+1.642 s
+
+
+bio007002   trim : 6.438 MB  ->  817.1 KB       3.647 s  ->  0.6417 s      7.713=6.533+0.8986+0.2809 s
+bio008002   trim : 3.116 MB  ->  474.5 KB       2.251 s  ->  0.4742 s      5.155=3.805+1.035+0.3151 s
+bio010002   trim : 3.525 MB  ->  662.5 KB       2.5 s  ->  0.6454 s      7.226=4.332+2.445+0.4482 s
+bio017002   trim : 10.32 MB  ->  654.1 KB       8.43 s  ->  0.7137 s      19.43=17.73+1.155+0.5456 s
+bio021002   trim : 6.354 MB  ->  814.0 KB       3.962 s  ->  2.08 s      37.39=6.727+30.25+0.4129 s
+bio022002   trim : 382.1 KB  ->  61.2 KB       0.1009 s  ->  0.07092 s      0.1239=0.1136+0.003029+0.007295 s
+bio023002   trim : 415.8 KB  ->  74.28 KB       0.1089 s  ->  0.07694 s      0.1484=0.1327+0.004553+0.01115 s
+bio025002   trim : 4.968 MB  ->  1.63 MB       4.339 s  ->  1.707 s      10.47=7.885+1.798+0.7869 s
+bio026002   trim : 10.27 MB  ->  1.254 MB       8.217 s  ->  1.202 s      18.9=15.87+2.287+0.7423 s
+bio027002   trim : 3.423 MB  ->  643.4 KB       3.296 s  ->  0.7494 s      7.463=6.625+0.5081+0.3301 s
+bio028002   trim : 463.3 KB  ->  77.96 KB       0.1121 s  ->  0.08052 s      0.1776=0.1633+0.004755+0.009569 s
+bio029002   trim : 10.17 MB  ->  664.6 KB       10.1 s  ->  0.7364 s      23.55=21.42+1.427+0.6992 s
+bio031002   trim : 3.178 MB  ->  556.3 KB       3.027 s  ->  0.677 s      6.307=5.683+0.4019+0.2219 s
+bio035002   trim : 5.298 MB  ->  887.0 KB       3.159 s  ->  0.7699 s      7.606=5.508+1.787+0.3116 s
+bio037002   trim : 3.554 MB  ->  669.4 KB       2.362 s  ->  3.088 s      90.94=4.301+85.56+1.073 s
+bio038002   trim : 424.4 KB  ->  104.4 KB       0.1603 s  ->  0.1145 s      0.2062=0.1887+0.006916+0.0106 s
+bio041002   trim : 9.438 MB  ->  1.123 MB       7.449 s  ->  1.024 s      17.27=14.48+1.946+0.8386 s
+bio044002   trim : 2.525 MB  ->  472.5 KB       1.738 s  ->  0.4716 s      4.077=2.809+1.045+0.224 s
+bio046002   trim : 7.714 MB  ->  1.017 MB       4.983 s  ->  0.8245 s      10.35=8.42+1.464+0.4706 s
+
 =#
 
