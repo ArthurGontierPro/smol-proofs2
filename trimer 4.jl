@@ -760,7 +760,7 @@ function runtrimmer(path,file,extention)
                 write(f,string(file," \n"))
             end
         end
-        # push!(pool,[so/10^6,st/10^6,tvp,tvs,tri])
+        push!(pool,[so/10^6,st/10^6,tvp,tvs,tri])
     elseif sat
         # println("SAT")
     else
@@ -968,13 +968,13 @@ function run_si(benchs,solver,proofs,extention)
     end
 end
 
-# const benchs = "veriPB/newSIPbenchmarks"
-# const solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-# const proofs = "veriPB/proofs"    
+const benchs = "veriPB/newSIPbenchmarks"
+const solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+const proofs = "veriPB/proofs"    
 # const proofs = "veriPB/prooframdisk"    
-const benchs = "newSIPbenchmarks"
-const solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-const proofs = "/cluster/proofs"
+# const benchs = "newSIPbenchmarks"
+# const solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+# const proofs = "/cluster/proofs"
 const path = proofs
 const extention = ".veripb"
 const version = "2.0"
@@ -1056,7 +1056,7 @@ end
 
 #=
 export JULIA_NUM_THREADS=192
-julia 'trimer 4.jl' bio
+julia 'trimer 4.jl' bio solver
 
 rm atimes
 rm abytes
