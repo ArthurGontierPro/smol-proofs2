@@ -758,4 +758,59 @@ bio023002   trim : 415.8 KB  ->  74.28 KB       0.257 s  ->  0.1574 s      0.224
 bio120002   trim : 2.362 MB  ->  431.5 KB       4.447 s  ->  1.258 s      5.4+3.313+0.1352 s
 bio080002   trim : 4.686 MB  ->  974.8 KB       11.02 s  ->  2.475 s      12.83+1.84+1.043 s
 
+
+bio096061   trim : 11.78 MB  ->  2.591 MB       141.7 s  ->  68.18 s      4.112 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       3.921 s  ->  1.137 s      2.739 s
+bio096061   trim : 11.78 MB  ->  2.591 MB       4.046 s  ->  1.422 s      7.871+2.942+1.057 s
+julia>         @time testparse(path,file,1)
+ 17.011996 seconds (20.70 M allocations: 2.132 GiB, 6.73% gc time, 9.71% compilation time)
+julia>         @time testparse(path,file,10)
+ 22.657625 seconds (206.64 M allocations: 21.333 GiB, 24.47% gc time)
+julia>         @time testparse(path,file,32)
+ 37.965171 seconds (661.25 M allocations: 68.231 GiB, 35.41% gc time)
+julia>         @time testparse(path,file,64)
+ 81.763286 seconds (1.32 G allocations: 136.444 GiB, 40.61% gc time)
+julia>         @time testparse(path,file,192)
+295.423247 seconds (3.97 G allocations: 409.409 GiB, 27.31% gc time)
+
+julia>         @time testpara(path,file,extention,1)
+  6.840462 seconds (140.03 k allocations: 9.787 MiB, 53.39% compilation time)
+julia>         @time testpara(path,file,extention,32)
+  7.377385 seconds (4.07 k allocations: 6.488 MiB)
+julia>         @time testpara(path,file,extention,64)
+  8.549569 seconds (7.13 k allocations: 11.942 MiB)
+julia>         @time testpara(path,file,extention,192)
+ 18.348672 seconds (18.80 k allocations: 21.007 MiB)
+
+  julia> @time testtrim(system,invsys,systemlink,nbopb,1)
+  3.588706 seconds (990 allocations: 650.484 KiB)
+julia> @time testtrim(system,invsys,systemlink,nbopb,10)
+  3.684693 seconds (1.26 k allocations: 13.278 MiB)
+julia>         @time testtrim(system,invsys,systemlink,nbopb,32)
+  4.133111 seconds (2.27 k allocations: 67.544 MiB)
+julia>         @time testtrim(system,invsys,systemlink,nbopb,64)
+  5.028341 seconds (4.17 k allocations: 163.692 MiB)
+
+  ramdisk
+bio028002   trim : 463.3 KB  ->  77.96 KB       0.1658 s  ->  0.1338 s      0.1548+0.006754+0.2604 s
+bio038002   trim : 424.4 KB  ->  104.4 KB       0.3408 s  ->  0.2184 s      0.2014+0.007979+0.05013 s
+bio044002   trim : 2.525 MB  ->  472.5 KB       2.563 s  ->  1.343 s      4.859+1.307+0.3612 s
+bio031002   trim : 3.178 MB  ->  556.3 KB       4.385 s  ->  1.906 s      14.91+0.7756+1.469 s
+bio035002   trim : 5.298 MB  ->  887.0 KB       4.613 s  ->  1.863 s      13.41+2.276+1.55 s
+bio007002   trim : 6.438 MB  ->  817.1 KB       6.434 s  ->  1.472 s      17.28+1.254+1.455 s
+bio025002   trim : 4.968 MB  ->  1.63 MB       8.412 s  ->  4.341 s      21.35+2.492+2.702 s
+bio008002   trim : 3.116 MB  ->  474.5 KB       4.718 s  ->  1.455 s      9.439+0.9916+0.9183 s
+bio046002   trim : 7.714 MB  ->  1.017 MB       13.03 s  ->  2.362 s      21.91+2.805+2.006 s
+bio041002   trim : 9.438 MB  ->  1.123 MB       17.76 s  ->  2.286 s      36.21+2.966+2.017 s
+bio010002   trim : 3.525 MB  ->  662.5 KB       6.77 s  ->  1.003 s      9.906+1.944+0.7735 s
+bio017002   trim : 10.32 MB  ->  654.1 KB       19.74 s  ->  1.285 s      43.44+1.146+1.647 s
+bio021002   trim : 6.354 MB  ->  814.0 KB       7.358 s  ->  3.348 s      19.22+43.91+1.339 s
+bio022002   trim : 382.1 KB  ->  61.2 KB       0.1652 s  ->  0.1063 s      0.1007+0.004035+0.00396 s
+bio023002   trim : 415.8 KB  ->  74.28 KB       0.1607 s  ->  0.1234 s      0.2591+0.005265+0.004593 s
+bio029002   trim : 10.17 MB  ->  664.6 KB       24.34 s  ->  1.018 s      49.3+1.633+1.324 s
+bio026002   trim : 10.27 MB  ->  1.254 MB       19.31 s  ->  1.16 s      23.69+1.739+0.8301 s
+bio027002   trim : 3.423 MB  ->  643.4 KB       3.394 s  ->  0.8598 s      6.116+0.4506+0.8279 s
+bio037002   trim : 3.554 MB  ->  669.4 KB       4.83 s  ->  2.513 s      10.78+83.73+1.597 s
+
+
 =#
