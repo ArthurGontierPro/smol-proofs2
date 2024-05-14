@@ -628,24 +628,41 @@ function prettybytes(b)
     end
 end 
 function runtrimer(file)
-    tri = @elapsed begin
-        system,systemlink,redwitness,nbopb,varmap,output,conclusion,version = readinstance(path,file)
+    try
+    sat = read(`tail -n 2 $path/$file$extention`,String)[1:14] == "conclusion SAT"
+    nline = parse(Int,split(read(`wc -l $path/$file$extention`,String)," ")[1])
+    if !sat && nline>10
+        tri = @elapsed begin
+            system,systemlink,redwitness,nbopb,varmap,output,conclusion,version = readinstance(path,file)
+        end
+        normcoefsystem(system)
+        tms = @elapsed begin
+            cone = makesmol(system,varmap,systemlink,nbopb)
+        end
+        twc = @elapsed begin
+            writeconedel(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
+        end
+        writeshortrepartition(path,file,cone,nbopb)
+        so = stat(string(path,"/",file,".opb")).size + stat(string(path,"/",file,extention)).size
+        st = stat(string(path,"/smol.",file,".opb")).size + stat(string(path,"/smol.",file,extention)).size
+        color = 1
+        if so>st
+            color = 2
+        end
+        printstyled(file,"   trim : ",prettybytes(so),"  ->  ",prettybytes(st),"       ",
+            round(tri+tms+twc; sigdigits=4),'=',round(tri; sigdigits=4),"+",
+            round(tms; sigdigits=4),"+",round(twc; sigdigits=4)," s\n"; color = color)
+        open(string(path,"/attimes"), "a") do f
+            write(f,string(file,"/",round(tri; sigdigits=4),"/",
+            round(tms; sigdigits=4),"/",round(twc; sigdigits=4),",\n"))
+        end
     end
-    normcoefsystem(system)
-    tms = @elapsed begin
-        cone = makesmol(system,varmap,systemlink,nbopb)
-    end
-    twc = @elapsed begin
-        writeconedel(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
-    end
-    writeshortrepartition(path,file,cone,nbopb)
-    
-    open(string(path,"/attimes"), "a") do f
-        write(f,string(file,"/",round(tri; sigdigits=4),"/",
-        round(tms; sigdigits=4),"/",round(twc; sigdigits=4),",\n"))
+    catch
+        println("No ",file," to trim")
     end
 end
 function runveriPB(file)
+    try
     sat = read(`tail -n 2 $path/$file$extention`,String)[1:14] == "conclusion SAT"
     nline = parse(Int,split(read(`wc -l $path/$file$extention`,String)," ")[1])
     if !sat && nline>10
@@ -684,6 +701,9 @@ function runveriPB(file)
         # println("SAT")
     else
         # println("atomic")
+    end
+    catch
+        println("No ",file," to veri")
     end
 end
 function runtrimmer(path,file,extention)
@@ -740,6 +760,7 @@ function runtrimmer(path,file,extention)
                 write(f,string(file," \n"))
             end
         end
+        # push!(pool,[so/10^6,st/10^6,tvp,tvs,tri])
     elseif sat
         # println("SAT")
     else
@@ -747,6 +768,32 @@ function runtrimmer(path,file,extention)
     end
 end
 function run_bio(benchs,solver,proofs,extention)
+    path = string(benchs,"/biochemicalReactions")
+    cd()
+    graphs = cd(readdir, path)
+    # println("threads available:",Threads.nthreads()) 
+    for i in 14:14#eachindex(graphs)
+        target = graphs[i]
+        # Threads.@threads 
+        for j in 1:40#eachindex(graphs)
+            if i!=j
+                pattern = graphs[j]
+                # pattern = "001.txt"
+                # target = "061.txt"
+                ins = string("bio",pattern[1:end-4],target[1:end-4])
+                if !isfile(string(proofs,"/",ins,".opb")) || 
+                    (isfile(string(proofs,"/",ins,extention)) && 
+                    (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
+                    read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
+                    println("solver run on ", ins)
+                    run(pipeline(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $path/$pattern $path/$target`, devnull))
+                end
+                runtrimmer(proofs,ins,extention)
+            end
+        end
+    end
+end
+function run_bio_solver()
     path = string(benchs,"/biochemicalReactions")
     cd()
     graphs = cd(readdir, path)
@@ -764,9 +811,39 @@ function run_bio(benchs,solver,proofs,extention)
                     (isfile(string(proofs,"/",ins,extention)) && 
                     (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
                     read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
-                    run(pipeline(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $path/$pattern $path/$target`, devnull))
+                    print(ins)
+                    @time run(pipeline(`./$solver --prove $proofs/$ins --no-clique-detection --proof-names --format lad $path/$pattern $path/$target`, devnull))
                 end
-                runtrimmer(proofs,ins,extention)
+            end
+        end
+    end
+end
+function run_bio_trim()
+    path = string(benchs,"/biochemicalReactions")
+    cd()
+    graphs = cd(readdir, path)
+    for i in eachindex(graphs)
+        target = graphs[i]
+        for j in eachindex(graphs)
+            if i!=j
+                pattern = graphs[j]
+                ins = string("bio",pattern[1:end-4],target[1:end-4])
+                runtrimer(ins)
+            end
+        end
+    end
+end
+function run_bio_veri()
+    path = string(benchs,"/biochemicalReactions")
+    cd()
+    graphs = cd(readdir, path)
+    for i in eachindex(graphs)
+        target = graphs[i]
+        for j in eachindex(graphs)
+            if i!=j
+                pattern = graphs[j]
+                ins = string("bio",pattern[1:end-4],target[1:end-4])
+                runveriPB(ins)
             end
         end
     end
@@ -891,21 +968,30 @@ function run_si(benchs,solver,proofs,extention)
     end
 end
 
-# const benchs = "veriPB/newSIPbenchmarks"
-# const solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-# const proofs = "veriPB/proofs"    
+const benchs = "veriPB/newSIPbenchmarks"
+const solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+const proofs = "veriPB/proofs"    
 # const proofs = "veriPB/prooframdisk"    
-const benchs = "newSIPbenchmarks"
-const solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-const proofs = "/cluster/proofs"
+# const benchs = "newSIPbenchmarks"
+# const solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+# const proofs = "/cluster/proofs"
+const path = proofs
 const extention = ".veripb"
 const version = "2.0"
 
 function main()
     b,s,p,e = benchs,solver,proofs,extention
-    if length(ARGS) == 1
+    if length(ARGS) > 0
         if ARGS[1] == "bio" #program argument parsing
-            run_bio(b,s,p,e)
+            if ARGS[2] == "all"
+                run_bio(b,s,p,e)
+            elseif ARGS[2] == "solver"
+                run_bio_solver()
+            elseif ARGS[2] == "trimer"
+                run_bio_trim()
+            elseif ARGS[2] == "veri"
+                run_bio_veri()
+            end
         elseif  ARGS[1] == "im1"
             run_images(b,s,p,e)
         elseif  ARGS[1] == "im2"
@@ -927,22 +1013,6 @@ function main()
         println("Arguments are: bio im1 im2 lv meshes phase scalefree si")
     end
 end
-
-#=
-export JULIA_NUM_THREADS=192
-julia 'trimer 4.jl' bio
-
-rm atimes
-rm abytes
-rm afailedtrims
-rm aworst
-rm arepartition
-
-
-=#
-main()
-
-
 function readrepartition()
     nb = 0
     cko = 0
@@ -983,6 +1053,22 @@ function readrepartition()
     end
     # return Σ./nb
 end
+
+#=
+export JULIA_NUM_THREADS=192
+julia 'trimer 4.jl' bio
+
+rm atimes
+rm abytes
+rm afailedtrims
+rm aworst
+rm arepartition
+
+
+=#
+
+global pool = Vector{Vector{Float64}}()
+main()
 
 # readrepartition()
 
