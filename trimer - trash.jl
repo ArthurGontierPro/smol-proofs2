@@ -814,3 +814,16 @@ bio037002   trim : 3.554 MB  ->  669.4 KB       4.83 s  ->  2.513 s      10.78+8
 
 
 =#
+function estimate(num_points)
+    hits = 0
+    for _ in 1:num_points
+        x, y = rand(), rand()
+        if x^2 + y^2 < 1.0
+            hits += 1
+        end
+    end
+    fraction = hits / num_points
+    return 4 * fraction
+end
+
+estimate(100000000)

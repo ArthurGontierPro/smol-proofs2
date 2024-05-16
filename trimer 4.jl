@@ -360,7 +360,7 @@ function makesmol(system,invsys,systemlink,nbopb)
         updumb(system,invsys,front)                     #front now contains the antecedants of the final claim
         append!(systemlink[firstcontradiction-nbopb],findall(front))
     end
-    # print("  init : ",sum(front))#,findall(front))
+    # println("  init : ",sum(front))#,findall(front))
     while true in front
         i = findlast(front)
         front[i] = false
@@ -370,7 +370,8 @@ function makesmol(system,invsys,systemlink,nbopb)
                 tlink = systemlink[i-nbopb][1]
                 if tlink == -1 
                     antecedants .=false ; isassi .=false ; assi.=false
-                    rupdumb(system,antecedants,i,isassi,assi)
+                    # rupdumb(system,antecedants,i,isassi,assi)
+                    rupcorefirst(system,antecedants,i,isassi,assi,front,cone)
                     append!(systemlink[i-nbopb],findall(antecedants))
                     fixfront(front,antecedants)
                 elseif tlink >= -3
@@ -382,6 +383,18 @@ function makesmol(system,invsys,systemlink,nbopb)
         end
     end
     return cone
+end
+function update(eq,s,i,isassi,assi,antecedants)
+    changes = false
+    for l in eq.t
+        if !isassi[l.var] && l.coef > s
+            assi[l.var] = l.sign
+            isassi[l.var] = true 
+            antecedants[i] = true
+            changes = true
+        end
+    end
+    return changes
 end
 function updumb(system,invsys,antecedants)
     isassi,assi = initassignement(invsys)
@@ -395,13 +408,38 @@ function updumb(system,invsys,antecedants)
                 antecedants[i] = true
                 return 
             else
-                for l in eq.t
-                    if !isassi[l.var] && l.coef > s
-                        assi[l.var] = l.sign
-                        isassi[l.var] = true 
-                        antecedants[i] = true
-                        changes = true
-                    end
+                changes |= update(eq,s,i,isassi,assi,antecedants)
+            end
+        end
+    end
+    printstyled(" updumb Failed "; color = :red)
+end
+function rupcorefirst(system::Vector{Eq},antecedants::Vector{Bool},init,isassi::Vector{Bool},assi::Vector{Bool},front::Vector{Bool},cone::Vector{Bool})
+    rev = reverse(system[init])
+    changes = true
+    while changes
+        changes = false
+        for i in 1:init
+            if front[i] || cone[i]
+                eq = i==init ? rev : system[i]
+                s = slack(eq,isassi,assi)
+                if s<0
+                    antecedants[i] = true
+                    return 
+                else
+                    changes |= update(eq,s,i,isassi,assi,antecedants)
+                end
+            end
+        end
+        if !changes 
+            for i in 1:init
+                eq = i==init ? rev : system[i]
+                s = slack(eq,isassi,assi)
+                if s<0
+                    antecedants[i] = true
+                    return 
+                else
+                    changes |= update(eq,s,i,isassi,assi,antecedants)
                 end
             end
         end
@@ -420,14 +458,7 @@ function rupdumb(system::Vector{Eq},antecedants::Vector{Bool},init,isassi::Vecto
                 antecedants[i] = true
                 return 
             else
-                for l in eq.t
-                    if !isassi[l.var] && l.coef > s
-                        assi[l.var] = l.sign
-                        isassi[l.var] = true 
-                        antecedants[i] = true
-                        changes = true
-                    end
-                end
+                changes |= update(eq,s,i,isassi,assi,antecedants)
             end
         end
     end
@@ -627,6 +658,17 @@ function prettybytes(b)
         return  string(round(b; sigdigits=4)," B")
     end
 end 
+function prettytime(b)
+    if b<0.01
+        return  string(round(b; sigdigits=1))
+    elseif b<0.1
+        return  string(round(b; sigdigits=2))
+    elseif b<1
+        return  string(round(b; sigdigits=3))
+    else
+        return  string(round(b; sigdigits=4))
+    end
+end 
 function runtrimer(file)
     try
     sat = read(`tail -n 2 $path/$file$extention`,String)[1:14] == "conclusion SAT"
@@ -736,10 +778,14 @@ function runtrimmer(path,file,extention)
                 color = 3
             end
         end
-        printstyled(file,"   trim : ",prettybytes(so),"  ->  ",prettybytes(st),"       ",
-            round(tvp; sigdigits=4)," s  ->  ",round(tvs; sigdigits=4)," s      ",
-            round(tri+tms+twc; sigdigits=4),'=',round(tri; sigdigits=4),"+",
-            round(tms; sigdigits=4),"+",round(twc; sigdigits=4)," s\n"; color = color)
+        # printstyled(file,"   trim : ",prettybytes(so),"  ->  ",prettybytes(st),"       ",
+        #     round(tvp; sigdigits=4)," s  ->  ",round(tvs; sigdigits=4)," s      ",
+        #     round(tri+tms+twc; sigdigits=4),'=',round(tri; sigdigits=4),"+",
+        #     round(tms; sigdigits=4),"+",round(twc; sigdigits=4)," s\n"; color = color)
+
+        t = [[parse(Float64,file[5:6]),so,st,tvp,tvs,tms,twc,tri]]
+        printtabular(t)
+        # println("[",file[5:6],",",so,",",st,",",tvp,",",tvs,",",tms,",",twc,",",tri,"],")
         open(string(path,"/abytes"), "a") do f
             write(f,string(file,"/",so/10^6,"/",st/10^6,",\n"))
         end
@@ -772,7 +818,7 @@ function run_bio(benchs,solver,proofs,extention)
     cd()
     graphs = cd(readdir, path)
     # println("threads available:",Threads.nthreads()) 
-    for i in 14:14#eachindex(graphs)
+    for i in 2:2#eachindex(graphs)
         target = graphs[i]
         # Threads.@threads 
         for j in 1:40#eachindex(graphs)
@@ -1053,6 +1099,19 @@ function readrepartition()
     end
     # return Σ./nb
 end
+function printtabular(t)
+    for i in t 
+        println(round(Int,i[1])," & ",
+        prettybytes(i[2])," & ",
+        prettybytes(i[3])," & ",
+        prettytime(i[4])," & ",
+        prettytime(i[5])," & ",
+        prettytime(i[6])," & ",
+        prettytime(i[7])," & ",
+        prettytime(i[8])," \\\\\\hline"
+        )
+    end
+end
 
 #=
 export JULIA_NUM_THREADS=192
@@ -1064,7 +1123,8 @@ rm afailedtrims
 rm aworst
 rm arepartition
 
-
+hardest one bio 7 13 (310_916_484 lignes)
+lon sur le serv bio 89 32 (421_805_749 lignes)
 =#
 
 global pool = Vector{Vector{Float64}}()
@@ -1128,25 +1188,25 @@ bio027002   trim : 3.423 MB  ->  643.4 KB       3.263 s  ->  0.97 s      6.456+0
 bio037002   trim : 3.554 MB  ->  669.4 KB       6.015 s  ->  2.496 s      10.89+83.47+1.642 s
 
 
-bio007002   trim : 6.438 MB  ->  817.1 KB       3.647 s  ->  0.6417 s      7.713=6.533+0.8986+0.2809 s
-bio008002   trim : 3.116 MB  ->  474.5 KB       2.251 s  ->  0.4742 s      5.155=3.805+1.035+0.3151 s
-bio010002   trim : 3.525 MB  ->  662.5 KB       2.5 s  ->  0.6454 s      7.226=4.332+2.445+0.4482 s
-bio017002   trim : 10.32 MB  ->  654.1 KB       8.43 s  ->  0.7137 s      19.43=17.73+1.155+0.5456 s
-bio021002   trim : 6.354 MB  ->  814.0 KB       3.962 s  ->  2.08 s      37.39=6.727+30.25+0.4129 s
-bio022002   trim : 382.1 KB  ->  61.2 KB       0.1009 s  ->  0.07092 s      0.1239=0.1136+0.003029+0.007295 s
-bio023002   trim : 415.8 KB  ->  74.28 KB       0.1089 s  ->  0.07694 s      0.1484=0.1327+0.004553+0.01115 s
-bio025002   trim : 4.968 MB  ->  1.63 MB       4.339 s  ->  1.707 s      10.47=7.885+1.798+0.7869 s
-bio026002   trim : 10.27 MB  ->  1.254 MB       8.217 s  ->  1.202 s      18.9=15.87+2.287+0.7423 s
-bio027002   trim : 3.423 MB  ->  643.4 KB       3.296 s  ->  0.7494 s      7.463=6.625+0.5081+0.3301 s
-bio028002   trim : 463.3 KB  ->  77.96 KB       0.1121 s  ->  0.08052 s      0.1776=0.1633+0.004755+0.009569 s
-bio029002   trim : 10.17 MB  ->  664.6 KB       10.1 s  ->  0.7364 s      23.55=21.42+1.427+0.6992 s
-bio031002   trim : 3.178 MB  ->  556.3 KB       3.027 s  ->  0.677 s      6.307=5.683+0.4019+0.2219 s
-bio035002   trim : 5.298 MB  ->  887.0 KB       3.159 s  ->  0.7699 s      7.606=5.508+1.787+0.3116 s
-bio037002   trim : 3.554 MB  ->  669.4 KB       2.362 s  ->  3.088 s      90.94=4.301+85.56+1.073 s
-bio038002   trim : 424.4 KB  ->  104.4 KB       0.1603 s  ->  0.1145 s      0.2062=0.1887+0.006916+0.0106 s
-bio041002   trim : 9.438 MB  ->  1.123 MB       7.449 s  ->  1.024 s      17.27=14.48+1.946+0.8386 s
-bio044002   trim : 2.525 MB  ->  472.5 KB       1.738 s  ->  0.4716 s      4.077=2.809+1.045+0.224 s
-bio046002   trim : 7.714 MB  ->  1.017 MB       4.983 s  ->  0.8245 s      10.35=8.42+1.464+0.4706 s
+bio007002   trim : 6.438 MB  ->  817.1 KB       3.647 s  ->  0.6417 s      7.713 = 6.533 + 0.8986+ 0.2809 s
+bio008002   trim : 3.116 MB  ->  474.5 KB       2.251 s  ->  0.4742 s      5.155 = 3.805 + 1.035 + 0.3151 s
+bio010002   trim : 3.525 MB  ->  662.5 KB       2.5   s  ->  0.6454 s      7.226 = 4.332 + 2.445 + 0.4482 s
+bio017002   trim : 10.32 MB  ->  654.1 KB       8.43  s  ->  0.7137 s      19.43 = 17.73 + 1.155 + 0.5456 s
+bio021002   trim : 6.354 MB  ->  814.0 KB       3.962 s  ->  2.08   s      37.39 = 6.727 + 30.25 + 0.4129 s
+bio022002   trim : 382.1 KB  ->  61.2  KB       0.1009s  ->  0.07092s      0.1239= 0.1136+ 0.0030+ 0.007295 s
+bio023002   trim : 415.8 KB  ->  74.28 KB       0.1089s  ->  0.07694s      0.1484= 0.1327+ 0.0045+ 0.01115 s
+bio025002   trim : 4.968 MB  ->  1.63  MB       4.339 s  ->  1.707  s      10.47 = 7.885 + 1.798 + 0.7869 s
+bio026002   trim : 10.27 MB  ->  1.254 MB       8.217 s  ->  1.202  s      18.9  = 15.87 + 2.287 + 0.7423 s
+bio027002   trim : 3.423 MB  ->  643.4 KB       3.296 s  ->  0.7494 s      7.463 = 6.625 + 0.5081+ 0.3301 s
+bio028002   trim : 463.3 KB  ->  77.96 KB       0.1121s  ->  0.08052s      0.1776= 0.1633+ 0.0047+ 0.009569 s
+bio029002   trim : 10.17 MB  ->  664.6 KB       10.1  s  ->  0.7364 s      23.55 = 21.42 + 1.427 + 0.6992 s
+bio031002   trim : 3.178 MB  ->  556.3 KB       3.027 s  ->  0.677  s      6.307 = 5.683 + 0.4019+ 0.2219 s
+bio035002   trim : 5.298 MB  ->  887.0 KB       3.159 s  ->  0.7699 s      7.606 = 5.508 + 1.787 + 0.3116 s
+bio037002   trim : 3.554 MB  ->  669.4 KB       2.362 s  ->  3.088  s      90.94 = 4.301 + 85.56 + 1.073 s
+bio038002   trim : 424.4 KB  ->  104.4 KB       0.1603s  ->  0.1145 s      0.2062= 0.1887+ 0.0069+ 0.0106 s
+bio041002   trim : 9.438 MB  ->  1.123 MB       7.449 s  ->  1.024  s      17.27 = 14.48 + 1.946 + 0.8386 s
+bio044002   trim : 2.525 MB  ->  472.5 KB       1.738 s  ->  0.4716 s      4.077 = 2.809 + 1.045 + 0.224 s
+bio046002   trim : 7.714 MB  ->  1.017 MB       4.983 s  ->  0.8245 s      10.35 = 8.42  + 1.464 + 0.4706 s
+
 
 =#
-
