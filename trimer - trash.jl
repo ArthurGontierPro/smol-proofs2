@@ -827,3 +827,54 @@ function estimate(num_points)
 end
 
 estimate(100000000)
+
+
+# path = proofs
+# file = ins
+# push!(system,Eq([],1))
+# push!(systemlink,[-1])
+println(tvp) # 102.958493292
+println(tri) # 363.869743695
+function test(n)
+    @time a = zeros(Int,n)
+    c = Vector{Int}()
+    d = Deque{Int}()
+    @time for i in 1:n
+        a[i] = rand(Int) end
+    @time b = [rand(Int) for i in 1:n]
+    @time for i in 1:n
+        pushfirst!(c,rand(Int)) end
+    @time for i in 1:n
+        pushfirst!(d,rand(Int)) end
+    println("yo")
+    e = div(n,2)
+    flag = false
+    @time for i in 1:n
+        sortperm(b,alg =MergeSort)
+    end
+    @time for i in 1:n
+        sortperm(b,alg = QuickSort)
+    end
+    @time for i in 1:n
+        sortperm(b)
+    end
+    flag = false
+    @time for i in 1:n
+        sort(b)
+end end
+test(10_000)
+function scorevarimpact(system,invsys,varmap) # inutile
+    score = Vector{Int}(undef,length(system)-1)
+    for i in eachindex(system)
+        s = 0
+        for l in system[i].t
+            s += length(invsys[l.var])
+        end
+        if s!=0
+            score[i] = s
+        end
+    end
+    println(minimum(score)," ",sum(score)/length(score)," ",maximum(score))
+    order = sortperm(score)
+    return order
+end

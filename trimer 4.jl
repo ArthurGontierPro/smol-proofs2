@@ -168,10 +168,10 @@ function solvepol(st,system,link)
             stack[end] = addeq(pop!(stack),stack[end])      #order is important for stack
             push!(link,-1)
         elseif i=="*"
-            stack[end] = multiply(stack[end],systemlink[c][end])
+            stack[end] = multiply(stack[end],link[end])
             push!(link,-2)
         elseif i=="d"
-            stack[end] = divide(stack[end],systemlink[c][end])
+            stack[end] = divide(stack[end],link[end])
             push!(link,-3)
         elseif i=="s"
             normcoefeq(stack[end])
@@ -257,26 +257,27 @@ function readveripb(path,file,system,varmap)
         c+=1
         for ss in eachline(f)
             st = split(ss,' ')
+            type = st[1]
             removespaces(st)
             eq = Eq([],0)
-            if ss[1:2] == "u " || ss[1:3] == "rup"
-                eq = readeq(st,varmap,2:2:length(st)-3)
+            if type == "u" || type == "rup"
+                eq = readeq(st,varmap,2:2:length(st)-3)     # can fail is space is missing omg
                 push!(systemlink,[-1])
-            elseif ss[1:2] == "p " || ss[1:3] == "pol"
+            elseif type == "p" || type == "pol"
                 push!(systemlink,[-2])
                 eq = solvepol(st,system,systemlink[end])
-            elseif ss[1:2] == "ia"
+            elseif type == "ia"
                 push!(systemlink,[-3,parse(Int,st[2])])
                 eq = readeq(st,varmap,4:2:length(st)-3)
-            elseif ss[1:3] == "red"  
+            elseif type == "red"  
                 push!(systemlink,[-4])
                 eq = readred(st,varmap,redwitness,c)
-            elseif ss[1:3] == "sol"                                  # on ajoute la negation au probleme pour chercher d'autres solutions. jusqua contradiction finale. dans la preuve c.est juste des contraintes pour casser toutes les soloutions trouvees
+            elseif type == "sol" || type == "soli"         # on ajoute la negation au probleme pour chercher d'autres solutions. jusqua contradiction finale. dans la preuve c.est juste des contraintes pour casser toutes les soloutions trouvees
                 push!(systemlink,[-5])
                 eq = findfullassi(system,st,c,varmap)
-            elseif st[1] == "output"
+            elseif type == "output"
                 output = st[2]
-            elseif st[1] == "conclusion"
+            elseif type == "conclusion"
                 conclusion = st[2]
             elseif !(ss[1:2] in ["# ","w ","ps","* ","f ","d ","de","co","en"])
                 println("unknown: ",ss)
@@ -314,8 +315,8 @@ function reverse(eq::Eq)
     end
     return Eq(lits,-eq.b+1+c)
 end
-function initassignement(invsys)
-    l = length(invsys)
+function initassignement(varmap)
+    l = length(varmap)
     return zeros(Bool,l),zeros(Bool,l)
 end
 function reset(mats)
@@ -345,10 +346,10 @@ function fixfront(front::Vector{Bool},antecedants::Vector{Int})
         end
     end
 end
-function makesmol(system,invsys,systemlink,nbopb)
+function makesmol(system,invsys,varmap,systemlink,nbopb)
     n = length(system)
     antecedants = zeros(Bool,n)
-    isassi,assi = initassignement(invsys)
+    isassi,assi = initassignement(varmap)
     cone = zeros(Bool,n)
     cone[end] = true
     front = zeros(Bool,n)
@@ -357,9 +358,10 @@ function makesmol(system,invsys,systemlink,nbopb)
     if systemlink[firstcontradiction-nbopb][1] == -2         # pol case
         fixfront(front,systemlink[firstcontradiction-nbopb])
     else
-        updumb(system,invsys,front)                     #front now contains the antecedants of the final claim
+        updumb(system,varmap,front)                     #front now contains the antecedants of the final claim
         append!(systemlink[firstcontradiction-nbopb],findall(front))
     end
+    order = 1
     # println("  init : ",sum(front))#,findall(front))
     while true in front
         i = findlast(front)
@@ -371,7 +373,9 @@ function makesmol(system,invsys,systemlink,nbopb)
                 if tlink == -1 
                     antecedants .=false ; isassi .=false ; assi.=false
                     # rupdumb(system,antecedants,i,isassi,assi)
-                    rupcorefirst(system,antecedants,i,isassi,assi,front,cone)
+                    # rupcorefirst(system,antecedants,i,isassi,assi,front,cone)
+                    # rupforque(system,invsys,antecedants,i,isassi,assi,front,cone)
+                    rupque(system,invsys,antecedants,order,i,isassi,assi,front,cone)
                     append!(systemlink[i-nbopb],findall(antecedants))
                     fixfront(front,antecedants)
                 elseif tlink >= -3
@@ -388,16 +392,83 @@ function update(eq,s,i,isassi,assi,antecedants)
     changes = false
     for l in eq.t
         if !isassi[l.var] && l.coef > s
-            assi[l.var] = l.sign
             isassi[l.var] = true 
+            assi[l.var] = l.sign
             antecedants[i] = true
             changes = true
         end
     end
     return changes
 end
-function updumb(system,invsys,antecedants)
-    isassi,assi = initassignement(invsys)
+function updateque(eq,que,invsys,init,s,i,isassi,assi,antecedants)
+    changes = false
+    for l in eq.t
+        if !isassi[l.var] && l.coef > s
+            isassi[l.var] = true 
+            assi[l.var] = l.sign
+            antecedants[i] = true
+            changes = true
+            for id in invsys[l.var]
+                if id<=init
+                    que[id] = true
+                end
+            end
+        end
+    end
+    return changes
+end
+function updateprioque(eq,prioque,que,invsys,cone,front,s,i,init,isassi,assi,antecedants)
+    for l in eq.t
+        if !isassi[l.var] && l.coef > s
+            isassi[l.var] = true 
+            assi[l.var] = l.sign
+            antecedants[i] = true
+            for id in invsys[l.var]
+                if id<=init
+                    if cone[id] || front[id]
+                        pushfirst!(prioque,id)
+                    else
+                        pushfirst!(que,id) end end end end end end
+# calculer un variable impact base sur le nombre de contraintes l'utilisant et leur taile ? ( la taille peut etre pas)
+# calculer un contrainte impact
+# un arbre de priorite  pour ranger les priorites ?
+function addinvsys(invsys,eq,id)
+    for l in eq.t
+        if !isassigned(invsys,l.var)
+            invsys[l.var] = [id]
+        else
+            push!(invsys[l.var],id)
+        end
+    end
+end
+function getinvsys(system,varmap)
+    invsys = Vector{Vector{Int}}(undef,length(varmap))
+    for i in eachindex(system)
+        addinvsys(invsys,system[i],i)
+    end
+    return invsys
+end
+# on garde en memoire  la tete de chaque que inutile parce que les ques ne sont pas sorted 
+# Deque
+# on peut la parcourir avec un for i in que
+# on peut lire le pop elem avec last(que)
+# pour les watched litteral, on prend tout ceux qui ont les plus gros coefs pour le slack 
+function score(system,invsys,varmap,init,issasi,assi,score,order)
+    for i in 1:init
+        s = 0
+        for l in system[i].t
+            s += length(invsys[l.var])
+        end
+        if s!=0
+            score[i] = s
+        end
+    end
+    println(minimum(score)," ",sum(score)/length(score)," ",maximum(score))
+    order = sortperm(score)
+    return order
+end
+function updumb(system,varmap,antecedants) 
+    isassi,assi = initassignement(varmap)
     changes = true
     while changes
         changes = false
@@ -413,6 +484,67 @@ function updumb(system,invsys,antecedants)
         end
     end
     printstyled(" updumb Failed "; color = :red)
+end
+using DataStructures
+function rupque(system::Vector{Eq},invsys,antecedants::Vector{Bool},order,init,isassi::Vector{Bool},assi::Vector{Bool},front::Vector{Bool},cone::Vector{Bool})
+    que = Deque{Int}()
+    prioque = Deque{Int}()
+    for id in 1:init
+        if id<=init
+            pushfirst!(que,id) end end
+    for i in que
+        if cone[i] || front[i]
+            pushfirst!(prioque,i) end end
+    rev = reverse(system[init])
+    while !isempty(prioque) || !isempty(que)
+        i = !isempty(prioque) ? pop!(prioque) : pop!(que)
+        eq = i==init ? rev : system[i]
+        s = slack(eq,isassi,assi)
+        if s<0
+            antecedants[i] = true
+            return 
+        else
+            updateprioque(eq,prioque,que,invsys,cone,front,s,i,init,isassi,assi,antecedants)
+        end
+    end
+    printstyled(" rupQue empty "; color = :red)
+end
+function rupforque(system::Vector{Eq},invsys,antecedants::Vector{Bool},init,isassi::Vector{Bool},assi::Vector{Bool},front::Vector{Bool},cone::Vector{Bool})
+    rev = reverse(system[init])
+    que = ones(Bool,init)
+    changes = true
+    while changes
+        changes = false
+        for i in 1:init
+            if que[i] && (front[i] || cone[i])
+                que[i] = false
+                eq = i==init ? rev : system[i]
+                s = slack(eq,isassi,assi)
+                if s<0
+                    antecedants[i] = true
+                    return 
+                else
+                    changes |= updateque(eq,que,invsys,init,s,i,isassi,assi,antecedants)
+                end
+            end
+        end
+        if !changes 
+            for i in 1:init
+                if que[i]
+                    que[i] = false
+                eq = i==init ? rev : system[i]
+                s = slack(eq,isassi,assi)
+                if s<0
+                    antecedants[i] = true
+                    return 
+                else
+                    changes |= updateque(eq,que,invsys,init,s,i,isassi,assi,antecedants)
+                end
+            end
+            end
+        end
+    end
+    printstyled(" rup core first Failed "; color = :red)
 end
 function rupcorefirst(system::Vector{Eq},antecedants::Vector{Bool},init,isassi::Vector{Bool},assi::Vector{Bool},front::Vector{Bool},cone::Vector{Bool})
     rev = reverse(system[init])
@@ -444,7 +576,7 @@ function rupcorefirst(system::Vector{Eq},antecedants::Vector{Bool},init,isassi::
             end
         end
     end
-    printstyled(" updumb Failed "; color = :red)
+    printstyled(" rup core first Failed "; color = :red)
 end
 function rupdumb(system::Vector{Eq},antecedants::Vector{Bool},init,isassi::Vector{Bool},assi::Vector{Bool})
     rev = reverse(system[init])
@@ -668,7 +800,7 @@ function prettytime(b)
     else
         return  string(round(b; sigdigits=4))
     end
-end 
+end
 function runtrimer(file)
     try
     sat = read(`tail -n 2 $path/$file$extention`,String)[1:14] == "conclusion SAT"
@@ -679,7 +811,7 @@ function runtrimer(file)
         end
         normcoefsystem(system)
         tms = @elapsed begin
-            cone = makesmol(system,varmap,systemlink,nbopb)
+            cone = makesmol(system,invsys,varmap,systemlink,nbopb)
         end
         twc = @elapsed begin
             writeconedel(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
@@ -758,9 +890,10 @@ function runtrimmer(path,file,extention)
         tri = @elapsed begin
             system,systemlink,redwitness,nbopb,varmap,output,conclusion,version = readinstance(path,file)
         end
+        invsys = getinvsys(system,varmap)
         normcoefsystem(system)
         tms = @elapsed begin
-            cone = makesmol(system,varmap,systemlink,nbopb)
+            cone = makesmol(system,invsys,varmap,systemlink,nbopb)
         end
         twc = @elapsed begin
             writeconedel(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
@@ -806,7 +939,7 @@ function runtrimmer(path,file,extention)
                 write(f,string(file," \n"))
             end
         end
-        push!(pool,[so/10^6,st/10^6,tvp,tvs,tri])
+        # push!(pool,[so/10^6,st/10^6,tvp,tvs,tri])
     elseif sat
         # println("SAT")
     else
@@ -821,11 +954,11 @@ function run_bio(benchs,solver,proofs,extention)
     for i in 2:2#eachindex(graphs)
         target = graphs[i]
         # Threads.@threads 
-        for j in 1:40#eachindex(graphs)
+        for j in 31:31#eachindex(graphs)
             if i!=j
                 pattern = graphs[j]
-                # pattern = "001.txt"
-                # target = "061.txt"
+                # pattern = "149.txt"
+                # target = "094.txt"
                 ins = string("bio",pattern[1:end-4],target[1:end-4])
                 if !isfile(string(proofs,"/",ins,".opb")) || 
                     (isfile(string(proofs,"/",ins,extention)) && 
@@ -1059,6 +1192,15 @@ function main()
         println("Arguments are: bio im1 im2 lv meshes phase scalefree si")
     end
 end
+
+global pool = Vector{Vector{Float64}}()
+# main()
+ # min: 1 ~x1 1 ~x2 1 ~x3 1 ~x4 1 ~x5 1 ~x6 1 ~x7 1 ~x8 1 ~x9 1 ~x10 1 ~x11 1 ~x12 1 ~x13 1 ~x14 1 ~x15 1 ~x16 1 ~x17 1 ~x18 1 ~x19 1 ~x20 1 ~x21 1 ~x22 1 ~x23 1 ~x24 1 ~x25 1 ~x26 1 ~x27 1 ~x28 1 ~x29 1 ~x30 1 ~x31 1 ~x32 1 ~x33 1 ~x34 1 ~x35 1 ~x36 1 ~x37 1 ~x38 1 ~x39 1 ~x40 1 ~x41 1 ~x42 1 ~x43 1 ~x44 1 ~x45 1 ~x46 1 ~x47 1 ~x48 1 ~x49 1 ~x50 1 ~x51 1 ~x52 1 ~x53 1 ~x54 1 ~x55 1 ~x56 1 ~x57 1 ~x58 1 ~x59 1 ~x60 1 ~x61 1 ~x62 1 ~x63 1 ~x64 1 ~x65 1 ~x66 1 ~x67 1 ~x68 1 ~x69 1 ~x70 1 ~x71 1 ~x72 1 ~x73 1 ~x74 1 ~x75 1 ~x76 1 ~x77 1 ~x78 1 ~x79 1 ~x80 1 ~x81 1 ~x82 1 ~x83 1 ~x84 1 ~x85 1 ~x86 1 ~x87 1 ~x88 1 ~x89 1 ~x90 1 ~x91 1 ~x92 1 ~x93 1 ~x94 1 ~x95 1 ~x96 1 ~x97 1 ~x98 1 ~x99 1 ~x100 1 ~x101 1 ~x102 1 ~x103 1 ~x104 1 ~x105 1 ~x106 1 ~x107 1 ~x108 1 ~x109 1 ~x110 1 ~x111 1 ~x112 1 ~x113 1 ~x114 1 ~x115 1 ~x116 1 ~x117 1 ~x118 1 ~x119 1 ~x120 1 ~x121 1 ~x122 1 ~x123 1 ~x124 1 ~x125 1 ~x126 1 ~x127 1 ~x128 1 ~x129 1 ~x130 1 ~x131 1 ~x132 1 ~x133 1 ~x134 1 ~x135 1 ~x136 1 ~x137 1 ~x138 1 ~x139 1 ~x140 1 ~x141 1 ~x142 1 ~x143 1 ~x144 1 ~x145 1 ~x146 1 ~x147 1 ~x148 1 ~x149 1 ~x150 1 ~x151 1 ~x152 1 ~x153 1 ~x154 1 ~x155 1 ~x156 1 ~x157 1 ~x158 1 ~x159 1 ~x160 1 ~x161 1 ~x162 1 ~x163 1 ~x164 1 ~x165 1 ~x166 1 ~x167 1 ~x168 1 ~x169 1 ~x170 1 ~x171 1 ~x172 1 ~x173 1 ~x174 1 ~x175 1 ~x176 1 ~x177 1 ~x178 1 ~x179 1 ~x180 1 ~x181 1 ~x182 1 ~x183 1 ~x184 1 ~x185 1 ~x186 1 ~x187 1 ~x188 1 ~x189 1 ~x190 1 ~x191 1 ~x192 1 ~x193 1 ~x194 1 ~x195 1 ~x196 1 ~x197 1 ~x198 1 ~x199 1 ~x200 ;
+
+# ins = "aaaclique"
+# cd()
+# runtrimmer(proofs,ins,extention)
+
 function readrepartition()
     nb = 0
     cko = 0
@@ -1113,7 +1255,128 @@ function printtabular(t)
     end
 end
 
-#=
+main()
+
+
+#= 
+a = [2.2,1.3,1.5,5.1,2.4,2.6,4.9,2.0,6.9,1.9,2.0,1.5,5.3,1.1,3.5]
+b = [11.7,5.9,6.9,26.4,13.1,13.7,19.7,2.8,31.6,9.6,10.1,7.7,24.6,5.7,15.4]
+c = [a[i]/b[i] for i in eachindex(a)]
+sum(c)/length(c)
+
+a = [0.45,0.17,0.32,0.52,2.3,0.85,1.145,0.234,0.69,0.177,0.456,11.28,0.981,0.214,0.786]
+b = [1.798,0.516,0.907,1.112,6.719,3.021,1.365,0.29,1.077,0.582,1.571,25.08,2.882,0.635,2.522]
+c = [a[i]/b[i] for i in eachindex(a)]
+sum(c)/length(c)
+
+t = [
+[7 , 6.438  , 693.9  , 2.158 , 0.267 , 0.436 , 0.375 , 3.93 ],
+[8 , 3.116  , 406.8  , 1.309 , 0.245 , 0.346 , 0.078 , 2.155 ],
+[10 , 3.525  , 565.4  , 1.499 , 0.345 , 0.686 , 0.094 , 2.484 ],
+[17 , 10.32  , 576.8  , 5.11 , 0.376 , 0.514 , 0.302 , 10.45 ],
+[21 , 6.354  , 704.1  , 2.569 , 2.533 , 20.26 , 0.147 , 4.388 ],
+[22 , 382.1  , 61.0  , 0.066 , 0.049 , 0.003 , 0.002 , 0.059 ],
+[23 , 415.8  , 73.81  , 0.073 , 0.051 , 0.004 , 0.003 , 0.063 ],
+[25 , 4.968  , 1.364  , 3.097 , 0.83 , 0.995 , 0.228 , 5.484 ],
+[26 , 10.27  , 1.081  , 5.329 , 0.601 , 1.126 , 0.293 , 9.986 ],
+[27 , 3.423  , 553.1  , 2.223 , 0.375 , 0.235 , 0.088 , 4.178 ],
+[28 , 463.3  , 77.49  , 0.083 , 0.056 , 0.004 , 0.003 , 0.087 ],
+[29 , 10.17  , 582.8  , 6.596 , 0.392 , 0.68 , 0.242 , 13.93 ],
+[31 , 3.178  , 480.0  , 2.0 , 0.346 , 0.178 , 0.126 , 3.601 ],
+[35 , 5.298  , 757.7  , 2.076 , 0.37 , 0.679 , 0.207 , 3.216 ],
+[37 , 3.554  , 596.1  , 1.594 , 12.28 , 65.52 , 0.149 , 2.53 ],
+[38 , 424.4  , 101.7  , 0.155 , 0.077 , 0.006 , 0.005 , 0.146 ],
+[41 , 9.438  , 965.9  , 5.444 , 0.545 , 1.028 , 0.25 , 9.723 ],
+[44 , 2.525  , 402.8  , 1.2 , 0.241 , 0.452 , 0.109 , 1.819 ],
+[46 , 7.714  , 863.2  , 3.42 , 0.402 , 0.81 , 0.325 , 6.565 ]
+]
+tt = [
+[7 , 6.438  , 817.1  , 2.153 , 0.373 , 0.433 , 0.397 , 3.912 ],
+[8 , 3.116  , 474.5  , 1.323 , 0.277 , 0.341 , 0.101 , 2.14 ],
+[10 , 3.525  , 662.5  , 1.457 , 0.373 , 0.686 , 0.333 , 2.366 ],
+[17 , 10.32  , 654.1  , 5.103 , 0.45 , 0.53 , 0.337 , 10.22 ],
+[21 , 6.354  , 814.0  , 2.374 , 1.387 , 18.5 , 0.374 , 4.152 ],
+[22 , 382.1  , 61.2  , 0.06 , 0.043 , 0.002 , 0.002 , 0.056 ],
+[23 , 415.8  , 74.28  , 0.065 , 0.049 , 0.003 , 0.003 , 0.062 ],
+[25 , 4.968  , 1.63  , 2.7 , 1.054 , 0.857 , 0.319 , 4.93 ],
+[26 , 10.27  , 1.254  , 4.935 , 0.724 , 1.1 , 0.659 , 9.523 ],
+[27 , 3.423  , 643.4  , 2.059 , 0.469 , 0.233 , 0.168 , 3.906 ],
+[28 , 463.3  , 77.96  , 0.07 , 0.049 , 0.004 , 0.003 , 0.084 ],
+[29 , 10.17  , 664.6  , 6.317 , 0.457 , 0.664 , 0.32 , 13.23 ],
+[31 , 3.178  , 556.3  , 1.851 , 0.401 , 0.184 , 0.295 , 3.54 ],
+[35 , 5.298  , 887.0  , 1.955 , 0.479 , 0.667 , 0.325 , 3.069 ],
+[37 , 3.554  , 669.4  , 1.481 , 2.137 , 61.25 , 1.551 , 2.46 ],
+[38 , 424.4  , 104.4  , 0.092 , 0.074 , 0.005 , 0.005 , 0.1 ],
+[41 , 9.438  , 1.123  , 4.593 , 0.619 , 0.968 , 0.35 , 9.165 ],
+[44 , 2.525  , 472.5  , 1.1 , 0.286 , 0.427 , 0.082 , 1.711 ],
+[46 , 7.714  , 1.017  , 3.097 , 0.494 , 0.765 , 0.404 , 5.437 ]
+]
+ttt = [
+[7 , 6.438  , 817.1  , 2.216 , 0.364 , 0.451 , 0.295 , 4.061 ],
+[8 , 3.116  , 472.0  , 1.355 , 0.283 , 0.172 , 0.109 , 2.167 ],
+[10 , 3.525  , 667.5  , 1.5 , 0.39 , 0.32 , 0.202 , 2.521 ],
+[17 , 10.32  , 654.1  , 5.141 , 0.467 , 0.523 , 0.331 , 10.29 ],
+[21 , 6.354  , 749.0  , 2.477 , 0.615 , 2.297 , 0.151 , 4.436 ],
+[22 , 382.1  , 61.2  , 0.068 , 0.047 , 0.002 , 0.002 , 0.054 ],
+[23 , 415.8  , 74.28  , 0.074 , 0.047 , 0.003 , 0.002 , 0.058 ],
+[25 , 4.968  , 1.63  , 2.686 , 1.025 , 0.853 , 0.368 , 4.993 ],
+[26 , 10.27  , 1.254  , 4.951 , 0.763 , 1.145 , 0.711 , 9.649 ],
+[27 , 3.423  , 643.4  , 2.084 , 0.496 , 0.234 , 0.189 , 4.054 ],
+[28 , 463.3  , 77.96  , 0.074 , 0.052 , 0.004 , 0.003 , 0.079 ],
+[29 , 10.17  , 664.6  , 6.911 , 0.585 , 0.692 , 0.724 , 13.73 ],
+[31 , 3.178  , 556.3  , 1.951 , 0.419 , 0.177 , 0.171 , 3.51 ],
+[35 , 5.298  , 876.3  , 2.021 , 0.475 , 0.456 , 0.2 , 3.214 ],
+[37 , 3.554  , 497.5  , 1.534 , 1.039 , 11.28 , 0.829 , 2.494 ],
+[38 , 424.4  , 104.4  , 0.109 , 0.07 , 0.005 , 0.005 , 0.112 ],
+[41 , 9.438  , 1.123  , 5.316 , 0.669 , 0.981 , 0.376 , 9.628 ],
+[44 , 2.525  , 460.0  , 1.171 , 0.311 , 0.214 , 0.115 , 1.839 ],
+[46 , 7.714  , 1.017  , 3.536 , 0.604 , 0.786 , 0.219 , 5.786 ]
+]
+
+t1 =  [i[4] for i in t]
+t2 =  [i[5] for i in t]
+t3 =  [i[5] for i in tt]
+t4 =  [i[5] for i in ttt]
+
+tall = sort([[t1[i],t2[i],t3[i],t4[i]] for i in 1:19])
+
+
+
+function pr()
+    println("\\foreach \\x/\\y in{")
+for i in 1:19
+    print(i,"/",tall[i][1],",")
+end
+println("} \\draw (\\x,\\y) node[noeudrou,fill opacity=0.75,scale=0.4] {};
+\\foreach \\x/\\y in{")
+for i in 1:19
+    print(i,"/",tall[i][2],",")
+end
+println("} \\draw (\\x,\\y) node[noeudvio,fill opacity=0.75,scale=0.4] {};
+\\foreach \\x/\\y in{")
+for i in 1:19
+    print(i,"/",tall[i][3],",")
+end
+println("} \\draw (\\x,\\y) node[noeudble,fill opacity=0.75,scale=0.4] {};
+\\foreach \\x/\\y in{")
+for i in 1:19
+    print(i,"/",tall[i][4],",")
+end
+println("} \\draw (\\x,\\y) node[noeudver,fill opacity=0.75,scale=0.4] {};")
+end
+pr()
+
+for i in 1:19
+    # print(i,"/",t1[i],"/",t2[i],"/",t3[i],"/",t4[i],",")
+end
+
+
+
+
+veritimes = [i[4] for i in t]
+
+tt = [i[] for i in t]
+
 export JULIA_NUM_THREADS=192
 julia 'trimer 4.jl' bio solver
 
@@ -1126,9 +1389,6 @@ rm arepartition
 hardest one bio 7 13 (310_916_484 lignes)
 lon sur le serv bio 89 32 (421_805_749 lignes)
 =#
-
-global pool = Vector{Vector{Float64}}()
-main()
 
 # readrepartition()
 
