@@ -1,4 +1,6 @@
 
+using Profile,StatProfilerHTML,DataStructures
+
 mutable struct Lit
     coef::Int
     sign::Bool
@@ -375,7 +377,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb)
                     # rupdumb(system,antecedants,i,isassi,assi)
                     # rupcorefirst(system,antecedants,i,isassi,assi,front,cone)
                     # rupforque(system,invsys,antecedants,i,isassi,assi,front,cone)
-                    rupque(system,invsys,antecedants,order,i,isassi,assi,front,cone)
+                    rupque(system,invsys,antecedants,order,i,isassi,assi,front,cone) # la rupque est moins efficace pour le trimmer mais elle fais de plus petites preuves
                     append!(systemlink[i-nbopb],findall(antecedants))
                     fixfront(front,antecedants)
                 elseif tlink >= -3
@@ -417,21 +419,22 @@ function updateque(eq,que,invsys,init,s,i,isassi,assi,antecedants)
     end
     return changes
 end
+function fillprioque(invsys,l,init,cone,front,prioque,que)
+    for id in invsys[l.var]
+        if id<=init
+            if cone[id] || front[id]
+                pushfirst!(prioque,id)
+            else
+                pushfirst!(que,id)  
+end end end end
 function updateprioque(eq,prioque,que,invsys,cone,front,s,i,init,isassi,assi,antecedants)
     for l in eq.t
         if !isassi[l.var] && l.coef > s
             isassi[l.var] = true 
             assi[l.var] = l.sign
             antecedants[i] = true
-            for id in invsys[l.var]
-                if id<=init
-                    if cone[id] || front[id]
-                        pushfirst!(prioque,id)
-                    else
-                        pushfirst!(que,id) end end end end end end
-# calculer un variable impact base sur le nombre de contraintes l'utilisant et leur taile ? ( la taille peut etre pas)
-# calculer un contrainte impact
-# un arbre de priorite  pour ranger les priorites ?
+            fillprioque(invsys,l,init,cone,front,prioque,que)
+end end end
 function addinvsys(invsys,eq,id)
     for l in eq.t
         if !isassigned(invsys,l.var)
@@ -448,11 +451,6 @@ function getinvsys(system,varmap)
     end
     return invsys
 end
-# on garde en memoire  la tete de chaque que inutile parce que les ques ne sont pas sorted 
-# Deque
-# on peut la parcourir avec un for i in que
-# on peut lire le pop elem avec last(que)
-# pour les watched litteral, on prend tout ceux qui ont les plus gros coefs pour le slack 
 function score(system,invsys,varmap,init,issasi,assi,score,order)
     for i in 1:init
         s = 0
@@ -485,7 +483,6 @@ function updumb(system,varmap,antecedants)
     end
     printstyled(" updumb Failed "; color = :red)
 end
-using DataStructures
 function rupque(system::Vector{Eq},invsys,antecedants::Vector{Bool},order,init,isassi::Vector{Bool},assi::Vector{Bool},front::Vector{Bool},cone::Vector{Bool})
     que = Deque{Int}()
     prioque = Deque{Int}()
@@ -893,7 +890,7 @@ function runtrimmer(path,file,extention)
         invsys = getinvsys(system,varmap)
         normcoefsystem(system)
         tms = @elapsed begin
-            cone = makesmol(system,invsys,varmap,systemlink,nbopb)
+            cone = @profilehtml makesmol(system,invsys,varmap,systemlink,nbopb)
         end
         twc = @elapsed begin
             writeconedel(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
@@ -916,7 +913,7 @@ function runtrimmer(path,file,extention)
         #     round(tri+tms+twc; sigdigits=4),'=',round(tri; sigdigits=4),"+",
         #     round(tms; sigdigits=4),"+",round(twc; sigdigits=4)," s\n"; color = color)
 
-        t = [[parse(Float64,file[5:6]),so,st,tvp,tvs,tms,twc,tri]]
+        t = [[parse(Float64,file[end-4:end-3]),so,st,tvp,tvs,tms,twc,tri]]
         printtabular(t)
         # println("[",file[5:6],",",so,",",st,",",tvp,",",tvs,",",tms,",",twc,",",tri,"],")
         open(string(path,"/abytes"), "a") do f
@@ -1197,10 +1194,6 @@ global pool = Vector{Vector{Float64}}()
 # main()
  # min: 1 ~x1 1 ~x2 1 ~x3 1 ~x4 1 ~x5 1 ~x6 1 ~x7 1 ~x8 1 ~x9 1 ~x10 1 ~x11 1 ~x12 1 ~x13 1 ~x14 1 ~x15 1 ~x16 1 ~x17 1 ~x18 1 ~x19 1 ~x20 1 ~x21 1 ~x22 1 ~x23 1 ~x24 1 ~x25 1 ~x26 1 ~x27 1 ~x28 1 ~x29 1 ~x30 1 ~x31 1 ~x32 1 ~x33 1 ~x34 1 ~x35 1 ~x36 1 ~x37 1 ~x38 1 ~x39 1 ~x40 1 ~x41 1 ~x42 1 ~x43 1 ~x44 1 ~x45 1 ~x46 1 ~x47 1 ~x48 1 ~x49 1 ~x50 1 ~x51 1 ~x52 1 ~x53 1 ~x54 1 ~x55 1 ~x56 1 ~x57 1 ~x58 1 ~x59 1 ~x60 1 ~x61 1 ~x62 1 ~x63 1 ~x64 1 ~x65 1 ~x66 1 ~x67 1 ~x68 1 ~x69 1 ~x70 1 ~x71 1 ~x72 1 ~x73 1 ~x74 1 ~x75 1 ~x76 1 ~x77 1 ~x78 1 ~x79 1 ~x80 1 ~x81 1 ~x82 1 ~x83 1 ~x84 1 ~x85 1 ~x86 1 ~x87 1 ~x88 1 ~x89 1 ~x90 1 ~x91 1 ~x92 1 ~x93 1 ~x94 1 ~x95 1 ~x96 1 ~x97 1 ~x98 1 ~x99 1 ~x100 1 ~x101 1 ~x102 1 ~x103 1 ~x104 1 ~x105 1 ~x106 1 ~x107 1 ~x108 1 ~x109 1 ~x110 1 ~x111 1 ~x112 1 ~x113 1 ~x114 1 ~x115 1 ~x116 1 ~x117 1 ~x118 1 ~x119 1 ~x120 1 ~x121 1 ~x122 1 ~x123 1 ~x124 1 ~x125 1 ~x126 1 ~x127 1 ~x128 1 ~x129 1 ~x130 1 ~x131 1 ~x132 1 ~x133 1 ~x134 1 ~x135 1 ~x136 1 ~x137 1 ~x138 1 ~x139 1 ~x140 1 ~x141 1 ~x142 1 ~x143 1 ~x144 1 ~x145 1 ~x146 1 ~x147 1 ~x148 1 ~x149 1 ~x150 1 ~x151 1 ~x152 1 ~x153 1 ~x154 1 ~x155 1 ~x156 1 ~x157 1 ~x158 1 ~x159 1 ~x160 1 ~x161 1 ~x162 1 ~x163 1 ~x164 1 ~x165 1 ~x166 1 ~x167 1 ~x168 1 ~x169 1 ~x170 1 ~x171 1 ~x172 1 ~x173 1 ~x174 1 ~x175 1 ~x176 1 ~x177 1 ~x178 1 ~x179 1 ~x180 1 ~x181 1 ~x182 1 ~x183 1 ~x184 1 ~x185 1 ~x186 1 ~x187 1 ~x188 1 ~x189 1 ~x190 1 ~x191 1 ~x192 1 ~x193 1 ~x194 1 ~x195 1 ~x196 1 ~x197 1 ~x198 1 ~x199 1 ~x200 ;
 
-# ins = "aaaclique"
-# cd()
-# runtrimmer(proofs,ins,extention)
-
 function readrepartition()
     nb = 0
     cko = 0
@@ -1255,130 +1248,20 @@ function printtabular(t)
     end
 end
 
-main()
+ins = "aaaclique"
+cd()
+# ins = "bio021002"
+# runtrimmer(proofs,ins,extention)
 
+ins = "bio037002"
+runtrimmer(proofs,ins,extention)
 
-#= 
-a = [2.2,1.3,1.5,5.1,2.4,2.6,4.9,2.0,6.9,1.9,2.0,1.5,5.3,1.1,3.5]
-b = [11.7,5.9,6.9,26.4,13.1,13.7,19.7,2.8,31.6,9.6,10.1,7.7,24.6,5.7,15.4]
-c = [a[i]/b[i] for i in eachindex(a)]
-sum(c)/length(c)
+# main()
 
-a = [0.45,0.17,0.32,0.52,2.3,0.85,1.145,0.234,0.69,0.177,0.456,11.28,0.981,0.214,0.786]
-b = [1.798,0.516,0.907,1.112,6.719,3.021,1.365,0.29,1.077,0.582,1.571,25.08,2.882,0.635,2.522]
-c = [a[i]/b[i] for i in eachindex(a)]
-sum(c)/length(c)
-
-t = [
-[7 , 6.438  , 693.9  , 2.158 , 0.267 , 0.436 , 0.375 , 3.93 ],
-[8 , 3.116  , 406.8  , 1.309 , 0.245 , 0.346 , 0.078 , 2.155 ],
-[10 , 3.525  , 565.4  , 1.499 , 0.345 , 0.686 , 0.094 , 2.484 ],
-[17 , 10.32  , 576.8  , 5.11 , 0.376 , 0.514 , 0.302 , 10.45 ],
-[21 , 6.354  , 704.1  , 2.569 , 2.533 , 20.26 , 0.147 , 4.388 ],
-[22 , 382.1  , 61.0  , 0.066 , 0.049 , 0.003 , 0.002 , 0.059 ],
-[23 , 415.8  , 73.81  , 0.073 , 0.051 , 0.004 , 0.003 , 0.063 ],
-[25 , 4.968  , 1.364  , 3.097 , 0.83 , 0.995 , 0.228 , 5.484 ],
-[26 , 10.27  , 1.081  , 5.329 , 0.601 , 1.126 , 0.293 , 9.986 ],
-[27 , 3.423  , 553.1  , 2.223 , 0.375 , 0.235 , 0.088 , 4.178 ],
-[28 , 463.3  , 77.49  , 0.083 , 0.056 , 0.004 , 0.003 , 0.087 ],
-[29 , 10.17  , 582.8  , 6.596 , 0.392 , 0.68 , 0.242 , 13.93 ],
-[31 , 3.178  , 480.0  , 2.0 , 0.346 , 0.178 , 0.126 , 3.601 ],
-[35 , 5.298  , 757.7  , 2.076 , 0.37 , 0.679 , 0.207 , 3.216 ],
-[37 , 3.554  , 596.1  , 1.594 , 12.28 , 65.52 , 0.149 , 2.53 ],
-[38 , 424.4  , 101.7  , 0.155 , 0.077 , 0.006 , 0.005 , 0.146 ],
-[41 , 9.438  , 965.9  , 5.444 , 0.545 , 1.028 , 0.25 , 9.723 ],
-[44 , 2.525  , 402.8  , 1.2 , 0.241 , 0.452 , 0.109 , 1.819 ],
-[46 , 7.714  , 863.2  , 3.42 , 0.402 , 0.81 , 0.325 , 6.565 ]
-]
-tt = [
-[7 , 6.438  , 817.1  , 2.153 , 0.373 , 0.433 , 0.397 , 3.912 ],
-[8 , 3.116  , 474.5  , 1.323 , 0.277 , 0.341 , 0.101 , 2.14 ],
-[10 , 3.525  , 662.5  , 1.457 , 0.373 , 0.686 , 0.333 , 2.366 ],
-[17 , 10.32  , 654.1  , 5.103 , 0.45 , 0.53 , 0.337 , 10.22 ],
-[21 , 6.354  , 814.0  , 2.374 , 1.387 , 18.5 , 0.374 , 4.152 ],
-[22 , 382.1  , 61.2  , 0.06 , 0.043 , 0.002 , 0.002 , 0.056 ],
-[23 , 415.8  , 74.28  , 0.065 , 0.049 , 0.003 , 0.003 , 0.062 ],
-[25 , 4.968  , 1.63  , 2.7 , 1.054 , 0.857 , 0.319 , 4.93 ],
-[26 , 10.27  , 1.254  , 4.935 , 0.724 , 1.1 , 0.659 , 9.523 ],
-[27 , 3.423  , 643.4  , 2.059 , 0.469 , 0.233 , 0.168 , 3.906 ],
-[28 , 463.3  , 77.96  , 0.07 , 0.049 , 0.004 , 0.003 , 0.084 ],
-[29 , 10.17  , 664.6  , 6.317 , 0.457 , 0.664 , 0.32 , 13.23 ],
-[31 , 3.178  , 556.3  , 1.851 , 0.401 , 0.184 , 0.295 , 3.54 ],
-[35 , 5.298  , 887.0  , 1.955 , 0.479 , 0.667 , 0.325 , 3.069 ],
-[37 , 3.554  , 669.4  , 1.481 , 2.137 , 61.25 , 1.551 , 2.46 ],
-[38 , 424.4  , 104.4  , 0.092 , 0.074 , 0.005 , 0.005 , 0.1 ],
-[41 , 9.438  , 1.123  , 4.593 , 0.619 , 0.968 , 0.35 , 9.165 ],
-[44 , 2.525  , 472.5  , 1.1 , 0.286 , 0.427 , 0.082 , 1.711 ],
-[46 , 7.714  , 1.017  , 3.097 , 0.494 , 0.765 , 0.404 , 5.437 ]
-]
-ttt = [
-[7 , 6.438  , 817.1  , 2.216 , 0.364 , 0.451 , 0.295 , 4.061 ],
-[8 , 3.116  , 472.0  , 1.355 , 0.283 , 0.172 , 0.109 , 2.167 ],
-[10 , 3.525  , 667.5  , 1.5 , 0.39 , 0.32 , 0.202 , 2.521 ],
-[17 , 10.32  , 654.1  , 5.141 , 0.467 , 0.523 , 0.331 , 10.29 ],
-[21 , 6.354  , 749.0  , 2.477 , 0.615 , 2.297 , 0.151 , 4.436 ],
-[22 , 382.1  , 61.2  , 0.068 , 0.047 , 0.002 , 0.002 , 0.054 ],
-[23 , 415.8  , 74.28  , 0.074 , 0.047 , 0.003 , 0.002 , 0.058 ],
-[25 , 4.968  , 1.63  , 2.686 , 1.025 , 0.853 , 0.368 , 4.993 ],
-[26 , 10.27  , 1.254  , 4.951 , 0.763 , 1.145 , 0.711 , 9.649 ],
-[27 , 3.423  , 643.4  , 2.084 , 0.496 , 0.234 , 0.189 , 4.054 ],
-[28 , 463.3  , 77.96  , 0.074 , 0.052 , 0.004 , 0.003 , 0.079 ],
-[29 , 10.17  , 664.6  , 6.911 , 0.585 , 0.692 , 0.724 , 13.73 ],
-[31 , 3.178  , 556.3  , 1.951 , 0.419 , 0.177 , 0.171 , 3.51 ],
-[35 , 5.298  , 876.3  , 2.021 , 0.475 , 0.456 , 0.2 , 3.214 ],
-[37 , 3.554  , 497.5  , 1.534 , 1.039 , 11.28 , 0.829 , 2.494 ],
-[38 , 424.4  , 104.4  , 0.109 , 0.07 , 0.005 , 0.005 , 0.112 ],
-[41 , 9.438  , 1.123  , 5.316 , 0.669 , 0.981 , 0.376 , 9.628 ],
-[44 , 2.525  , 460.0  , 1.171 , 0.311 , 0.214 , 0.115 , 1.839 ],
-[46 , 7.714  , 1.017  , 3.536 , 0.604 , 0.786 , 0.219 , 5.786 ]
-]
-
-t1 =  [i[4] for i in t]
-t2 =  [i[5] for i in t]
-t3 =  [i[5] for i in tt]
-t4 =  [i[5] for i in ttt]
-
-tall = sort([[t1[i],t2[i],t3[i],t4[i]] for i in 1:19])
-
-
-
-function pr()
-    println("\\foreach \\x/\\y in{")
-for i in 1:19
-    print(i,"/",tall[i][1],",")
-end
-println("} \\draw (\\x,\\y) node[noeudrou,fill opacity=0.75,scale=0.4] {};
-\\foreach \\x/\\y in{")
-for i in 1:19
-    print(i,"/",tall[i][2],",")
-end
-println("} \\draw (\\x,\\y) node[noeudvio,fill opacity=0.75,scale=0.4] {};
-\\foreach \\x/\\y in{")
-for i in 1:19
-    print(i,"/",tall[i][3],",")
-end
-println("} \\draw (\\x,\\y) node[noeudble,fill opacity=0.75,scale=0.4] {};
-\\foreach \\x/\\y in{")
-for i in 1:19
-    print(i,"/",tall[i][4],",")
-end
-println("} \\draw (\\x,\\y) node[noeudver,fill opacity=0.75,scale=0.4] {};")
-end
-pr()
-
-for i in 1:19
-    # print(i,"/",t1[i],"/",t2[i],"/",t3[i],"/",t4[i],",")
-end
-
-
-
-
-veritimes = [i[4] for i in t]
-
-tt = [i[] for i in t]
-
+#=
 export JULIA_NUM_THREADS=192
-julia 'trimer 4.jl' bio solver
+julia --check-bounds=no 'trimer 4.jl' bio all
+
 
 rm atimes
 rm abytes
@@ -1400,73 +1283,3 @@ lon sur le serv bio 89 32 (421_805_749 lignes)
 # scp arthur@fataepyc-01.dcs.gla.ac.uk:/cluster/proofs/smol.bio063002.veripb smol.bio063002.veripb
 # scp arthur@fataepyc-01.dcs.gla.ac.uk:/cluster/proofs/times times2
 # cd /home/arthur_gla/veriPB/trim/smol-proofs2/
-
-
-#=
-bio007030   trim : 6.786 MB  ->  875.3 KB       7.356 s  ->  1.119 s      14.4+1.5+0.6963 s
-bio007030   trim : 6.786 MB  ->  875.3 KB       2.269 s  ->  0.3824 s      4.07+0.5586+0.2704 s
-
-bio001061   trim : 14.8 MB  ->  5.055 MB       17.85 s  ->  5.494 s      32.46+10.84+4.102 s
-bio001061   trim : 14.8 MB  ->  5.055 MB       5.553 s  ->  2.529 s      11.89+7.274+1.488 s
-    benchs = "newSIPbenchmarks"
-    solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-    proofs = "/cluster/proofs"
-    extention = ".veripb"
-    path = string(benchs,"/biochemicalReactions")
-    cd()
-    graphs = cd(readdir, path)
-    println("threads available:",Threads.nthreads())
-                pattern = "007.txt"
-                target = "030.txt"
-                # pattern = "096.txt"
-                # target = "061.txt"
-                # pattern = "144.txt"
-                # target = "093.txt"
-                ins = string("bio",pattern[1:end-4],target[1:end-4])
-                path = proofs
-                file = ins
-
-  ssd
-bio028002   trim : 463.3 KB  ->  77.96 KB       0.2903 s  ->  0.1396 s      0.2066+0.005378+0.2075 s
-bio038002   trim : 424.4 KB  ->  104.4 KB       0.3132 s  ->  0.1612 s      0.2665+0.008237+0.1932 s
-bio044002   trim : 2.525 MB  ->  472.5 KB       2.584 s  ->  1.426 s      4.221+1.303+0.4921 s
-bio035002   trim : 5.298 MB  ->  887.0 KB       4.57 s  ->  1.88 s      13.22+1.848+1.13 s
-bio031002   trim : 3.178 MB  ->  556.3 KB       4.349 s  ->  2.045 s      15.8+0.5555+0.881 s
-bio007002   trim : 6.438 MB  ->  817.1 KB       5.393 s  ->  1.841 s      18.28+1.517+1.421 s
-bio025002   trim : 4.968 MB  ->  1.63 MB       7.884 s  ->  3.977 s      21.91+2.671+2.528 s
-bio008002   trim : 3.116 MB  ->  474.5 KB       4.394 s  ->  1.337 s      9.526+1.055+0.7747 s
-bio046002   trim : 7.714 MB  ->  1.017 MB       13.89 s  ->  2.467 s      22.99+2.846+2.732 s
-bio041002   trim : 9.438 MB  ->  1.123 MB       19.95 s  ->  2.153 s      36.65+3.272+2.093 s
-bio010002   trim : 3.525 MB  ->  662.5 KB       6.96 s  ->  1.402 s      9.89+1.794+0.5124 s
-bio017002   trim : 10.32 MB  ->  654.1 KB       20.86 s  ->  1.706 s      44.24+1.72+1.485 s
-bio021002   trim : 6.354 MB  ->  814.0 KB       5.91 s  ->  3.703 s      20.47+45.02+1.192 s
-bio022002   trim : 382.1 KB  ->  61.2 KB       0.1542 s  ->  0.08337 s      0.1218+0.003745+0.004114 s
-bio023002   trim : 415.8 KB  ->  74.28 KB       0.3594 s  ->  0.1401 s      0.2128+0.006075+0.006485 s
-bio029002   trim : 10.17 MB  ->  664.6 KB       24.78 s  ->  0.9442 s      49.28+1.413+1.339 s
-bio026002   trim : 10.27 MB  ->  1.254 MB       19.88 s  ->  1.287 s      24.57+1.765+0.9253 s
-bio027002   trim : 3.423 MB  ->  643.4 KB       3.263 s  ->  0.97 s      6.456+0.3612+0.4317 s
-bio037002   trim : 3.554 MB  ->  669.4 KB       6.015 s  ->  2.496 s      10.89+83.47+1.642 s
-
-
-bio007002   trim : 6.438 MB  ->  817.1 KB       3.647 s  ->  0.6417 s      7.713 = 6.533 + 0.8986+ 0.2809 s
-bio008002   trim : 3.116 MB  ->  474.5 KB       2.251 s  ->  0.4742 s      5.155 = 3.805 + 1.035 + 0.3151 s
-bio010002   trim : 3.525 MB  ->  662.5 KB       2.5   s  ->  0.6454 s      7.226 = 4.332 + 2.445 + 0.4482 s
-bio017002   trim : 10.32 MB  ->  654.1 KB       8.43  s  ->  0.7137 s      19.43 = 17.73 + 1.155 + 0.5456 s
-bio021002   trim : 6.354 MB  ->  814.0 KB       3.962 s  ->  2.08   s      37.39 = 6.727 + 30.25 + 0.4129 s
-bio022002   trim : 382.1 KB  ->  61.2  KB       0.1009s  ->  0.07092s      0.1239= 0.1136+ 0.0030+ 0.007295 s
-bio023002   trim : 415.8 KB  ->  74.28 KB       0.1089s  ->  0.07694s      0.1484= 0.1327+ 0.0045+ 0.01115 s
-bio025002   trim : 4.968 MB  ->  1.63  MB       4.339 s  ->  1.707  s      10.47 = 7.885 + 1.798 + 0.7869 s
-bio026002   trim : 10.27 MB  ->  1.254 MB       8.217 s  ->  1.202  s      18.9  = 15.87 + 2.287 + 0.7423 s
-bio027002   trim : 3.423 MB  ->  643.4 KB       3.296 s  ->  0.7494 s      7.463 = 6.625 + 0.5081+ 0.3301 s
-bio028002   trim : 463.3 KB  ->  77.96 KB       0.1121s  ->  0.08052s      0.1776= 0.1633+ 0.0047+ 0.009569 s
-bio029002   trim : 10.17 MB  ->  664.6 KB       10.1  s  ->  0.7364 s      23.55 = 21.42 + 1.427 + 0.6992 s
-bio031002   trim : 3.178 MB  ->  556.3 KB       3.027 s  ->  0.677  s      6.307 = 5.683 + 0.4019+ 0.2219 s
-bio035002   trim : 5.298 MB  ->  887.0 KB       3.159 s  ->  0.7699 s      7.606 = 5.508 + 1.787 + 0.3116 s
-bio037002   trim : 3.554 MB  ->  669.4 KB       2.362 s  ->  3.088  s      90.94 = 4.301 + 85.56 + 1.073 s
-bio038002   trim : 424.4 KB  ->  104.4 KB       0.1603s  ->  0.1145 s      0.2062= 0.1887+ 0.0069+ 0.0106 s
-bio041002   trim : 9.438 MB  ->  1.123 MB       7.449 s  ->  1.024  s      17.27 = 14.48 + 1.946 + 0.8386 s
-bio044002   trim : 2.525 MB  ->  472.5 KB       1.738 s  ->  0.4716 s      4.077 = 2.809 + 1.045 + 0.224 s
-bio046002   trim : 7.714 MB  ->  1.017 MB       4.983 s  ->  0.8245 s      10.35 = 8.42  + 1.464 + 0.4706 s
-
-
-=#
