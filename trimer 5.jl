@@ -257,7 +257,7 @@ function readveripb(path,file,system,varmap)
     redwitness = Dict{Int, String}()
     output = conclusion = ""
     c = length(system)
-    open(string(path,'/',file,".veripb"),"r"; lock = false) do f
+    open(string(path,'/',file,extention),"r"; lock = false) do f
         c+=1
         for ss in eachline(f)
             st = split(ss,' ')
@@ -271,8 +271,8 @@ function readveripb(path,file,system,varmap)
                 push!(systemlink,[-2])
                 eq = solvepol(st,system,systemlink[end])
             elseif type == "ia"
-                push!(systemlink,[-3,parse(Int,st[2])])
-                eq = readeq(st,varmap,4:2:length(st)-3)
+                push!(systemlink,[-3,parse(Int,st[end])])
+                eq = readeq(st[1:end-1],varmap,2:2:length(st)-4)
             elseif type == "red"  
                 push!(systemlink,[-4])
                 eq = readred(st,varmap,redwitness,c)
@@ -483,8 +483,11 @@ end
 function writeu(e,varmap)
     return string("u ",writeeq(e,varmap))
 end
-function writeia(e,link,cone,varmap)
+function writeiaold(e,link,cone,varmap)
     return string("ia ",sum(cone[1:link])," : ",writeeq(e,varmap))
+end
+function writeia(e,link,cone,varmap)
+    return string("ia ",writeeq(e,varmap)[1:end-1]," ",sum(cone[1:link]),"\n")
 end
 function writesol(e,varmap)
     s = "solx"
@@ -557,7 +560,7 @@ function writedel(f,systemlink,i,succ,cone,nbopb,dels)
         write(f,string("\n"))
     end
 end
-function writeconedel(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
+function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
     open(string(path,"/smol.",file,".opb"),"w") do f
         for i in 1:nbopb
             if cone[i]
@@ -772,7 +775,7 @@ function runtrimmer(path,file,extention)
         cone = makesmol(system,invsys,varmap,systemlink,nbopb)
     end
     twc = @elapsed begin
-        writeconedel(path,file,extention,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
+        writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
     end
     writeshortrepartition(path,file,cone,nbopb)
     tvs = @elapsed begin
@@ -810,15 +813,34 @@ function run_bio_sorted()
         end
     end
 end
-# const benchs = "veriPB/newSIPbenchmarks"
-# const solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-# const proofs = "veriPB/proofs"    
+function run_bio_solver(ins)
+    path = string(benchs,"/biochemicalReactions")
+    cd()
+    pattern = string(ins[4:6],".txt")
+    target = string(ins[7:9],".txt")
+    # run(`rm $proofs/$ins$extention`)
+    # ins = string("bio",pattern[1:end-4],target[1:end-4])
+    if !isfile(string(proofs,"/",ins,".opb")) || !isfile(string(proofs,"/",ins,extention)) ||
+        (isfile(string(proofs,"/",ins,extention)) && 
+        (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
+        read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
+        print(ins)
+        @time run(pipeline(`./$solver --prove $proofs/$ins --no-clique-detection --format lad $path/$pattern $path/$target`, devnull))
+    end # no --proof-names anymore ?
+end
+function runins(file)
+    run_bio_solver(file)
+    @profilehtml runtrimmer(proofs,file,extention)
+end
+const benchs = "veriPB/newSIPbenchmarks"
+const solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+const proofs = "veriPB/proofs"    
 # const proofs = "veriPB/prooframdisk"    
-const benchs = "newSIPbenchmarks"
-const solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-const proofs = "/cluster/proofs"
+# const benchs = "newSIPbenchmarks"
+# const solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+# const proofs = "/cluster/proofs"
 const path = proofs
-const extention = ".veripb"
+const extention = ".pbp"
 const version = "2.0"
 
 function main()
@@ -889,14 +911,34 @@ end
 # runtrimmer(proofs,ins,extention)
 
 # ins = "bio037002"
-# @profilehtml runtrimmer(proofs,ins,extention)
+# ins = "bio019014"
+# ins = "bio001004"
 
-main()
+# run_bio_solver(ins)
+
+ins = "bio070014"
+runins(ins)
+
+# sat = read(`tail -n 2 $path/$file$extention`,String)[1:14] == "conclusion SAT"
+
+
+# main()
 
 #=
 export JULIA_NUM_THREADS=192
-julia --check-bounds=no 'trimer 4.jl' bio all
+julia --check-bounds=no 'trimer 5.jl'
 
+degre
+nds
+hall
+fail
+backtrack
+adjacency0:n
+adjacencyhack
+backtrackbincolor
+backtrackbin
+colorbound
+disconnected
 
 rm atimes
 rm abytes
@@ -906,6 +948,11 @@ rm arepartition
 
 hardest one bio 7 13 (310_916_484 lignes)
 lon sur le serv bio 89 32 (421_805_749 lignes)
+
+on peut retenir l'assignement optenable depuis le cone
+on met dans le cone toutes les unit
+
+
 =#
 
 # readrepartition()
@@ -916,7 +963,71 @@ lon sur le serv bio 89 32 (421_805_749 lignes)
 # find . -name ".*" -type f -delete 
 # ssh arthur@fataepyc-01.dcs.gla.ac.uk
 # scp arthur@fataepyc-01.dcs.gla.ac.uk:/cluster/proofs/smol.bio063002.veripb smol.bio063002.veripb
+# scp arthur@fataepyc-01.dcs.gla.ac.uk:/cluster/proofs/smol.bio170041.veripb smol.bio170041.veripb
 # scp arthur@fataepyc-01.dcs.gla.ac.uk:/cluster/proofs/times times2
 # cd /home/arthur_gla/veriPB/trim/smol-proofs2/
+# scp arthur@fataepyc-01.dcs.gla.ac.uk:/cluster/proofs/atable atableserv
 
+#=
+function test()
+    for i in 9500:length(t)
+        print(prettytime(t[i][3]/10^6),"/",min(100,t[i][6]),",")
+    end
+    for i in 9500:length(t)
+        print(prettytime(t[i][3]/10^6),"/",min(100,t[i][7]),",")
+    end
 
+    for i in 9500:length(t)
+        print(prettytime(t[i][3]/10^6),"/",min(100,t[i][9]),",")
+    end
+    for i in 9500:length(t)
+        print(prettytime(t[i][3]/10^6),"/",min(100,t[i][10]),",")
+    end
+    for i in 9500:length(t)
+        print(prettytime(t[i][3]/10^6),"/",min(100,t[i][11]),",")
+    end
+
+    r =  9500:length(t)
+    s = 0.0
+    for i in r
+        s+=t[i][8]
+    end
+    println(s/length(r))
+
+    r =  9500:length(t)
+    m = 0.0
+    for i in r
+        m=max(m,t[i][5])
+    end
+    println(m)
+
+    r =  9500:length(t)
+    m = 100.0
+    for i in r
+        m=min(m,t[i][5])
+    end
+    println(m)
+
+    r =  9500:length(t)
+    t5 = [t[i][5] for i in r]
+    t8 = [t[i][8] for i in r]
+
+    for i in r
+        if t[i][8]>0.8
+            printtabular([t[i]])
+        end
+    end
+
+    for i in 9000:length(t)
+        print(prettytime(t[i][3]/10^6),"/",prettypourcent(t[i][8]),",")
+    end
+
+    for i in 9000:length(t)
+        print(prettytime(t[i][3]/10^6),"/",prettytime(t[i][4]/10^6),",")
+    end
+
+    for i in 9000:length(t)
+        print(prettytime(t[i][3]/10^6),"/",prettytime(t[i][4]/10^6),",")
+    end
+end
+=#
