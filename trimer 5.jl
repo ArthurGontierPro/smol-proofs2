@@ -283,6 +283,8 @@ function readveripb(path,file,system,varmap)
                 output = st[2]
             elseif type == "conclusion"
                 conclusion = st[2]
+            elseif type == "*trim"
+
             elseif !(ss[1:2] in ["# ","w ","ps","* ","f ","d ","de","co","en"])
                 println("unknown: ",ss)
             end
@@ -486,8 +488,8 @@ end
 function writeiaold(e,link,cone,varmap)
     return string("ia ",sum(cone[1:link])," : ",writeeq(e,varmap))
 end
-function writeia(e,link,cone,varmap)
-    return string("ia ",writeeq(e,varmap)[1:end-1]," ",sum(cone[1:link]),"\n")
+function writeia(e,link,index,varmap)
+    return string("ia ",writeeq(e,varmap)[1:end-1]," ",index[link],"\n")
 end
 function writesol(e,varmap)
     s = "solx"
@@ -503,7 +505,7 @@ function writered(e,varmap,witness)
     end
     return string(s," >= ",e.b," ; ",witness,"\n")
 end
-function writepol(link,cone)
+function writepol(link,index)
     s = string("p")
     for i in 2:length(link)
         t = link[i]
@@ -519,7 +521,7 @@ function writepol(link,cone)
             if link[i+1] in [-2,-3]
                 s = string(s," ",t)
             else
-                s = string(s," ",sum(cone[1:t]))
+                s = string(s," ",index[t])
             end
         end
     end
@@ -541,7 +543,7 @@ function invlink(systemlink,succ::Vector{Vector{Int}},nbopb)
         end
     end
 end
-function writedel(f,systemlink,i,succ,cone,nbopb,dels)
+function writedel(f,systemlink,i,succ,index,nbopb,dels)
     isdel = false
     for p in systemlink[i-nbopb]
         if p>nbopb && !dels[p] 
@@ -552,7 +554,7 @@ function writedel(f,systemlink,i,succ,cone,nbopb,dels)
                     isdel = true
                 end
                 dels[p] = true
-                write(f,string(sum(cone[1:p])," "))
+                write(f,string(index[p]," "))
             end
         end
     end
@@ -561,9 +563,13 @@ function writedel(f,systemlink,i,succ,cone,nbopb,dels)
     end
 end
 function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
+    index = zeros(Int,length(system))
+    lastindex = 0
     open(string(path,"/smol.",file,".opb"),"w") do f
         for i in 1:nbopb
             if cone[i]
+                lastindex += 1
+                index[i] = lastindex
                 eq = system[i]
                 write(f,writeeq(eq,varmap))
             end
@@ -577,17 +583,24 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,
         write(f,string("f ",sum(cone[1:nbopb])," 0\n"))
         for i in nbopb+1:length(system)
             if cone[i]
+                lastindex += 1
+                index[i] = lastindex
                 eq = system[i]
                 tlink = systemlink[i-nbopb][1]
                 if tlink == -1               # rup
                     write(f,writeu(eq,varmap))
-                    writedel(f,systemlink,i,succ,cone,nbopb,dels)
+                    writedel(f,systemlink,i,succ,index,nbopb,dels)
                 elseif tlink == -2           # pol
-                    write(f,writepol(systemlink[i-nbopb],cone))
-                    writedel(f,systemlink,i,succ,cone,nbopb,dels)
+                    write(f,writepol(systemlink[i-nbopb],index))
+                    writedel(f,systemlink,i,succ,index,nbopb,dels)
+
+                    # write(f,writeia(eq,i,index,varmap))
+                    # write(f,string("del id ",lastindex,"\n"))
+                    # lastindex += 1
+                    # index[i] = lastindex
                 elseif tlink == -3           # ia
-                    write(f,writeia(eq,systemlink[i-nbopb][2],cone,varmap))
-                    writedel(f,systemlink,i,succ,cone,nbopb,dels)
+                    write(f,writeia(eq,systemlink[i-nbopb][2],index,varmap))
+                    writedel(f,systemlink,i,succ,index,nbopb,dels)
                 elseif tlink == -4           # red
                     write(f,writered(eq,varmap,redwitness[i]))
                 elseif tlink == -5           # solx
@@ -820,13 +833,13 @@ function run_bio_solver(ins)
     target = string(ins[7:9],".txt")
     # run(`rm $proofs/$ins$extention`)
     # ins = string("bio",pattern[1:end-4],target[1:end-4])
-    if !isfile(string(proofs,"/",ins,".opb")) || !isfile(string(proofs,"/",ins,extention)) ||
-        (isfile(string(proofs,"/",ins,extention)) && 
-        (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
-        read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
+    # if !isfile(string(proofs,"/",ins,".opb")) || !isfile(string(proofs,"/",ins,extention)) ||
+    #     (isfile(string(proofs,"/",ins,extention)) && 
+    #     (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
+    #     read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
         print(ins)
         @time run(pipeline(`./$solver --prove $proofs/$ins --no-clique-detection --format lad $path/$pattern $path/$target`, devnull))
-    end # no --proof-names anymore ?
+    # end # no --proof-names anymore ?
 end
 function runins(file)
     run_bio_solver(file)
