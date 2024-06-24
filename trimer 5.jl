@@ -255,6 +255,7 @@ end
 function readveripb(path,file,system,varmap)
     systemlink = Vector{Int}[]
     redwitness = Dict{Int, String}()
+    com = Dict{Int, String}()
     output = conclusion = ""
     c = length(system)
     open(string(path,'/',file,extention),"r"; lock = false) do f
@@ -284,7 +285,7 @@ function readveripb(path,file,system,varmap)
             elseif type == "conclusion"
                 conclusion = st[2]
             elseif type == "*trim"
-
+                com[length(system)+1] = ss[7:end]
             elseif !(ss[1:2] in ["# ","w ","ps","* ","f ","d ","de","co","en"])
                 println("unknown: ",ss)
             end
@@ -294,7 +295,7 @@ function readveripb(path,file,system,varmap)
             end
         end
     end
-    return system,systemlink,redwitness,output,conclusion,version
+    return system,systemlink,redwitness,output,conclusion,com,version
 end
 function slack(eq::Eq,assi::Vector{Int8})
     c=0
@@ -469,8 +470,8 @@ end
 function readinstance(path,file)
     system,varmap = readopb(path,file)
     nbopb = length(system)
-    system,systemlink,redwitness,output,conclusion,version = readveripb(path,file,system,varmap)
-    return system,systemlink,redwitness,nbopb,varmap,output,conclusion,version
+    system,systemlink,redwitness,output,conclusion,com,version = readveripb(path,file,system,varmap)
+    return system,systemlink,redwitness,nbopb,varmap,output,conclusion,com,version
 end
 function writelit(l,varmap)
     return string(l.coef," ",if l.sign "" else "~" end, varmap[l.var])
@@ -775,12 +776,55 @@ function roundt(t,d)
     end
     return t
 end
-function runtrimmer(path,file,extention)
+function printcom(system,invsys,cone,com)
+    ogadj = ogdeg = oghal = ogbac = ogfail = ognds = ognog = ogother = 0
+    smadj = smdeg = smhal = smbac = smfail = smnds = smnog = smother = 0
+    for i in eachindex(com)
+        s = com[i]
+        type = s[1:3]
+        if type == "adj"
+            ogadj+=1
+            if cone[i] smadj+=1 end
+        elseif type == "deg"
+            ogdeg+=1
+            if cone[i] smdeg+=1 end
+        elseif type == "hal"
+            oghal+=1
+            if cone[i] smhal+=1 end
+        elseif type == "bac"
+            ogbac+=1
+            if cone[i] smbac+=1 end
+        elseif type == "fai"
+            ogfail+=1
+            if cone[i] smfail+=1 end
+        elseif type == "nds"
+            ognds+=1
+            if cone[i] smnds+=1 end
+        elseif type == "nog"
+            ognog+=1
+            if cone[i] smnog+=1 end
+        else
+            ogother+=1
+            println(s)
+            if cone[i] smother+=1 end
+        end
+    end
+    println("adjacency ",smadj,"/",ogadj)
+    println("degre ",smdeg,"/",ogdeg)
+    println("hall ",smhal,"/",oghal)
+    println("backtrack ",smbac,"/",ogbac)
+    println("fails ",smfail,"/",ogfail)
+    println("nds ",smnds,"/",ognds)
+    println("nogoods ",smnog,"/",ognog)
+    println("other ",smother,"/",ogother)
+end
+function runtrimmer(file)
+    run_bio_solver(file) # rerun for the pbp file with coms
     tvp = @elapsed begin
         v1 = read(`veripb $path/$file.opb $path/$file$extention`)
     end
     tri = @elapsed begin
-        system,systemlink,redwitness,nbopb,varmap,output,conclusion,version = readinstance(path,file)
+        system,systemlink,redwitness,nbopb,varmap,output,conclusion,com,version = readinstance(path,file)
     end
     invsys = getinvsys(system,varmap)
     normcoefsystem(system)
@@ -790,6 +834,9 @@ function runtrimmer(path,file,extention)
     twc = @elapsed begin
         writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
     end
+
+    printcom(system,invsys,cone,com)
+
     writeshortrepartition(path,file,cone,nbopb)
     tvs = @elapsed begin
         v2 = read(`veripb $path/smol.$file.opb $path/smol.$file$extention`)
@@ -809,19 +856,20 @@ function runtrimmer(path,file,extention)
     end
 end
 function run_bio_sorted()
+    extentionstat = ".veripb"
     cd()
     list = cd(readdir, proofs)
     list = [s[1:end-4] for s in list if s[end-3:end]==".opb" && s[1:3]=="bio"]
-    stats = [stat(string(path,"/",file,".opb")).size + stat(string(proofs,"/",file,extention)).size for file in list]
+    stats = [stat(string(path,"/",file,".opb")).size + stat(string(proofs,"/",file,extentionstat)).size for file in list]
     p = sortperm(stats)
     for i in eachindex(p)
         file = list[p[i]]
-        tail = read(`tail -n 1 $proofs/$file$extention`,String)
+        tail = read(`tail -n 1 $proofs/$file$extentionstat`,String)
         if length(tail) > 24 && 
             tail[1:24] == "end pseudo-Boolean proof" &&
-            read(`tail -n 2 $proofs/$file$extention`,String)[1:14] != "conclusion SAT"
-            if stats[p[i]] > 100000
-                runtrimmer(proofs,file,extention)
+            read(`tail -n 2 $proofs/$file$extentionstat`,String)[1:14] != "conclusion SAT"
+            if stats[p[i]] > 10_000_000
+                runtrimmer(file)
             end
         end
     end
@@ -840,10 +888,6 @@ function run_bio_solver(ins)
         print(ins)
         @time run(pipeline(`./$solver --prove $proofs/$ins --no-clique-detection --format lad $path/$pattern $path/$target`, devnull))
     # end # no --proof-names anymore ?
-end
-function runins(file)
-    run_bio_solver(file)
-    @profilehtml runtrimmer(proofs,file,extention)
 end
 const benchs = "veriPB/newSIPbenchmarks"
 const solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
@@ -918,6 +962,9 @@ function printtabular(t)
     end
 end
 
+
+run_bio_sorted()
+
 # ins = "aaaclique"
 # cd()
 # ins = "bio021002"
@@ -929,8 +976,67 @@ end
 
 # run_bio_solver(ins)
 
-ins = "bio070014"
-runins(ins)
+# ins = "bio070014"
+# runtrimmer(ins)
+
+
+#=
+    bio037002  
+adjacency 1936/12800
+degre 220/220
+hall 40/3788
+backtrack 763/1403
+fails 626/2917
+nds 80/80
+nogoods 1/17
+
+    bio021002 
+adjacency 3504/31902
+degre 528/580
+hall 25/360
+backtrack 81/208
+fails 4/224
+nds 172/172
+
+    bio070014  
+degre 19620/19620
+hall 1/1
+
+
+bio017015  0.144826 seconds (109 allocations: 6.234 KiB)
+adjacency 9753/61952
+degre 423/907
+hall 0/0
+backtrack 0/0
+fails 0/0
+nds 7/7
+nogoods 0/0
+other 0/0
+17 & 15 & 11.57 MB & 1.423 MB & 12 & 6.52 & 1.18 & 18 & 1.18 & 0.21 & 3.09 \\\hline
+bio196013  0.135254 seconds (109 allocations: 6.234 KiB)
+adjacency 11075/64347
+degre 396/833
+hall 7/9
+backtrack 0/0
+fails 4/4
+nds 113/113
+nogoods 0/0
+other 0/0
+196 & 13 & 11.71 MB & 1.611 MB & 14 & 6.78 & 1.51 & 22 & 2.24 & 0.09 & 2.8 \\\hline
+
+bio041013  0.149115 seconds (109 allocations: 6.234 KiB)
+adjacency 10807/63120
+degre 548/816
+hall 4/21
+backtrack 3/4
+fails 13/14
+nds 158/158
+nogoods 0/0
+other 0/0
+
+
+
+=#
 
 # sat = read(`tail -n 2 $path/$file$extention`,String)[1:14] == "conclusion SAT"
 
