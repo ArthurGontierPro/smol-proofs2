@@ -777,46 +777,37 @@ function roundt(t,d)
     return t
 end
 function printcom(system,invsys,cone,com)
-    ogadj = ogdeg = oghal = ogbac = ogfail = ognds = ognog = ogother = 0
-    smadj = smdeg = smhal = smbac = smfail = smnds = smnog = smother = 0
+    names = [
+        "backtrack", "backtrackbin", "backtrackbincolor", "disconnected",
+        "degre", "hall", "nds", "nogood", "loops", "fail", "colorbound",
+        "adjacencyhack", "adjacencydist1", "adjacencydist2", "adjacencydist3",
+        "adjacency", "adjacency0", "adjacency1", "adjacency2", "adjacency3", "adjacency4"]
+    n = length(names)
+    og = zeros(Int,n)
+    sm = zeros(Int,n)
     for i in eachindex(com)
         s = com[i]
-        type = s[1:3]
-        if type == "adj"
-            ogadj+=1
-            if cone[i] smadj+=1 end
-        elseif type == "deg"
-            ogdeg+=1
-            if cone[i] smdeg+=1 end
-        elseif type == "hal"
-            oghal+=1
-            if cone[i] smhal+=1 end
-        elseif type == "bac"
-            ogbac+=1
-            if cone[i] smbac+=1 end
-        elseif type == "fai"
-            ogfail+=1
-            if cone[i] smfail+=1 end
-        elseif type == "nds"
-            ognds+=1
-            if cone[i] smnds+=1 end
-        elseif type == "nog"
-            ognog+=1
-            if cone[i] smnog+=1 end
+        st = split(s,' ')
+        type = string(st[1])
+        removespaces(st)
+        j = findfirst(isequal(type),names)
+        if j === nothing
+            push!(names,type)
+            push!(og,1)
+            push!(sm,0)
+            if cone[i] sm[end]+=1 end
         else
-            ogother+=1
-            println(s)
-            if cone[i] smother+=1 end
+            og[j]+=1
+            if cone[i] sm[j]+=1 end
         end
     end
-    println("adjacency ",smadj,"/",ogadj)
-    println("degre ",smdeg,"/",ogdeg)
-    println("hall ",smhal,"/",oghal)
-    println("backtrack ",smbac,"/",ogbac)
-    println("fails ",smfail,"/",ogfail)
-    println("nds ",smnds,"/",ognds)
-    println("nogoods ",smnog,"/",ognog)
-    println("other ",smother,"/",ogother)
+    p = sortperm(names)
+    for i in p
+        if og[i]>0
+            col =  sm[i]==og[i] ? 3 : sm[i]==0 ? 1 : 2
+            printstyled(names[i]," ",sm[i],"/",og[i],"\n"; color = col)
+        end
+    end
 end
 function runtrimmer(file)
     run_bio_solver(file) # rerun for the pbp file with coms
@@ -860,7 +851,7 @@ function run_bio_sorted()
     cd()
     list = cd(readdir, proofs)
     list = [s[1:end-4] for s in list if s[end-3:end]==".opb" && s[1:3]=="bio"]
-    stats = [stat(string(path,"/",file,".opb")).size + stat(string(proofs,"/",file,extentionstat)).size for file in list]
+    stats = [stat(string(path,"/",file,".opb")).size + stat(string(proofs,"/",file,extention)).size for file in list]
     p = sortperm(stats)
     for i in eachindex(p)
         file = list[p[i]]
@@ -868,9 +859,29 @@ function run_bio_sorted()
         if length(tail) > 24 && 
             tail[1:24] == "end pseudo-Boolean proof" &&
             read(`tail -n 2 $proofs/$file$extentionstat`,String)[1:14] != "conclusion SAT"
-            if stats[p[i]] > 10_000_000
+            if stats[p[i]] > 500_000
                 runtrimmer(file)
             end
+        end
+    end
+end
+function run_timeout_bio_solver()
+    path = string(benchs,"/biochemicalReactions")
+    cd()
+    graphs = cd(readdir, path)
+    n = length(graphs)
+    for target in graphs, pattern in graphs
+        # target = graphs[rand(1:n)]
+        # pattern = graphs[rand(1:n)]
+        if pattern != target
+            ins = string("bio",pattern[1:end-4],target[1:end-4])
+            if !isfile(string(proofs,"/",ins,".opb")) || !isfile(string(proofs,"/",ins,extention)) ||
+                (isfile(string(proofs,"/",ins,extention)) && 
+                (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
+                read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
+                print(ins)
+                p = run(pipeline(`timeout 3 ./$solver --prove $proofs/$ins --no-clique-detection --format lad $path/$pattern $path/$target`, devnull),wait=false); wait(p)
+            end # no --proof-names anymore ?
         end
     end
 end
@@ -886,16 +897,16 @@ function run_bio_solver(ins)
     #     (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
     #     read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
         print(ins)
-        @time run(pipeline(`./$solver --prove $proofs/$ins --no-clique-detection --format lad $path/$pattern $path/$target`, devnull))
+        @time run(pipeline(`./$solver --prove $proofs/$ins --no-clique-detection --format  lad $path/$pattern $path/$target`, devnull))
     # end # no --proof-names anymore ?
 end
-const benchs = "veriPB/newSIPbenchmarks"
-const solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-const proofs = "veriPB/proofs"    
+# const benchs = "veriPB/newSIPbenchmarks"
+# const solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+# const proofs = "veriPB/proofs"    
 # const proofs = "veriPB/prooframdisk"    
-# const benchs = "newSIPbenchmarks"
-# const solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-# const proofs = "/cluster/proofs"
+const benchs = "newSIPbenchmarks"
+const solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+const proofs = "/cluster/proofs"
 const path = proofs
 const extention = ".pbp"
 const version = "2.0"
@@ -962,8 +973,8 @@ function printtabular(t)
     end
 end
 
-
-run_bio_sorted()
+run_timeout_bio_solver()
+# run_bio_sorted()
 
 # ins = "aaaclique"
 # cd()
@@ -1033,6 +1044,92 @@ fails 13/14
 nds 158/158
 nogoods 0/0
 other 0/0
+
+bio089013  0.129651 seconds (109 allocations: 6.234 KiB)
+adjacency 6760/39852
+degre 698/819
+hall 88/4814
+backtrack 247/2367
+fails 45/2928
+nds 98/98
+nogoods 0/13
+other 0/0
+
+89 & 13 & 12.74 MB & 1.222 MB & 10 & 5.79 & 1.27 & 22 & 32.5 & 0.21 & 5.29 \\\hline
+bio192002  0.099399 seconds (109 allocations: 6.234 KiB)
+adjacency 9040/74186
+degre 504/962
+hall 0/0
+backtrack 0/0
+fails 0/0
+nds 51/51
+nogoods 0/0
+other 0/0
+192 & 2 & 12.97 MB & 1.45 MB & 11 & 5.41 & 0.8 & 15 & 1.08 & 0.06 & 2.01 \\\hline
+bio026013  0.109130 seconds (109 allocations: 6.234 KiB)
+adjacency 13659/68403
+degre 589/907
+hall 3/5
+backtrack 2/2
+fails 2/4
+nds 151/151
+nogoods 0/0
+other 0/0
+26 & 13 & 12.88 MB & 2.139 MB & 17 & 5.19 & 1.19 & 23 & 2.16 & 0.08 & 2.57 \\\hline
+bio017013  0.110825 seconds (109 allocations: 6.234 KiB)
+adjacency 11552/70322
+degre 488/784
+hall 0/0
+backtrack 0/0
+fails 0/0
+nds 74/74
+nogoods 0/0
+other 0/0
+17 & 13 & 12.95 MB & 1.69 MB & 13 & 5.41 & 1.03 & 19 & 1.25 & 0.07 & 3.11 \\\hline
+bio075015  0.112467 seconds (109 allocations: 6.234 KiB)
+adjacency 12095/71307
+degre 254/1002
+hall 0/0
+backtrack 0/0
+fails 0/0
+nds 14/14
+nogoods 0/0
+other 0/0
+75 & 15 & 13.0 MB & 1.827 MB & 14 & 5.5 & 1.09 & 20 & 1.38 & 0.14 & 2.76 \\\hline
+
+bio001122  0.108955 seconds (109 allocations: 6.234 KiB)
+adjacency 14360/61336
+degre 1204/1204
+hall 1/1
+backtrack 0/0
+fails 0/0
+nds 128/128
+nogoods 0/0
+other 0/0
+1 & 122 & 12.93 MB & 2.832 MB & 22 & 4.55 & 1.05 & 23 & 2.12 & 0.11 & 2.82 \\\hline
+
+bio073074  0.124405 seconds (109 allocations: 6.234 KiB)
+adjacency 24255/67873
+degre 1825/2602
+hall 1/1
+backtrack 0/0
+fails 0/0
+nds 481/481
+nogoods 0/0
+other 0/0
+73 & 74 & 13.54 MB & 3.83 MB & 28 & 5.07 & 1.9 & 37 & 3.45 & 0.14 & 3.28 \\\hline
+
+bio096061  0.131999 seconds (109 allocations: 6.234 KiB)
+adjacency 11696/52892
+degre 1587/1587
+hall 2/8
+backtrack 2/2
+fails 2/4
+nds 1066/1066
+nogoods 0/0
+other 0/0
+96 & 61 & 13.35 MB & 2.539 MB & 19 & 3.97 & 1.06 & 27 & 2.84 & 0.09 & 4.14 \\\hline
+
 
 
 
