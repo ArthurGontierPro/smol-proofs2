@@ -1024,14 +1024,18 @@ end
 # ins = "bio001004"
 
 
-ins = "bio021002"
+# ins = "bio021002"
 # ins = "bio070014"
 
 # run_bio_solver(ins)
 
-runtrimmer(ins)
+# runtrimmer(ins)
 
-
+# include("ladtograph.jl")
+# g = ladtograph("veriPB/newSIPbenchmarks/biochemicalReactions","021.txt")
+# draw(PNG(string(proofs,"/aimg/021.png"), 16cm, 16cm), gplot(g))
+# g = ladtograph("veriPB/newSIPbenchmarks/biochemicalReactions","002.txt")
+# draw(PNG(string(proofs,"/aimg/002.png"), 16cm, 16cm), gplot(g))
 
 # sat = read(`tail -n 2 $path/$file$extention`,String)[1:14] == "conclusion SAT"
 
