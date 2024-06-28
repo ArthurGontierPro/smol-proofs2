@@ -783,6 +783,17 @@ function delindividualist(g)
         i = findfirst(v->degree(g,v)==0,vertices(g))
     end
 end
+function makeg2win(g)
+    g2 = SimpleGraph(nv(g),0)
+    for i in vertices(g)
+        for j in neighbors(g, i)
+            for k in neighbors(g, j)
+                add_edge!(g2,i,k)
+            end
+        end
+    end
+    return g2
+end 
 function printcom(file,system,invsys,cone,com)
     names = [
         "backtrack", "backtrackbin", "backtrackbincolor", "disconnected",
@@ -1031,11 +1042,14 @@ end
 
 # runtrimmer(ins)
 
-# include("ladtograph.jl")
-# g = ladtograph("veriPB/newSIPbenchmarks/biochemicalReactions","021.txt")
-# draw(PNG(string(proofs,"/aimg/021.png"), 16cm, 16cm), gplot(g))
-# g = ladtograph("veriPB/newSIPbenchmarks/biochemicalReactions","002.txt")
-# draw(PNG(string(proofs,"/aimg/002.png"), 16cm, 16cm), gplot(g))
+include("ladtograph.jl")
+g = ladtograph("veriPB/newSIPbenchmarks/biochemicalReactions","021.txt")
+draw(PNG(string(proofs,"/aimg/021.png"), 16cm, 16cm), gplot(g))
+draw(PNG(string(proofs,"/aimg/021-g2.png"), 16cm, 16cm), gplot(makeg2win(g)))
+
+g = ladtograph("veriPB/newSIPbenchmarks/biochemicalReactions","002.txt")
+draw(PNG(string(proofs,"/aimg/002.png"), 16cm, 16cm), gplot(g))
+draw(PNG(string(proofs,"/aimg/002-g2.png"), 16cm, 16cm), gplot(makeg2win(g)))
 
 # sat = read(`tail -n 2 $path/$file$extention`,String)[1:14] == "conclusion SAT"
 
