@@ -18,7 +18,9 @@ function ladtograph(path,file)
             removespaces(st)
             for sn in st
                 n = parse(Int,sn)
-                add_edge!(g, l, n)
+                if n>0
+                    add_edge!(g, l, n)
+                end
             end
         end
     end

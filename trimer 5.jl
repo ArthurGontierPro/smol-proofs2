@@ -855,7 +855,9 @@ function printcom(file,system,invsys,cone,com)
     for i in eachindex(smd)
         smg = smd[i]
         delindividualist(smg)
+        if nv(smg)>0
         draw(PNG(string(proofs,"/aimg/smol.",file,"-g",i,".png"), 16cm, 16cm), gplot(smg))
+        end
     end
 end
 function runtrimmer(file)
@@ -896,7 +898,7 @@ function runtrimmer(file)
     end
 end
 function run_bio_sorted()
-    extentionstat = ".veripb"
+    # extentionstat = ".veripb"
     cd()
     list = cd(readdir, proofs)
     list = [s[1:end-4] for s in list if s[end-3:end]==".opb" && s[1:3]=="bio"]
@@ -904,11 +906,11 @@ function run_bio_sorted()
     p = sortperm(stats)
     for i in eachindex(p)
         file = list[p[i]]
-        tail = read(`tail -n 1 $proofs/$file$extentionstat`,String)
+        tail = read(`tail -n 1 $proofs/$file$extention`,String)
         if length(tail) > 24 && 
             tail[1:24] == "end pseudo-Boolean proof" &&
-            read(`tail -n 2 $proofs/$file$extentionstat`,String)[1:14] != "conclusion SAT"
-            if stats[p[i]] > 500_000
+            read(`tail -n 2 $proofs/$file$extention`,String)[1:14] != "conclusion SAT"
+            if stats[p[i]] > 2_000_000
                 runtrimmer(file)
             end
         end
@@ -939,6 +941,15 @@ function run_bio_solver(ins)
     cd()
     pattern = string(ins[4:6],".txt")
     target = string(ins[7:9],".txt")
+
+    g = ladtograph(path,pattern)
+    draw(PNG(string(proofs,"/aimg/",pattern[1:3],".png"), 16cm, 16cm), gplot(g))
+    draw(PNG(string(proofs,"/aimg/",pattern[1:3],"-g2.png"), 16cm, 16cm), gplot(makeg2win(g)))
+    g = ladtograph(path,target)
+    draw(PNG(string(proofs,"/aimg/",target[1:3],".png"), 16cm, 16cm), gplot(g))
+    draw(PNG(string(proofs,"/aimg/",target[1:3],"-g2.png"), 16cm, 16cm), gplot(makeg2win(g)))
+
+
     # run(`rm $proofs/$ins$extention`)
     # ins = string("bio",pattern[1:end-4],target[1:end-4])
     # if !isfile(string(proofs,"/",ins,".opb")) || !isfile(string(proofs,"/",ins,extention)) ||
@@ -1021,9 +1032,10 @@ function printtabular(t)
         )
     end
 end
+include("ladtograph.jl")
 
 # run_timeout_bio_solver()
-# run_bio_sorted()
+run_bio_sorted()
 
 # ins = "aaaclique"
 # cd()
@@ -1032,7 +1044,7 @@ end
 
 # ins = "bio037002"
 # ins = "bio019014"
-# ins = "bio001004"
+# ins = "bio112002"
 
 
 # ins = "bio021002"
@@ -1042,14 +1054,6 @@ end
 
 # runtrimmer(ins)
 
-include("ladtograph.jl")
-g = ladtograph("veriPB/newSIPbenchmarks/biochemicalReactions","021.txt")
-draw(PNG(string(proofs,"/aimg/021.png"), 16cm, 16cm), gplot(g))
-draw(PNG(string(proofs,"/aimg/021-g2.png"), 16cm, 16cm), gplot(makeg2win(g)))
-
-g = ladtograph("veriPB/newSIPbenchmarks/biochemicalReactions","002.txt")
-draw(PNG(string(proofs,"/aimg/002.png"), 16cm, 16cm), gplot(g))
-draw(PNG(string(proofs,"/aimg/002-g2.png"), 16cm, 16cm), gplot(makeg2win(g)))
 
 # sat = read(`tail -n 2 $path/$file$extention`,String)[1:14] == "conclusion SAT"
 
