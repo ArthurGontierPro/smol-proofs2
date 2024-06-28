@@ -1,4 +1,4 @@
-using Profile,StatProfilerHTML,DataStructures
+using Profile,StatProfilerHTML,DataStructures,Graphs,GraphPlot,Compose,Cairo
 
 mutable struct Lit
     coef::Int
@@ -776,7 +776,14 @@ function roundt(t,d)
     end
     return t
 end
-function printcom(system,invsys,cone,com)
+function delindividualist(g)
+    i = findfirst(v->degree(g,v)==0,vertices(g))
+    while !(i === nothing)
+        rem_vertex!(g, i)
+        i = findfirst(v->degree(g,v)==0,vertices(g))
+    end
+end
+function printcom(file,system,invsys,cone,com)
     names = [
         "backtrack", "backtrackbin", "backtrackbincolor", "disconnected",
         "degre", "hall", "nds", "nogood", "loops", "fail", "colorbound",
@@ -785,6 +792,10 @@ function printcom(system,invsys,cone,com)
     n = length(names)
     og = zeros(Int,n)
     sm = zeros(Int,n)
+    # ogg =  SimpleGraph()
+    # smg =  SimpleGraph()
+    ogd = Dict{Int,SimpleGraph{Int}}()
+    smd = Dict{Int,SimpleGraph{Int}}()
     for i in eachindex(com)
         s = com[i]
         st = split(s,' ')
@@ -799,6 +810,23 @@ function printcom(system,invsys,cone,com)
         else
             og[j]+=1
             if cone[i] sm[j]+=1 end
+            if type[1:4] == "adja"
+                v1 = parse(Int,st[2])
+                v2 = parse(Int,st[3])
+                idg = parse(Int,st[4])
+                if !haskey(ogd,idg) ogd[idg] = SimpleGraph() end
+                if !haskey(smd,idg) smd[idg] = SimpleGraph() end
+                ogg = ogd[idg]
+                smg = smd[idg]
+                n = size(ogg, 1)
+                m = max(v1,v2)
+                if m > n 
+                    add_vertices!(ogg, m-n)
+                    add_vertices!(smg, m-n)
+                end
+                add_edge!(ogg, v1, v2)
+                if cone[i] add_edge!(smg, v1, v2) end
+            end
         end
     end
     p = sortperm(names)
@@ -807,6 +835,16 @@ function printcom(system,invsys,cone,com)
             col =  sm[i]==og[i] ? 3 : sm[i]==0 ? 1 : 2
             printstyled(names[i]," ",sm[i],"/",og[i],"\n"; color = col)
         end
+    end
+    for i in eachindex(ogd)
+        ogg = ogd[i]
+        delindividualist(ogg)
+        draw(PNG(string(proofs,"/aimg/",file,"-g",i,".png"), 16cm, 16cm), gplot(ogg))
+    end
+    for i in eachindex(smd)
+        smg = smd[i]
+        delindividualist(smg)
+        draw(PNG(string(proofs,"/aimg/smol.",file,"-g",i,".png"), 16cm, 16cm), gplot(smg))
     end
 end
 function runtrimmer(file)
@@ -826,7 +864,7 @@ function runtrimmer(file)
         writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
     end
 
-    printcom(system,invsys,cone,com)
+    printcom(file,system,invsys,cone,com)
 
     writeshortrepartition(path,file,cone,nbopb)
     tvs = @elapsed begin
@@ -900,13 +938,13 @@ function run_bio_solver(ins)
         @time run(pipeline(`./$solver --prove $proofs/$ins --no-clique-detection --format  lad $path/$pattern $path/$target`, devnull))
     # end # no --proof-names anymore ?
 end
-# const benchs = "veriPB/newSIPbenchmarks"
-# const solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-# const proofs = "veriPB/proofs"    
+const benchs = "veriPB/newSIPbenchmarks"
+const solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+const proofs = "veriPB/proofs"    
 # const proofs = "veriPB/prooframdisk"    
-const benchs = "newSIPbenchmarks"
-const solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-const proofs = "/cluster/proofs"
+# const benchs = "newSIPbenchmarks"
+# const solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+# const proofs = "/cluster/proofs"
 const path = proofs
 const extention = ".pbp"
 const version = "2.0"
@@ -973,7 +1011,7 @@ function printtabular(t)
     end
 end
 
-run_timeout_bio_solver()
+# run_timeout_bio_solver()
 # run_bio_sorted()
 
 # ins = "aaaclique"
@@ -985,155 +1023,15 @@ run_timeout_bio_solver()
 # ins = "bio019014"
 # ins = "bio001004"
 
+
+ins = "bio021002"
+# ins = "bio070014"
+
 # run_bio_solver(ins)
 
-# ins = "bio070014"
-# runtrimmer(ins)
+runtrimmer(ins)
 
 
-#=
-    bio037002  
-adjacency 1936/12800
-degre 220/220
-hall 40/3788
-backtrack 763/1403
-fails 626/2917
-nds 80/80
-nogoods 1/17
-
-    bio021002 
-adjacency 3504/31902
-degre 528/580
-hall 25/360
-backtrack 81/208
-fails 4/224
-nds 172/172
-
-    bio070014  
-degre 19620/19620
-hall 1/1
-
-
-bio017015  0.144826 seconds (109 allocations: 6.234 KiB)
-adjacency 9753/61952
-degre 423/907
-hall 0/0
-backtrack 0/0
-fails 0/0
-nds 7/7
-nogoods 0/0
-other 0/0
-17 & 15 & 11.57 MB & 1.423 MB & 12 & 6.52 & 1.18 & 18 & 1.18 & 0.21 & 3.09 \\\hline
-bio196013  0.135254 seconds (109 allocations: 6.234 KiB)
-adjacency 11075/64347
-degre 396/833
-hall 7/9
-backtrack 0/0
-fails 4/4
-nds 113/113
-nogoods 0/0
-other 0/0
-196 & 13 & 11.71 MB & 1.611 MB & 14 & 6.78 & 1.51 & 22 & 2.24 & 0.09 & 2.8 \\\hline
-
-bio041013  0.149115 seconds (109 allocations: 6.234 KiB)
-adjacency 10807/63120
-degre 548/816
-hall 4/21
-backtrack 3/4
-fails 13/14
-nds 158/158
-nogoods 0/0
-other 0/0
-
-bio089013  0.129651 seconds (109 allocations: 6.234 KiB)
-adjacency 6760/39852
-degre 698/819
-hall 88/4814
-backtrack 247/2367
-fails 45/2928
-nds 98/98
-nogoods 0/13
-other 0/0
-
-89 & 13 & 12.74 MB & 1.222 MB & 10 & 5.79 & 1.27 & 22 & 32.5 & 0.21 & 5.29 \\\hline
-bio192002  0.099399 seconds (109 allocations: 6.234 KiB)
-adjacency 9040/74186
-degre 504/962
-hall 0/0
-backtrack 0/0
-fails 0/0
-nds 51/51
-nogoods 0/0
-other 0/0
-192 & 2 & 12.97 MB & 1.45 MB & 11 & 5.41 & 0.8 & 15 & 1.08 & 0.06 & 2.01 \\\hline
-bio026013  0.109130 seconds (109 allocations: 6.234 KiB)
-adjacency 13659/68403
-degre 589/907
-hall 3/5
-backtrack 2/2
-fails 2/4
-nds 151/151
-nogoods 0/0
-other 0/0
-26 & 13 & 12.88 MB & 2.139 MB & 17 & 5.19 & 1.19 & 23 & 2.16 & 0.08 & 2.57 \\\hline
-bio017013  0.110825 seconds (109 allocations: 6.234 KiB)
-adjacency 11552/70322
-degre 488/784
-hall 0/0
-backtrack 0/0
-fails 0/0
-nds 74/74
-nogoods 0/0
-other 0/0
-17 & 13 & 12.95 MB & 1.69 MB & 13 & 5.41 & 1.03 & 19 & 1.25 & 0.07 & 3.11 \\\hline
-bio075015  0.112467 seconds (109 allocations: 6.234 KiB)
-adjacency 12095/71307
-degre 254/1002
-hall 0/0
-backtrack 0/0
-fails 0/0
-nds 14/14
-nogoods 0/0
-other 0/0
-75 & 15 & 13.0 MB & 1.827 MB & 14 & 5.5 & 1.09 & 20 & 1.38 & 0.14 & 2.76 \\\hline
-
-bio001122  0.108955 seconds (109 allocations: 6.234 KiB)
-adjacency 14360/61336
-degre 1204/1204
-hall 1/1
-backtrack 0/0
-fails 0/0
-nds 128/128
-nogoods 0/0
-other 0/0
-1 & 122 & 12.93 MB & 2.832 MB & 22 & 4.55 & 1.05 & 23 & 2.12 & 0.11 & 2.82 \\\hline
-
-bio073074  0.124405 seconds (109 allocations: 6.234 KiB)
-adjacency 24255/67873
-degre 1825/2602
-hall 1/1
-backtrack 0/0
-fails 0/0
-nds 481/481
-nogoods 0/0
-other 0/0
-73 & 74 & 13.54 MB & 3.83 MB & 28 & 5.07 & 1.9 & 37 & 3.45 & 0.14 & 3.28 \\\hline
-
-bio096061  0.131999 seconds (109 allocations: 6.234 KiB)
-adjacency 11696/52892
-degre 1587/1587
-hall 2/8
-backtrack 2/2
-fails 2/4
-nds 1066/1066
-nogoods 0/0
-other 0/0
-96 & 61 & 13.35 MB & 2.539 MB & 19 & 3.97 & 1.06 & 27 & 2.84 & 0.09 & 4.14 \\\hline
-
-
-
-
-=#
 
 # sat = read(`tail -n 2 $path/$file$extention`,String)[1:14] == "conclusion SAT"
 
