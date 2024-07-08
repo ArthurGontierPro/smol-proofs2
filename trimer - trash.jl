@@ -1071,3 +1071,69 @@ bio046002   trim : 7.714 MB  ->  1.017 MB       4.983 s  ->  0.8245 s      10.35
 
 
 =#
+
+function rup(i,init,rev,system,invsys,cone,front,que,assi,antecedants,type)
+    eq = i==init ? rev : system[i]
+    s = slack(eq,assi)
+    if s<0
+        antecedants[i] = true
+    else
+        r1,r2,r3 = updateprioquebit(eq,cone,front,que,invsys,s,i,assi,antecedants)
+        if r1<i
+            type = 1
+            i = r1-1
+        elseif r2<i
+            type = 2
+            i = r2-1
+        else
+            i = min(i,r3-1)
+        end
+    end
+    que[i] = false
+    i+=1
+    if type == 1
+        rupcone(i,init,rev,system,invsys,cone,front,que,assi,antecedants)
+    elseif type == 2
+        rupfront(i,init,rev,system,invsys,cone,front,que,assi,antecedants)
+    else
+        rupque(i,init,rev,system,invsys,cone,front,que,assi,antecedants)
+    end
+end
+function rupcone(i,init,rev,system,invsys,cone,front,que,assi,antecedants)
+    if i>init
+        rupfront(1,init,rev,system,invsys,cone,front,que,assi,antecedants)
+    else
+        if que[i] && cone[i]
+            rup(i,init,rev,system,invsys,cone,front,que,assi,antecedants,1)
+        else
+            rupcone(i+1,init,rev,system,invsys,cone,que,front,assi,antecedants)
+        end
+    end
+end
+function rupfront(i,init,rev,system,invsys,cone,front,que,assi,antecedants)
+    if i>init
+        rupque(1,init,rev,system,invsys,cone,front,assi,que,antecedants)
+    else
+        if que[i] && front[i]
+            rup(i,init,rev,system,invsys,cone,front,que,assi,antecedants,2)
+        else
+            rupfront(i+1,init,rev,system,invsys,cone,front,que,assi,antecedants)
+        end
+    end
+end
+function rupque(i,init,rev,system,invsys,cone,front,que,assi,antecedants)
+    if i>init
+        printstyled(" rupQueRec empty "; color = :red)
+    else
+        if que[i]
+            rup(i,init,rev,system,invsys,cone,front,que,assi,antecedants,1)
+        else
+            rupque(i+1,init,rev,system,invsys,cone,front,que,assi,antecedants)
+        end
+    end
+end
+function ruprec(system,invsys,antecedants,init,assi,front,cone)
+    que = ones(Bool,init)
+    rev = reverse(system[init])
+    rupcone(1,init,rev,system,invsys,cone,front,que,assi,antecedants)
+end
