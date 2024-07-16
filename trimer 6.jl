@@ -338,7 +338,6 @@ function makesmol(system,invsys,varmap,systemlink,nbopb)
                 if tlink == -1 
                     antecedants .=false ; assi.=0
                     rup(system,invsys,antecedants,i,assi,front,cone)
-                    # rupque(system,invsys,antecedants,i,assi,front,cone)
                     append!(systemlink[i-nbopb],findall(antecedants))
                     fixfront(front,antecedants)
                 elseif tlink >= -3
@@ -505,344 +504,7 @@ function readinstance(path,file)
     system,systemlink,redwitness,output,conclusion,com,version = readveripb(path,file,system,varmap)
     return system,systemlink,redwitness,nbopb,varmap,output,conclusion,com,version
 end
-function writelit(l,varmap)
-    return string(l.coef," ",if l.sign "" else "~" end, varmap[l.var])
-end
-function writeeq(e,varmap)
-    s = ""
-    for l in e.t
-        s = string(s,writelit(l,varmap)," ")
-    end
-    return string(s,">= ",e.b," ;\n")
-end
-function writeu(e,varmap)
-    return string("u ",writeeq(e,varmap))
-end
-function writeiaold(e,link,cone,varmap)
-    return string("ia ",sum(cone[1:link])," : ",writeeq(e,varmap))
-end
-function writeia(e,link,index,varmap)
-    return string("ia ",writeeq(e,varmap)[1:end-1]," ",index[link],"\n")
-end
-function writesol(e,varmap)
-    s = "solx"
-    for l in e.t
-        s = string(s,if l.sign " ~" else " " end, varmap[l.var])
-    end
-    return string(s,"\n")
-end
-function writered(e,varmap,witness)
-    s = "red"
-    for l in e.t
-        s = string(s," ",l.coef,if !l.sign " ~" else " " end, varmap[l.var])
-    end
-    return string(s," >= ",e.b," ; ",witness,"\n")
-end
-function writepol(link,index)
-    s = string("p")
-    for i in 2:length(link)
-        t = link[i]
-        if t==-1
-            s = string(s," +")
-        elseif t==-2
-            s = string(s," *")
-        elseif t==-3
-            s = string(s," d")
-        elseif t==-4
-            s = string(s," s")
-        elseif t>0
-            if link[i+1] in [-2,-3]
-                s = string(s," ",t)
-            else
-                s = string(s," ",index[t])
-            end
-        end
-    end
-    return string(s,"\n")
-end
-function invlink(systemlink,succ::Vector{Vector{Int}},nbopb)
-    for i in eachindex(systemlink)
-        if isassigned(systemlink,i)
-            t = systemlink[i]
-            for j in t
-                if j>0
-                    if isassigned(succ,j)
-                        push!(succ[j],i+nbopb)
-                    else
-                        succ[j] = [i+nbopb]
-                    end
-                end
-            end
-        end
-    end
-end
-function writedel(f,systemlink,i,succ,index,nbopb,dels)
-    isdel = false
-    for p in systemlink[i-nbopb]
-        if p>nbopb && !dels[p] 
-            m = maximum(succ[p])
-            if m == i
-                if !isdel
-                    write(f,string("del id "))
-                    isdel = true
-                end
-                dels[p] = true
-                write(f,string(index[p]," "))
-            end
-        end
-    end
-    if isdel
-        write(f,string("\n"))
-    end
-end
-function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
-    index = zeros(Int,length(system))
-    lastindex = 0
-    open(string(path,"/smol.",file,".opb"),"w") do f
-        for i in 1:nbopb
-            if cone[i]
-                lastindex += 1
-                index[i] = lastindex
-                eq = system[i]
-                write(f,writeeq(eq,varmap))
-            end
-        end
-    end
-    succ = Vector{Vector{Int}}(undef,length(system))
-    dels = zeros(Bool,length(system))
-    invlink(systemlink,succ,nbopb)
-    open(string(path,"/smol.",file,extention),"w") do f
-        write(f,string("pseudo-Boolean proof version ",version,"\n"))
-        write(f,string("f ",sum(cone[1:nbopb])," 0\n"))
-        for i in nbopb+1:length(system)
-            if cone[i]
-                lastindex += 1
-                index[i] = lastindex
-                eq = system[i]
-                tlink = systemlink[i-nbopb][1]
-                if tlink == -1               # rup
-                    write(f,writeu(eq,varmap))
-                    writedel(f,systemlink,i,succ,index,nbopb,dels)
-                elseif tlink == -2           # pol
-                    write(f,writepol(systemlink[i-nbopb],index))
-                    writedel(f,systemlink,i,succ,index,nbopb,dels)
-
-                    # write(f,writeia(eq,i,index,varmap))
-                    # write(f,string("del id ",lastindex,"\n"))
-                    # lastindex += 1
-                    # index[i] = lastindex
-                elseif tlink == -3           # ia
-                    write(f,writeia(eq,systemlink[i-nbopb][2],index,varmap))
-                    writedel(f,systemlink,i,succ,index,nbopb,dels)
-                elseif tlink == -4           # red
-                    write(f,writered(eq,varmap,redwitness[i]))
-                elseif tlink == -5           # solx
-                    write(f,writesol(eq,varmap))
-                end
-            end
-        end
-        write(f,string("output ",output,"\n"))
-        if conclusion == "SAT"
-            write(f,string("conclusion ",conclusion,"\n"))
-        else
-            write(f,string("conclusion ",conclusion," : -1\n"))
-        end
-        write(f,"end pseudo-Boolean proof\n")
-    end
-end
-function writerepartition(path,file,cone,nbopb)
-    open(string(path,"/repartition"), "a") do f
-        write(f,string(file,"\n"))
-        for i in eachindex(cone)
-            if cone[i] 
-                write(f,string("1"))
-            else
-                write(f,string("."))
-            end
-            if i==nbopb
-                write(f,string("\n"))
-            end
-        end
-        write(f,string("\n"))
-    end
-end
-function writeshortrepartition(path,file,cone,nbopb)
-    open(string(path,"/arepartition"), "a") do f
-        chunk = nbopb ÷ 100
-        proofchunk = (length(cone)-nbopb) ÷ 100
-        write(f,string(file," opb and proof chunks are :",chunk," ",proofchunk,"\n"))
-        s = 0
-        j = 1
-        for i in eachindex(cone)
-            if cone[i] 
-                s += cone[i]
-            end
-            if i-j==chunk
-                if s == 0
-                    write(f,string("."))
-                else
-                    write(f,string(" ",100s÷chunk))
-                end
-                s = 0 
-                j = i
-            end
-            if i==nbopb
-                write(f,string(" ",s,"\n"))
-                chunk = proofchunk
-                s = 0
-                j = i
-            end
-        end
-        write(f,string(" ",s,"\n"))
-    end
-end
-function prettybytes(b)
-    if b>=10^9
-        return string(round(b/(10^9); sigdigits=4)," GB")
-    elseif b>=10^6
-        return string(round(b/(10^6); sigdigits=4)," MB")
-    elseif b>=10^3
-        return string(round(b/(10^3); sigdigits=4)," KB")
-    else
-        return  string(round(b; sigdigits=4)," B")
-    end
-end 
-function prettytime(b)
-    if b<0.01
-        return  string(0)
-    elseif b<0.1
-        return  string(round(b; sigdigits=1))
-    elseif b<1
-        return  string(round(b; sigdigits=2))
-    else
-        return  string(round(b; sigdigits=3))
-    end
-end
-function prettypourcent(b)
-    b = b*100
-    c = round(Int,b)
-    return  string(c)
-end
-function roundt(t,d)
-    for i in eachindex(t)
-        t[i] = round(t[i],digits = d)
-    end
-    return t
-end
-function delindividualist(g)
-    i = findfirst(v->degree(g,v)==0,vertices(g))
-    while !(i === nothing)
-        rem_vertex!(g, i)
-        i = findfirst(v->degree(g,v)==0,vertices(g))
-    end
-end
-function makeg2win(g)
-    n = nv(g)
-    g2 = SimpleGraph(n,0)
-    for i in vertices(g)
-        for j in neighbors(g, i)
-            for k in neighbors(g, j)
-                add_edge!(g2,i,k)
-            end
-        end
-    end
-    return g2
-end 
-function add_nei(deb,cur,l,g,A)
-    if k == 0 A[deb,cur] +=1 
-    else
-        for nei in neighbors(g, cur)
-            add_nei(deb,nei,l-1,g,A)
-        end
-    end
-end
-function makegkwin(g,k) return makegkwin(g,2,k) end
-function makegkwin(g,l,k) # l length of path (default 2); k number of paths
-    n = nv(g)
-    A = zeros(Int,n,n)
-    gg = [SimpleGraph(n,0) for _ in 1:k]
-    for i in vertices(g)
-        add_nei(i,i,l,g,A)
-    end
-    for occ in 1:k
-        for i in 1:n
-            for j in i:n
-                if A[i,j]>=occ
-                    add_edge!(gg[occ],i,j)
-                end
-            end
-        end
-    end
-    return gg
-end 
-function printcom(file,system,invsys,cone,com)
-    names = [
-        "backtrack", "backtrackbin", "backtrackbincolor", "disconnected",
-        "degre", "hall", "nds", "nogood", "loops", "fail", "colorbound",
-        "adjacencyhack", "adjacencydist1", "adjacencydist2", "adjacencydist3",
-        "adjacency", "adjacency0", "adjacency1", "adjacency2", "adjacency3", "adjacency4"]
-    n = length(names)
-    og = zeros(Int,n)
-    sm = zeros(Int,n)
-    # ogg =  SimpleGraph()
-    # smg =  SimpleGraph()
-    ogd = Dict{Int,SimpleGraph{Int}}()
-    smd = Dict{Int,SimpleGraph{Int}}()
-    for i in eachindex(com)
-        s = com[i]
-        st = split(s,' ')
-        type = string(st[1])
-        removespaces(st)
-        j = findfirst(isequal(type),names)
-        if j === nothing
-            push!(names,type)
-            push!(og,1)
-            push!(sm,0)
-            if cone[i] sm[end]+=1 end
-        else
-            og[j]+=1
-            if cone[i] sm[j]+=1 end
-            if type[1:3] == "adj"
-                v1 = parse(Int,st[2])
-                v2 = parse(Int,st[3])
-                idg = parse(Int,st[4])
-                if !haskey(ogd,idg) ogd[idg] = SimpleGraph() end
-                if !haskey(smd,idg) smd[idg] = SimpleGraph() end
-                ogg = ogd[idg]
-                smg = smd[idg]
-                n = size(ogg, 1)
-                m = max(v1,v2)
-                if m > n 
-                    add_vertices!(ogg, m-n)
-                    add_vertices!(smg, m-n)
-                end
-                add_edge!(ogg, v1, v2)
-                if cone[i] add_edge!(smg, v1, v2) end
-            end
-        end
-    end
-    p = sortperm(names)
-    for i in p
-        if og[i]>0
-            col =  sm[i]==og[i] ? 3 : sm[i]==0 ? 1 : 2
-            printstyled(names[i]," ",sm[i],"/",og[i],"\n"; color = col)
-        end
-    end
-    for i in eachindex(ogd)
-        ogg = ogd[i]
-        delindividualist(ogg)
-        draw(PNG(string(proofs,"/aimg/",file,"-g",i,".png"), 16cm, 16cm), gplot(ogg))
-    end
-    for i in eachindex(smd)
-        smg = smd[i]
-        delindividualist(smg)
-        if nv(smg)>1
-            draw(PNG(string(proofs,"/aimg/",file,"-g",i,".smol.png"), 16cm, 16cm), gplot(smg))
-        end
-    end
-end
 function runtrimmer(file)
-    run_bio_solver(file) # rerun for the pbp file with coms
     tvp = @elapsed begin
         v1 = read(`veripb $proofs/$file.opb $proofs/$file$extention`)
     end
@@ -866,7 +528,8 @@ function runtrimmer(file)
     end
     so = stat(string(proofs,"/",file,".opb")).size + stat(string(proofs,"/",file,extention)).size
     st = stat(string(proofs,"/smol.",file,".opb")).size + stat(string(proofs,"/smol.",file,extention)).size
-    t = [roundt([parse(Float64,file[end-5:end-3]),parse(Float64,file[end-2:end]),so,st,st/so,tvp,tvs,tvs/tvp,tms,twc,tri],3)]
+    # t = [roundt([parse(Float64,file[end-5:end-3]),parse(Float64,file[end-2:end]),so,st,st/so,tvp,tvs,tvs/tvp,tms,twc,tri],3)]
+    t = [roundt([parse(Float64,split(file,'g')[2]),parse(Float64,split(file,'g')[3]),so,st,st/so,tvp,tvs,tvs/tvp,tms,twc,tri],3)]
     printtabular(t)
     open(string(proofs,"/atable"), "a") do f
         write(f,string(t[1],",\n"))
@@ -878,32 +541,88 @@ function runtrimmer(file)
         end
     end
 end
-function run_timeout_bio_solver()
+function solve(ins,pathpat,pattern,pathtar,target,format,minsize=2_000_000,timeout=1,remake=false)
+    if remake || !isfile(string(proofs,"/",ins,".opb")) || !isfile(string(proofs,"/",ins,extention)) || 
+            length(read(`tail -n 1 $proofs/$ins$extention`,String)) < 24 ||
+            read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof"
+        print(ins,' ')
+        t = @elapsed begin
+            p = run(pipeline(`timeout $timeout ./$solver --prove $proofs/$ins --no-clique-detection --format $format $pathpat/$pattern $pathtar/$target`, devnull),wait=false); wait(p)
+        end
+        t+=0.01
+        ok = false
+        print(prettytime(t))
+        if t>timeout
+            printstyled(" timeout "; color = :red)
+        elseif read(`tail -n 2 $proofs/$ins$extention`,String)[1:14] == "conclusion SAT"
+            printstyled(" sat     "; color = 166)
+        elseif minsize > stat(string(proofs,"/",ins,extention)).size            
+            printstyled(" toosmal "; color = :yellow)
+        else printstyled(" OK      "; color = :green)
+            ok = true
+            # g = ladtograph(pathpat,pattern)
+            # draw(PNG(string(proofs,"/aimg/graphs/",ins,pattern[1:3],".png"), 16cm, 16cm), gplot(g))
+            # g = ladtograph(pathtar,target)
+            # draw(PNG(string(proofs,"/aimg/graphs/",ins,target[1:3],".png"), 16cm, 16cm), gplot(g))
+        end
+        println()
+        if !ok
+            run(`rm -f $proofs/$ins$extention`)
+            run(`rm -f $proofs/$ins.opb`)
+        end
+    end
+end
+function run_bio_solver()
     path = string(benchs,"/biochemicalReactions")
     cd()
     graphs = cd(readdir, path)
     n = length(graphs)
-    for target in graphs, pattern in graphs
+    for target in graphs[1:end], pattern in graphs[1:end]
         # target = graphs[rand(1:n)]
         # pattern = graphs[rand(1:n)]
         if pattern != target
             ins = string("bio",pattern[1:end-4],target[1:end-4])
-            if !isfile(string(proofs,"/",ins,".opb")) || !isfile(string(proofs,"/",ins,extention)) ||
-                (isfile(string(proofs,"/",ins,extention)) && 
-                (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
-                read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
-                print(ins)
-                p = run(pipeline(`timeout 3 ./$solver --prove $proofs/$ins --no-clique-detection --format lad $path/$pattern $path/$target`, devnull),wait=false); wait(p)
-            end # no --proof-names anymore ?
+            solve(ins,path,pattern,path,target,"lad")
+        end
+    end
+end
+function run_si_solver() # all sat or timeout
+    sipath = string(benchs,"/si")
+    cd()
+    inst = cd(readdir, string(sipath))
+    for ins in inst
+        inst2 = cd(readdir, string(sipath,"/",ins))
+        for ins2 in inst2
+            solve(ins2,string(sipath,'/',ins,'/',ins2,),"pattern",string(sipath,'/',ins,'/',ins2),"target","lad")
+        end
+    end
+end
+function run_LV_solver()
+    path = string(benchs,"/LV")
+    cd()
+    for i in 51:112
+        for j in 2:50
+            target = string('g',i)
+            pattern = string('g',j)
+            ins = string("LV",pattern,target)
+            solve(ins,path,pattern,path,target,"lad",100000)
         end
     end
 end
 function run_bio_list(l=1,u=length(biolist),m=1)
     p = sortperm(biostats)
     for i in l:m:u
-        print(i," ")
+        println(i," ",biolist[p[i]])
         # println(biostats[p[i]])
         runtrimmer(biolist[p[i]])
+    end
+end
+function run_LV_list(l=1,u=length(biolist),m=1)
+    p = sortperm(LVstats)
+    for i in l:m:u
+        println(i," ",LVlist[p[i]])
+        # println(biostats[p[i]])
+        runtrimmer(LVlist[p[i]])
     end
 end
 function run_bio_solver(ins)
@@ -911,59 +630,9 @@ function run_bio_solver(ins)
     cd()
     pattern = string(ins[4:6],".txt")
     target = string(ins[7:9],".txt")
-
-    g = ladtograph(path,pattern)
-    draw(PNG(string(proofs,"/aimg/",pattern[1:3],".png"), 16cm, 16cm), gplot(g))
-    draw(PNG(string(proofs,"/aimg/",pattern[1:3],"-g2.png"), 16cm, 16cm), gplot(makeg2win(g)))
-    g = ladtograph(path,target)
-    draw(PNG(string(proofs,"/aimg/",target[1:3],".png"), 16cm, 16cm), gplot(g))
-    draw(PNG(string(proofs,"/aimg/",target[1:3],"-g2.png"), 16cm, 16cm), gplot(makeg2win(g)))
-
-
-    # run(`rm $proofs/$ins$extention`)
-    # ins = string("bio",pattern[1:end-4],target[1:end-4])
-    # if !isfile(string(proofs,"/",ins,".opb")) || !isfile(string(proofs,"/",ins,extention)) ||
-    #     (isfile(string(proofs,"/",ins,extention)) && 
-    #     (length(read(`tail -n 1 $proofs/$ins$extention`,String))) < 24 || 
-    #     read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof")
-        print(ins)
-        # @time run(pipeline(`./$solver --no-clique-detection --format  lad $path/$pattern $path/$target`, devnull))
-        @time run(pipeline(`./$solver --prove $proofs/$ins --no-clique-detection --format  lad $path/$pattern $path/$target`, devnull))
-        # @time run(pipeline(`./$solver --prove $proofs/$ins --no-clique-detection --no-supplementals --format  lad $path/$pattern $path/$target`, devnull))
-        # @time run(pipeline(`./$solver --prove $proofs/$ins --no-clique-detection --no-nds --no-supplementals --format  lad $path/$pattern $path/$target`, devnull))
-    # end # no --proof-names anymore ?
+    solve(ins,path,pattern,path,target,"lad")
 end
-function okinstancelist()
-    cd()
-    list = cd(readdir, proofs)
-    list = [s[1:end-4] for s in list if s[end-3:end]==".opb" && s[1:3]=="bio"]
-    list = [s for s in list if isfile(string(proofs,"/",s,extention))]
-    list = [s for s in list if read(`tail -n 1 $proofs/$s$extention`,String) == "end pseudo-Boolean proof\n"]
-    list = [s for s in list if read(`tail -n 2 $proofs/$s$extention`,String)[1:14] != "conclusion SAT"]
-    stats = [stat(string(path,"/",file,".opb")).size + stat(string(proofs,"/",file,extention)).size for file in list]
 
-    for i in eachindex(list)
-        s = list[i]
-        if read(`tail -n 1 $proofs/$s$extention`,String) != "end pseudo-Boolean proof\n"
-            # println(s," ",stats[i])
-            # println(read(`tail -n 1 $proofs/$s$extention`,String))
-        end
-    end
-    # p = sortperm(stats)
-    # listm = [list[i] for i in eachindex(list) if stats[i] > 1_000_000]
-    open(string(proofs,"/abiolist.jl"),"w") do f
-        write(f,string("const biolist = [\"",list[1],"\""))
-        for i in 2:length(list) 
-            write(f,string(",\"",list[i],"\""))
-        end
-        write(f,string("]\n"))
-        write(f,string("const biostats = [",stats[1]))
-        for i in 2:length(list) 
-            write(f,string(",",stats[i]))
-        end
-        write(f,string("]\n"))
-    end
-end
 const benchs = "veriPB/newSIPbenchmarks"
 const solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
 const proofs = "veriPB/proofs"    
@@ -977,33 +646,120 @@ const extention = ".pbp"
 const version = "2.0"
 
 cd()
-include(string("abiolist.jl"))
+# include("abiolist.jl")
+include("aLVlist.jl")
 include("ladtograph.jl")
+include("trimerPrints.jl")
 
-function printtabular(t)
-    for i in t 
-        println(
-        round(Int,i[1])," & ",
-        round(Int,i[2])," & ",
-        prettybytes(i[3])," & ",
-        prettybytes(i[4])," & ",
-        prettypourcent(i[5])," & ",
-        prettytime(i[6])," & ",
-        prettytime(i[7])," & ",
-        prettypourcent(i[8])," & ",
-        prettytime(i[9])," & ",
-        prettytime(i[10])," & ",
-        prettytime(i[11])," \\\\\\hline"
-        )
-    end
-end
-function main()    
-    run_bio_list(13000,length(biolist),1)
+function main()
+    # run_LV_solver()
+    # run_si_solver()
+    # okinstancelist()
+    # run_bio_solver()
+    # run_LV_list(100,length(LVlist),1)
+    run_LV_list(178,length(LVlist),1)
+    # run_LV_list(length(LVlist),1,-1)
+    # run_bio_list(13087,length(biolist),1)
     # run_bio_list(13226,length(biolist),1)
     # run_bio_list(13273,length(biolist),1)
+    # run_bio_list(14275,length(biolist),1)
 end
 
 main()
+
+#=
+102 LVg26g52
+degre 139/1520
+hall 0/1
+26 & 52 & 5.722 MB & 785.1 KB & 14 & 0.65 & 0.12 & 19 & 0.26 & 0.05 & 4.02 \\\hline
+103 LVg46g51
+degre 1261/1290
+hall 1/1
+46 & 51 & 23.21 MB & 2.048 MB & 9 & 1.73 & 0.62 & 36 & 1.11 & 0.25 & 25.8 \\\hline
+
+
+116 LVg45g51
+degre 1120/1170
+hall 1/1
+45 & 51 & 22.58 MB & 2.614 MB & 12 & 1.74 & 0.63 & 36 & 0.65 & 0.09 & 31.7 \\\hline
+117 LVg38g58
+degre 657/1650
+hall 1/1
+38 & 58 & 7.758 MB & 1.585 MB & 20 & 0.91 & 0.34 & 38 & 0.66 & 0.06 & 12.0 \\\hline
+
+
+141 LVg2g57
+adjacency1 64/3130
+adjacency2 64/3130
+backtrack 5/5
+degre 30/2500
+fail 24/41
+hall 9/31
+2 & 57 & 1.494 MB & 91.33 KB & 6 & 0.67 & 0.07 & 10 & 0.21 & 0 & 0.17 \\\hline
+169 LVg2g100
+adjacency1 6971/40000
+adjacency2 6971/40000
+degre 992/2016
+2 & 100 & 15.39 MB & 2.531 MB & 16 & 5.82 & 0.81 & 14 & 4.78 & 0.18 & 8.39 \\\hline
+
+170 LVg5g72
+adjacency1 333/15066
+adjacency10 310/1987
+adjacency11 299/1936
+adjacency12 244/1841
+adjacency13 212/1779
+adjacency14 179/1706
+adjacency15 157/1346
+adjacency16 157/1226
+adjacency17 136/1026
+adjacency18 106/906
+adjacency19 86/706
+adjacency2 333/15066
+adjacency20 31/571
+adjacency21 10/520
+adjacency22 0/360
+adjacency23 0/320
+adjacency24 0/200
+adjacency25 0/200
+adjacency26 0/160
+adjacency27 0/80
+adjacency28 0/40
+adjacency29 0/40
+adjacency3 327/2064
+adjacency30 0/40
+adjacency4 327/2064
+adjacency5 324/2031
+adjacency6 321/1998
+adjacency7 321/1998
+adjacency8 321/1998
+adjacency9 320/1987
+backtrack 46/180
+degre 222/5843
+fail 1/254
+hall 20/198
+nds 6/56
+5 & 72 & 15.62 MB & 901.7 KB & 6 & 18.2 & 2.11 & 12 & 25.4 & 0.06 & 13.5 \\\hline
+
+171 LVg3g70
+adjacency1 2045/29260
+adjacency2 2045/29260
+backtrack 121/157
+degre 1916/2260
+fail 233/552
+hall 101/740
+nds 780/810
+3 & 70 & 15.87 MB & 1.524 MB & 10 & 6.04 & 0.78 & 13 & 270.0 & 0.28 & 7.05 \\\hline
+
+172 LVg3g61
+adjacency1 419/19860
+adjacency2 419/19860
+backtrack 6714/8197
+fail 1486/23235
+hall 126/29942
+nogood 4/339
+3 & 61 & 23.26 MB & 1.043 MB & 4 & 44.8 & 3.76 & 8 & 1010.0 & 0.31 & 15.9 \\\hline
+=#
+
 
 # ins = "bio037002"
 # ins = "bio019014"
