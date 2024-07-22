@@ -28,6 +28,77 @@ function okinstancelist()
         write(f,string("]\n"))
     end
 end
+function solve(ins,pathpat,pattern,pathtar,target,format,minsize=2_000_000,timeout=1,remake=false)
+    if remake || !isfile(string(proofs,"/",ins,".opb")) || !isfile(string(proofs,"/",ins,extention)) || 
+            length(read(`tail -n 1 $proofs/$ins$extention`,String)) < 24 ||
+            read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof"
+        print(ins,' ')
+        t = @elapsed begin
+            # p = run(pipeline(`timeout $timeout ./$solver --prove $proofs/$ins --no-supplementals --no-clique-detection --format $format $pathpat/$pattern $pathtar/$target`, devnull),wait=false); wait(p)
+            p = run(pipeline(`timeout $timeout ./$solver --prove $proofs/$ins --no-clique-detection --format $format $pathpat/$pattern $pathtar/$target`, devnull),wait=false); wait(p)
+        end
+        t+=0.01
+        ok = false
+        print(prettytime(t))
+        if t>timeout
+            printstyled(" timeout "; color = :red)
+        elseif read(`tail -n 2 $proofs/$ins$extention`,String)[1:14] == "conclusion SAT"
+            printstyled(" sat     "; color = 166)
+        elseif minsize > stat(string(proofs,"/",ins,extention)).size            
+            printstyled(" toosmal "; color = :yellow)
+        else printstyled(" OK      "; color = :green)
+            ok = true
+            # g = ladtograph(pathpat,pattern)
+            # draw(PNG(string(proofs,"/aimg/graphs/",ins,pattern[1:3],".png"), 16cm, 16cm), gplot(g))
+            # g = ladtograph(pathtar,target)
+            # draw(PNG(string(proofs,"/aimg/graphs/",ins,target[1:3],".png"), 16cm, 16cm), gplot(g))
+        end
+        println()
+        if !ok
+            run(`rm -f $proofs/$ins$extention`)
+            run(`rm -f $proofs/$ins.opb`)
+        end
+    end
+end
+function run_bio_solver()
+    path = string(benchs,"/biochemicalReactions")
+    cd()
+    graphs = cd(readdir, path)
+    n = length(graphs)
+    for target in graphs[1:end], pattern in graphs[1:end]
+        # target = graphs[rand(1:n)]
+        # pattern = graphs[rand(1:n)]
+        if pattern != target
+            ins = string("bio",pattern[1:end-4],target[1:end-4])
+            solve(ins,path,pattern,path,target,"lad")
+        end
+    end
+end
+function run_si_solver() # all sat or timeout
+    sipath = string(benchs,"/si")
+    cd()
+    inst = cd(readdir, string(sipath))
+    for ins in inst
+        inst2 = cd(readdir, string(sipath,"/",ins))
+        for ins2 in inst2
+            solve(ins2,string(sipath,'/',ins,'/',ins2,),"pattern",string(sipath,'/',ins,'/',ins2),"target","lad")
+        end
+    end
+end
+function run_LV_solver()
+    path = string(benchs,"/LV")
+    cd()
+    for i in 51:112
+        for j in 2:50
+            target = string('g',i)
+            pattern = string('g',j)
+            ins = string("LV",pattern,target)
+            if ins in LVlist
+            solve(ins,path,pattern,path,target,"lad",100000,1,true)
+            end
+        end
+    end
+end
 
 #=    Stat prints   =#
 
@@ -256,7 +327,6 @@ function roundt(t,d)
     end
     return t
 end
-
 function delindividualist(g)
     i = findfirst(v->degree(g,v)==0,vertices(g))
     while !(i === nothing)
@@ -317,6 +387,7 @@ function printcom(file,system,invsys,cone,com)
     # smg =  SimpleGraph()
     ogd = Dict{Int,SimpleGraph{Int}}()
     smd = Dict{Int,SimpleGraph{Int}}()
+    lastadj = 0
     for i in eachindex(com)
         s = com[i]
         st = split(s,' ')
@@ -332,6 +403,7 @@ function printcom(file,system,invsys,cone,com)
             og[j]+=1
             if cone[i] sm[j]+=1 end
             if type[1:3] == "adj"
+                lastadj = i
                 v1 = parse(Int,st[2])
                 v2 = parse(Int,st[3])
                 idg = parse(Int,st[4])
@@ -357,6 +429,7 @@ function printcom(file,system,invsys,cone,com)
             printstyled(names[i]," ",sm[i],"/",og[i],"\n"; color = col)
         end
     end
+    # println(lastadj)
     for i in eachindex(ogd)
         ogg = ogd[i]
         delindividualist(ogg)
@@ -387,44 +460,82 @@ function printtabular(t)
         )
     end
 end
+function printrepartition(ins,t1,t2)
+    println("\\begin{tikzpicture}[xscale=0.5,font=\\sffamily]\n\\node[right] at (0,1.5) {",ins,"};")
+    print("\\foreach \\x/\\y in{")
+    for i in 1:length(t1)-1
+        print(i,"/",t1[i],',')
+    end
+    print(length(t1),"/",t1[end])
+    println("} {\\fill[color=black!\\y] (\\x,0) rectangle (\\x+1,1);\\node at (\\x+0.5,0.5) {\\y};} \\draw (1,0) grid (102,1);")
+    print("\\foreach \\x/\\y in{")
+    for i in 1:length(t2)-1
+        print(i,"/",t2[i],',')
+    end
+    print(length(t2),"/",t2[end])
+    println("} {\\fill[color=black!\\y] (\\x,-1) rectangle (\\x+1,0);\\node at (\\x+0.5,-0.5) {\\y};} \\draw (1,-1) grid (102,0);")
+    println("\\end{tikzpicture}") 
+end
 function readrepartition()
-    nb = 0
     cko = 0
     ckp = 0
-    Σ = [0 for i in 1:101]
+    s = 0
+    t1 = [0 for i in 1:101]
+    t2 = [0 for i in 1:101]
+    Σ1 = [0 for i in 1:101]
+    Σ2 = [0 for i in 1:101]
+    nb1 = 0
+    nb2 = 0
     cd()
-    c = 1
-    open(string(proofs,'/',"servarepartition"),"r"; lock = false) do f
+    println("\\documentclass[tikz,border=5mm]{standalone}\n\\begin{document}")
+    open(string(proofs,'/',"arepartition"),"r"; lock = false) do f
         for ss in eachline(f)
-            c+=1
-            if ss!="" && ss[1] == 'b'
+            if ss!="" && ss[1] != ' ' && ss[1] != '.'
                 st  = split(ss,' ')
                 cko = parse(Int,st[end-1][2:end])
                 ckp = parse(Int,st[end])
-                c   = 1
-            elseif ckp>1 && ckp<100 && c==3
-                nb += 1
-                st = split(ss,' ')
-                i = 1
-                for s in st
-                    nbp = count('.',s)
-                    if nbp>0
-                        s = replace(s,'.'=>"")
+                ins = string(st[1],' ',cko,' ',ckp)
+                if ckp>10
+                    ss = readline(f)
+                    ss = replace(ss,'.'=>" 0")
+                    st = split(ss,' ')
+                    removespaces(st)
+                    for i in 1:101
+                        v =  parse(Int,st[i])
+                        t1[i] = v
+                        Σ1[i] +=v
                     end
-                    if s!="" && i<102
-                        Σ[i] += parse(Int,s)
-                        i+=1
+                    nb1 += 1
+                    ss = readline(f)
+                    ss = replace(ss,'.'=>" 0")
+                    st = split(ss,' ')
+                    removespaces(st)
+                    for i in 1:101
+                        v =  parse(Int,st[i])
+                        t2[i] = v
+                        Σ2[i] +=v
                     end
-                    i+=nbp
+                    nb2 += 1
+                    printrepartition(ins,t1,t2)
                 end
             end
         end
     end
-    println(nb)
-    t = Σ./nb
-    for i in eachindex(t)
-        print(string(i,'/',round(t[i]; sigdigits=4),','))
+    ins =  string("Mean ",nb1,' ',nb2)
+    st = Σ1./nb1
+    for i in 1:101
+        v =  round(Int,st[i])
+        t1[i] = v
+        nb1 += 1
     end
+    st = Σ2./nb2
+    for i in 1:101
+        v =  round(Int,st[i])
+        t2[i] = v
+        nb2 += 1
+    end
+    printrepartition(ins,t1,t2)
+    println("\\end{document}")
     # return Σ./nb
 end
 

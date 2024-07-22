@@ -541,74 +541,6 @@ function runtrimmer(file)
         end
     end
 end
-function solve(ins,pathpat,pattern,pathtar,target,format,minsize=2_000_000,timeout=1,remake=false)
-    if remake || !isfile(string(proofs,"/",ins,".opb")) || !isfile(string(proofs,"/",ins,extention)) || 
-            length(read(`tail -n 1 $proofs/$ins$extention`,String)) < 24 ||
-            read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof"
-        print(ins,' ')
-        t = @elapsed begin
-            p = run(pipeline(`timeout $timeout ./$solver --prove $proofs/$ins --no-clique-detection --format $format $pathpat/$pattern $pathtar/$target`, devnull),wait=false); wait(p)
-        end
-        t+=0.01
-        ok = false
-        print(prettytime(t))
-        if t>timeout
-            printstyled(" timeout "; color = :red)
-        elseif read(`tail -n 2 $proofs/$ins$extention`,String)[1:14] == "conclusion SAT"
-            printstyled(" sat     "; color = 166)
-        elseif minsize > stat(string(proofs,"/",ins,extention)).size            
-            printstyled(" toosmal "; color = :yellow)
-        else printstyled(" OK      "; color = :green)
-            ok = true
-            # g = ladtograph(pathpat,pattern)
-            # draw(PNG(string(proofs,"/aimg/graphs/",ins,pattern[1:3],".png"), 16cm, 16cm), gplot(g))
-            # g = ladtograph(pathtar,target)
-            # draw(PNG(string(proofs,"/aimg/graphs/",ins,target[1:3],".png"), 16cm, 16cm), gplot(g))
-        end
-        println()
-        if !ok
-            run(`rm -f $proofs/$ins$extention`)
-            run(`rm -f $proofs/$ins.opb`)
-        end
-    end
-end
-function run_bio_solver()
-    path = string(benchs,"/biochemicalReactions")
-    cd()
-    graphs = cd(readdir, path)
-    n = length(graphs)
-    for target in graphs[1:end], pattern in graphs[1:end]
-        # target = graphs[rand(1:n)]
-        # pattern = graphs[rand(1:n)]
-        if pattern != target
-            ins = string("bio",pattern[1:end-4],target[1:end-4])
-            solve(ins,path,pattern,path,target,"lad")
-        end
-    end
-end
-function run_si_solver() # all sat or timeout
-    sipath = string(benchs,"/si")
-    cd()
-    inst = cd(readdir, string(sipath))
-    for ins in inst
-        inst2 = cd(readdir, string(sipath,"/",ins))
-        for ins2 in inst2
-            solve(ins2,string(sipath,'/',ins,'/',ins2,),"pattern",string(sipath,'/',ins,'/',ins2),"target","lad")
-        end
-    end
-end
-function run_LV_solver()
-    path = string(benchs,"/LV")
-    cd()
-    for i in 51:112
-        for j in 2:50
-            target = string('g',i)
-            pattern = string('g',j)
-            ins = string("LV",pattern,target)
-            solve(ins,path,pattern,path,target,"lad",100000)
-        end
-    end
-end
 function run_bio_list(l=1,u=length(biolist),m=1)
     p = sortperm(biostats)
     for i in l:m:u
@@ -621,7 +553,6 @@ function run_LV_list(l=1,u=length(biolist),m=1)
     p = sortperm(LVstats)
     for i in l:m:u
         println(i," ",LVlist[p[i]])
-        # println(biostats[p[i]])
         runtrimmer(LVlist[p[i]])
     end
 end
@@ -657,15 +588,46 @@ function main()
     # okinstancelist()
     # run_bio_solver()
     # run_LV_list(100,length(LVlist),1)
-    run_LV_list(178,length(LVlist),1)
+    # run_LV_list(172,length(LVlist),1)
     # run_LV_list(length(LVlist),1,-1)
     # run_bio_list(13087,length(biolist),1)
     # run_bio_list(13226,length(biolist),1)
     # run_bio_list(13273,length(biolist),1)
     # run_bio_list(14275,length(biolist),1)
+
+    # readrepartition()
 end
 
 main()
+
+
+
+#=
+optu rup
+je rerup a partir des antecedants ?
+
+opti pol
+
+
+=#
+# using Plots,ColorSchemes
+
+
+# function f(x, y)
+#     r = sqrt(x^2 + y^2)
+#     return cos(r) / (1 + r)
+# end
+# x = range(0, 2π, length = 30)
+# p = heatmap(x, x, f, c = :thermal)
+
+# savefig(p,string(proofs,"/aimg/test.png"))
+
+# Plots.pdf(p,string(proofs,"/aimg/test"))
+
+
+# draw(PNG(string(proofs,"/aimg/test"), 16cm, 16cm), plot(x, y))
+
+# println("done")
 
 #=
 102 LVg26g52
