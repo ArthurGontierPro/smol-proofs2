@@ -136,6 +136,7 @@ function solvepol(st,system,link)
     stack = Stack{Eq}()
     push!(stack,eq)
     push!(link,id)
+    lastsaturate = false
     for j in 3:length(st)
         i=st[j]
         if i=="+"
@@ -148,8 +149,12 @@ function solvepol(st,system,link)
             push!(stack,divide(pop!(stack),link[end]))
             push!(link,-3)
         elseif i=="s"
-            normcoefeq(first(stack))
-            saturate(first(stack))
+            if j == length(st)
+                lastsaturate = true
+            else
+                normcoefeq(first(stack))
+                saturate(first(stack))
+            end
             push!(link,-4)
         elseif i=="w"
             printstyled(" !weak"; color = :blue)
@@ -167,7 +172,13 @@ function solvepol(st,system,link)
     if length(link)==2
         link[1] = -3
     end
-    return Eq(lits2,eq.b)
+    res = Eq(lits2,eq.b)
+    p2 = simplepol(res,system,link)
+    if lastsaturate
+        normcoefeq(res)
+        saturate(res)
+    end
+    return res
 end
 function findfullassi(system,st,init,varmap)
     isassi,assi = initassignement(varmap)
@@ -236,7 +247,7 @@ function readveripb(path,file,system,varmap)
             removespaces(st)
             eq = Eq([],0)
             if type == "u" || type == "rup"
-                eq = readeq(st,varmap,2:2:length(st)-3)     # can fail is space is missing omg
+                eq = readeq(st,varmap,2:2:length(st)-3)     # can fail if space is missing omg
                 push!(systemlink,[-1])
             elseif type == "p" || type == "pol"
                 push!(systemlink,[-2])
@@ -508,19 +519,29 @@ function runtrimmer(file)
     tvp = @elapsed begin
         v1 = read(`veripb $proofs/$file.opb $proofs/$file$extention`)
     end
+    print(prettytime(tvp),' ')
     tri = @elapsed begin
         system,systemlink,redwitness,nbopb,varmap,output,conclusion,com,version = readinstance(proofs,file)
     end
+    print(prettytime(tri),' ')
     invsys = getinvsys(system,varmap)
     normcoefsystem(system)
     tms = @elapsed begin
         cone = makesmol(system,invsys,varmap,systemlink,nbopb)
     end
+    println(prettytime(tms))
     twc = @elapsed begin
         writeconedel(proofs,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
     end
 
     printcom(file,system,invsys,cone,com)
+    printsummit(cone,invsys)
+    if file[1]=='b'
+        vcone = varcone(system,cone,varmap)
+        patcone,tarcone = patterntargetcone(vcone,varmap)
+        printbioconegraphs(file,cone,patcone,tarcone)
+    end
+    # printcone(cone,nbopb)
 
     writeshortrepartition(proofs,file,cone,nbopb)
     tvs = @elapsed begin
@@ -528,8 +549,11 @@ function runtrimmer(file)
     end
     so = stat(string(proofs,"/",file,".opb")).size + stat(string(proofs,"/",file,extention)).size
     st = stat(string(proofs,"/smol.",file,".opb")).size + stat(string(proofs,"/smol.",file,extention)).size
-    # t = [roundt([parse(Float64,file[end-5:end-3]),parse(Float64,file[end-2:end]),so,st,st/so,tvp,tvs,tvs/tvp,tms,twc,tri],3)]
-    t = [roundt([parse(Float64,split(file,'g')[2]),parse(Float64,split(file,'g')[3]),so,st,st/so,tvp,tvs,tvs/tvp,tms,twc,tri],3)]
+    if file[1] == 'b'
+        t = [roundt([parse(Float64,file[end-5:end-3]),parse(Float64,file[end-2:end]),so,st,st/so,tvp,tvs,tvs/tvp,tms,twc,tri],3)]
+    elseif file[1] == 'L'
+        t = [roundt([parse(Float64,split(file,'g')[2]),parse(Float64,split(file,'g')[3]),so,st,st/so,tvp,tvs,tvs/tvp,tms,twc,tri],3)]
+    end
     printtabular(t)
     open(string(proofs,"/atable"), "a") do f
         write(f,string(t[1],",\n"))
@@ -544,16 +568,19 @@ end
 function run_bio_list(l=1,u=length(biolist),m=1)
     p = sortperm(biostats)
     for i in l:m:u
-        println(i," ",biolist[p[i]])
-        # println(biostats[p[i]])
-        runtrimmer(biolist[p[i]])
+        ins = biolist[p[i]]
+        run_bio_solver(ins)
+        println(i," ",ins)
+        runtrimmer(ins)
     end
 end
-function run_LV_list(l=1,u=length(biolist),m=1)
+function run_LV_list(l=1,u=length(LVlist),m=1)
     p = sortperm(LVstats)
     for i in l:m:u
-        println(i," ",LVlist[p[i]])
-        runtrimmer(LVlist[p[i]])
+        ins = LVlist[p[i]]
+        run_LV_solver(ins)
+        println(i," ",ins)
+        runtrimmer(ins)
     end
 end
 function run_bio_solver(ins)
@@ -561,7 +588,15 @@ function run_bio_solver(ins)
     cd()
     pattern = string(ins[4:6],".txt")
     target = string(ins[7:9],".txt")
-    solve(ins,path,pattern,path,target,"lad")
+    solve(ins,path,pattern,path,target,"lad",2_000_000,1000,true)
+end
+function run_LV_solver(ins)
+    path = string(benchs,"/LV")
+    cd()
+    st = split(ins,'g')
+    pattern = string('g',st[2])
+    target = string('g',st[3])
+    solve(ins,path,pattern,path,target,"lad",100_000,1000,true,true)
 end
 
 const benchs = "veriPB/newSIPbenchmarks"
@@ -577,8 +612,8 @@ const extention = ".pbp"
 const version = "2.0"
 
 cd()
-# include("abiolist.jl")
-include("aLVlist.jl")
+include("abiolist.jl")
+# include("aLVlist.jl")
 include("ladtograph.jl")
 include("trimerPrints.jl")
 
@@ -587,10 +622,11 @@ function main()
     # run_si_solver()
     # okinstancelist()
     # run_bio_solver()
-    # run_LV_list(100,length(LVlist),1)
+    # run_LV_list(1,1,1)
     # run_LV_list(172,length(LVlist),1)
     # run_LV_list(length(LVlist),1,-1)
-    # run_bio_list(13087,length(biolist),1)
+    run_bio_list(length(biolist)-1500,length(biolist),1)
+    # run_bio_list(1580,length(biolist),1)
     # run_bio_list(13226,length(biolist),1)
     # run_bio_list(13273,length(biolist),1)
     # run_bio_list(14275,length(biolist),1)
@@ -601,6 +637,22 @@ end
 main()
 
 
+# ins = "bio037002"
+# ins = "bio019014"
+# ins = "bio112002"
+
+# long "bio055018"
+
+
+# ins = "bio021002"
+# ins = "bio070014"
+
+# run_bio_solver(ins)
+
+# ins = "LVg20g57"
+# ins = "LVg34g61"
+# run_LV_solver(ins)
+# runtrimmer(ins)
 
 #=
 optu rup
@@ -721,21 +773,6 @@ hall 126/29942
 nogood 4/339
 3 & 61 & 23.26 MB & 1.043 MB & 4 & 44.8 & 3.76 & 8 & 1010.0 & 0.31 & 15.9 \\\hline
 =#
-
-
-# ins = "bio037002"
-# ins = "bio019014"
-# ins = "bio112002"
-
-# long "bio055018"
-
-
-# ins = "bio021002"
-# ins = "bio070014"
-
-# run_bio_solver(ins)
-
-# runtrimmer(ins)
 
 #=
 export JULIA_NUM_THREADS=192

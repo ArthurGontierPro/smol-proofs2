@@ -28,14 +28,18 @@ function okinstancelist()
         write(f,string("]\n"))
     end
 end
-function solve(ins,pathpat,pattern,pathtar,target,format,minsize=2_000_000,timeout=1,remake=false)
+function solve(ins,pathpat,pattern,pathtar,target,format,minsize=2_000_000,timeout=1,remake=false,verbose=false)
     if remake || !isfile(string(proofs,"/",ins,".opb")) || !isfile(string(proofs,"/",ins,extention)) || 
             length(read(`tail -n 1 $proofs/$ins$extention`,String)) < 24 ||
             read(`tail -n 1 $proofs/$ins$extention`,String)[1:24] != "end pseudo-Boolean proof"
         print(ins,' ')
         t = @elapsed begin
             # p = run(pipeline(`timeout $timeout ./$solver --prove $proofs/$ins --no-supplementals --no-clique-detection --format $format $pathpat/$pattern $pathtar/$target`, devnull),wait=false); wait(p)
-            p = run(pipeline(`timeout $timeout ./$solver --prove $proofs/$ins --no-clique-detection --format $format $pathpat/$pattern $pathtar/$target`, devnull),wait=false); wait(p)
+            if verbose
+                p = run(pipeline(`timeout $timeout ./$solver --prove $proofs/$ins --no-clique-detection --format $format $pathpat/$pattern $pathtar/$target`),wait=true);
+            else
+                p = run(pipeline(`timeout $timeout ./$solver --prove $proofs/$ins --no-clique-detection --format $format $pathpat/$pattern $pathtar/$target`, devnull),wait=false); wait(p)
+            end
         end
         t+=0.01
         ok = false
@@ -103,6 +107,37 @@ end
 #=    Stat prints   =#
 
 
+function printlit(l)
+    printstyled(l.coef,' '; color = :blue)
+    if !l.sign printstyled('~'; color = :red) end
+    printstyled(l.var; color = :green)
+end
+function printeq(e)
+    for l in e.t
+        print("  ")
+        printlit(l)
+    end
+    println("  >= ",e.b)
+end
+function printsys(system)
+    for id in eachindex(system)
+        print(id," ")
+        printeq(system[id])
+    end
+end
+function printcone(system,systemlink,cone) 
+    for id in eachindex(system)
+        if cone[id]
+            print(id," ")
+            if isassigned(systemlink,id)
+                if systemlink[id][1]==-1
+                    print("sol ")
+                end
+            end
+            printeq(system[id])
+        end
+    end
+end
 function writelit(l,varmap)
     return string(l.coef," ",if l.sign "" else "~" end, varmap[l.var])
 end
@@ -388,7 +423,8 @@ function printcom(file,system,invsys,cone,com)
     ogd = Dict{Int,SimpleGraph{Int}}()
     smd = Dict{Int,SimpleGraph{Int}}()
     lastadj = 0
-    for i in eachindex(com)
+    ti = sort!(collect(keys(com)))
+    for i in ti#eachindex(com)
         s = com[i]
         st = split(s,' ')
         type = string(st[1])
@@ -402,6 +438,13 @@ function printcom(file,system,invsys,cone,com)
         else
             og[j]+=1
             if cone[i] sm[j]+=1 end
+            # if cone[i] 
+            #     if type[1:3] == "hal" println("     ",s) end
+            #     if type[1:3] == "deg" println("     ",s) end
+            # else
+            #     if type[1:3] == "hal" println(s) end
+            #     if type[1:3] == "deg" println(s) end
+            # end
             if type[1:3] == "adj"
                 lastadj = i
                 v1 = parse(Int,st[2])
@@ -449,11 +492,11 @@ function printtabular(t)
         round(Int,i[1])," & ",
         round(Int,i[2])," & ",
         prettybytes(i[3])," & ",
-        prettybytes(i[4])," & ",
-        prettypourcent(i[5])," & ",
+        prettybytes(i[4])," &   ",
+        prettypourcent(i[5]),"   & ",
         prettytime(i[6])," & ",
-        prettytime(i[7])," & ",
-        prettypourcent(i[8])," & ",
+        prettytime(i[7])," &   ",
+        prettypourcent(i[8]),"   & ",
         prettytime(i[9])," & ",
         prettytime(i[10])," & ",
         prettytime(i[11])," \\\\\\hline"
@@ -538,4 +581,202 @@ function readrepartition()
     println("\\end{document}")
     # return Σ./nb
 end
+function printcone(cone,nbopb)
+    for i in nbopb+1:length(cone)
+        if cone[i]
+            print('1')
+        else
+            print('_')
+        end
+    end
+    println()
+end
+function printsummit(cone,invsys)
+    max1 = 0
+    maxi = Int[]
+    smax = 0
+    smaxi = Int[]
+    for i in eachindex(invsys)
+        link = invsys[i]
+        if length(link)>max1
+            max1 = length(link)
+            # maxi = i
+        end
+        s = sum(cone[j] for j in link)
+        if s>smax
+            smax = s
+            # smaxi = i
+        end 
+    end
+    for i in eachindex(invsys)
+        link = invsys[i]
+        if length(link)==max1
+            push!(maxi,i)
+        end
+        s = sum(cone[j] for j in link)
+        if s==smax
+            push!(smaxi,i)
+        end
+    end
+    max2 = 0
+    for i in smaxi
+        max2 = max(max2,length(invsys[i]))
+    end
+    max3 = 0
+    for i in maxi
+        max3 = max(max3,sum(cone[j] for j in invsys[i]))
+    end
+    println("summit:     ",max1,' ',maxi)
+    println("smolsummit: ",smax,' ',smaxi,' ',max2,' ',max3)
+end
+function varcone(system,cone,varmap)
+    vcone = zeros(Bool,length(varmap))
+    for i in eachindex(system)
+        if cone[i]
+            eq = system[i]
+            for l in eq.t
+                vcone[l.var] = true
+            end
+        end
+    end
+    return vcone
+end
+function printvarcone(vcone,varmap)
+    for i in eachindex(varmap)
+        if vcone[i]
+            println(varmap[i])
+        end
+    end
+end
+function patterntargetcone(varcone,varmap)
+    patcone = Set{Int}()
+    tarcone = Set{Int}()
+    for i in findall(varcone)
+        s = varmap[i]
+        st = split(s,'_')
+        p = parse(Int,st[1][2:end])
+        t = parse(Int,st[2])
+        push!(patcone,p)
+        push!(tarcone,t)
+    end
+    return patcone,tarcone
+end
+function printbioconegraphs(ins,cone,patcone,tarcone)
+    path = string(benchs,"/biochemicalReactions")
+    cd()
+    pattern = string(ins[4:6],".txt")
+    target = string(ins[7:9],".txt")
+    gp = ladtograph(path,pattern)
+    gt = ladtograph(path,target)
+    # draw(PNG(string(proofs,"/aimg/graphs/",pattern[1:3],".png"), 16cm, 16cm), gplot(gp))
+    # draw(PNG(string(proofs,"/aimg/graphs/", target[1:3],".png"), 16cm, 16cm), gplot(gt))
 
+    pc = patcone.+1
+    # println(pc)
+    # println(nv(gp))
+    delp = [i for i in 1:nv(gp) if !(i in pc)]
+    # println(delp)
+    tc = tarcone.+1
+    # println(tc)
+    # println(nv(gt))
+    delt = [i for i in 1:nv(gt) if !(i in tc)]
+    # println(delt)
+    rem_vertices!(gp, delp, keep_order=true)
+    rem_vertices!(gt, delt, keep_order=true)
+    if length(delp)>0
+        draw(PNG(string(proofs,"/aimg/graphs/",pattern[1:3],ins,".png"), 16cm, 16cm), gplot(gp))
+        gp = ladtograph(path,pattern)
+        draw(PNG(string(proofs,"/aimg/graphs/",pattern[1:3],".png"), 16cm, 16cm), gplot(gp))    
+    end
+    if length(delt)>0
+        draw(PNG(string(proofs,"/aimg/graphs/", target[1:3],ins,".png"), 16cm, 16cm), gplot(gt))
+        gt = ladtograph(path,target)
+        draw(PNG(string(proofs,"/aimg/graphs/", target[1:3],".png"), 16cm, 16cm), gplot(gt))    
+    end
+end
+
+using JuMP,GLPK
+
+function LPpol(a,b,asol,bsol)
+    nbctr = size(a,1)
+    nbvar = size(a,2)
+    m = Model()
+    set_optimizer(m,GLPK.Optimizer)
+
+    @variable(m,lambda[i = 1:nbctr] >=0,Int)
+    @variable(m,lambdaBin[i = 1:nbctr], Bin)
+    
+    @constraint(m, ctr_milp1[j in 1:nbvar], sum(a[i,j]*lambda[i] for i in 1:nbctr) == asol[j])
+    @constraint(m, ctr_milp2, sum(lambda[i] * b[i] for i in 1:nbctr) == bsol)
+    @constraint(m, ctr_milp_flag[i in 1:nbctr], lambda[i] <= lambdaBin[i] * 2^16) # 2^64 
+    
+    @objective(m, Min, sum(lambdaBin[i] for i in 1:nbctr))
+
+    # print(m)
+    optimize!(m)
+    if objective_value(m) < nbctr
+        for i in 1:nbctr
+            println(value(lambda[i]))
+        end
+    else
+        print('|')
+    end
+end
+# a = [ 1 0 0 4; -2 3 0 -5; 1 0 0 4; 0 -1 0 1]
+# b = [1,-2,1,2]
+# asol = [0 0 0 6]
+# bsol = 6
+# LPpol(a,b,asol,bsol)
+
+function simplepol(res,system,link)
+    if !(-3 in link[1:end-1]) && !(-4 in link)
+        # println(link)
+    varset = Vector{Int}()
+    ctrs = [i for i in link if i>0]
+    nbctr = length(ctrs)
+    for i in ctrs
+        for l in system[i].t
+            if !(l.var in varset)
+                push!(varset,l.var)
+            end
+        end
+    end
+    sort!(varset)
+    # println(varset)
+    nbvar = length(varset)
+    a = zeros(Int,nbctr,nbvar)
+    b = zeros(Int,nbctr)
+    eq0 = Eq([Lit(0,true,v) for v in varset],0)
+    for i in eachindex(ctrs)
+        id = ctrs[i]
+        eq = system[id]
+        eq = addeq(eq,eq0)
+        for l in eq.t
+            a[i,findfirst(isequal(l.var),varset)] = l.coef
+        end
+        b[i] = eq.b
+    end
+    aeq = addeq(res,eq0)
+    avars = [l.var for l in aeq.t]
+    asol = zeros(Int,nbvar)
+    for i in eachindex(varset)
+        v = varset[i]
+        j = findfirst(x->x==v,avars)
+        if !(j === nothing)
+            asol[i] = aeq.t[j].coef
+        end
+    end
+    bsol = aeq.b
+    # println(a)
+    # println(asol)
+    # println(b)
+    # println(bsol)
+    # a = [ 1 0 0 4; -2 3 0 -5; 1 0 0 4; 0 -1 0 1]
+    # b = [1,-2,1,2]
+    # asol = [0 0 0 3]
+    # bsol = 6
+    LPpol(a,b,asol,bsol)
+
+    end
+    return link
+end
