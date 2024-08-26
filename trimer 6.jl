@@ -227,10 +227,35 @@ function findfullassi(system,st,init,varmap)
     end
     return eq
 end
-function readred(st,varmap,redwitness,c)
+function readsubproof(eq,f)
+    ss = nextline(f)
+    st = split(ss,' ')
+    type = st[1]
+    removespaces(st)
+    while type !="end"
+        println(ss)
+        if type == "proofgoal"
+            while ss !="end"
+                ss = nextline(f)
+                st = split(ss,' ')
+                type = st[1]
+                removespaces(st)
+                println(ss)
+            end
+        end
+    end
+end
+function readred(st,varmap,redwitness,c,f)
     i = findfirst(x->x==";",st)
     eq = readeq(st[2:i],varmap)
-    redwitness[c] = join(st[i+1:end]," ")
+    j = findlast(x->x==";",st)
+    if i==j # detect the word begin
+        j=length(st)
+    end
+    if st[end] == "begin"
+        readsubproof(eq,f)
+    end
+    redwitness[c] = join(st[i+1:j]," ")
     return eq
 end
 function readveripb(path,file,system,varmap)
@@ -257,7 +282,7 @@ function readveripb(path,file,system,varmap)
                 eq = readeq(st[1:end-1],varmap,2:2:length(st)-4)
             elseif type == "red"  
                 push!(systemlink,[-4])
-                eq = readred(st,varmap,redwitness,c)
+                eq = readred(st,varmap,redwitness,c,f)
             elseif type == "sol" || type == "soli"         # on ajoute la negation au probleme pour chercher d'autres solutions. jusqua contradiction finale. dans la preuve c.est juste des contraintes pour casser toutes les soloutions trouvees
                 push!(systemlink,[-5])
                 eq = findfullassi(system,st,c,varmap)

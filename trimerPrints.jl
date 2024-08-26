@@ -780,3 +780,6 @@ function simplepol(res,system,link)
     end
     return link
 end
+
+
+# letter analysis
