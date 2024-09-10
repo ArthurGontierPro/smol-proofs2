@@ -171,7 +171,7 @@ function writered(e,varmap,witness)
     end
     return string(s," >= ",e.b," ; ",witness,"\n")
 end
-function writepol(link,index)
+function writepol(link,index,varmap)
     s = string("p")
     for i in 2:length(link)
         t = link[i]
@@ -183,12 +183,16 @@ function writepol(link,index)
             s = string(s," d")
         elseif t==-4
             s = string(s," s")
+        elseif t==-5
+            s = string(s," w")
         elseif t>0
             if link[i+1] in [-2,-3]
                 s = string(s," ",t)
             else
                 s = string(s," ",index[t])
             end
+        elseif t<=-10
+            s = string(s," ",varmap[-(index[t]+10)])
         end
     end
     return string(s,"\n")
@@ -257,7 +261,7 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,
                     write(f,writeu(eq,varmap))
                     writedel(f,systemlink,i,succ,index,nbopb,dels)
                 elseif tlink == -2           # pol
-                    write(f,writepol(systemlink[i-nbopb],index))
+                    write(f,writepol(systemlink[i-nbopb],index,varmap))
                     writedel(f,systemlink,i,succ,index,nbopb,dels)
 
                     # write(f,writeia(eq,i,index,varmap))
@@ -695,32 +699,32 @@ function printbioconegraphs(ins,cone,patcone,tarcone)
     end
 end
 
-using JuMP,GLPK
+# using JuMP,GLPK
 
 function LPpol(a,b,asol,bsol)
-    nbctr = size(a,1)
-    nbvar = size(a,2)
-    m = Model()
-    set_optimizer(m,GLPK.Optimizer)
+    # nbctr = size(a,1)
+    # nbvar = size(a,2)
+    # m = Model()
+    # set_optimizer(m,GLPK.Optimizer)
 
-    @variable(m,lambda[i = 1:nbctr] >=0,Int)
-    @variable(m,lambdaBin[i = 1:nbctr], Bin)
+    # @variable(m,lambda[i = 1:nbctr] >=0,Int)
+    # @variable(m,lambdaBin[i = 1:nbctr], Bin)
     
-    @constraint(m, ctr_milp1[j in 1:nbvar], sum(a[i,j]*lambda[i] for i in 1:nbctr) == asol[j])
-    @constraint(m, ctr_milp2, sum(lambda[i] * b[i] for i in 1:nbctr) == bsol)
-    @constraint(m, ctr_milp_flag[i in 1:nbctr], lambda[i] <= lambdaBin[i] * 2^16) # 2^64 
+    # @constraint(m, ctr_milp1[j in 1:nbvar], sum(a[i,j]*lambda[i] for i in 1:nbctr) == asol[j])
+    # @constraint(m, ctr_milp2, sum(lambda[i] * b[i] for i in 1:nbctr) == bsol)
+    # @constraint(m, ctr_milp_flag[i in 1:nbctr], lambda[i] <= lambdaBin[i] * 2^16) # 2^64 
     
-    @objective(m, Min, sum(lambdaBin[i] for i in 1:nbctr))
+    # @objective(m, Min, sum(lambdaBin[i] for i in 1:nbctr))
 
-    # print(m)
-    optimize!(m)
-    if objective_value(m) < nbctr
-        for i in 1:nbctr
-            println(value(lambda[i]))
-        end
-    else
-        print('|')
-    end
+    # # print(m)
+    # optimize!(m)
+    # if objective_value(m) < nbctr
+    #     for i in 1:nbctr
+    #         println(value(lambda[i]))
+    #     end
+    # else
+    #     print('|')
+    # end
 end
 # a = [ 1 0 0 4; -2 3 0 -5; 1 0 0 4; 0 -1 0 1]
 # b = [1,-2,1,2]
@@ -783,3 +787,5 @@ end
 
 
 # letter analysis
+# jakob using resolution proofs to analyze cdcl 2020 cp
+# kuldep meel crystalball
