@@ -103,6 +103,53 @@ function run_LV_solver()
         end
     end
 end
+function isequal(a,b) # equality between lits
+    return a.coef==b.coef && a.sign==b.sign && a.var==b.var
+end
+function isequal(e,f) # equality between eq
+    if e.b!=f.b
+        return false
+    elseif length(e.t) != length(f.t)
+        return false
+    else
+        for i in eachindex(e.t)
+            if !isequal(e.t[i],f.t[i])
+                return false
+            end
+        end
+        return true
+    end
+end
+function iscontained(e,f) # is e contained in f so that f only has more litteral axioms
+    printeq(e)
+    printeq(f)
+    if e.b!=f.b
+        return false
+    elseif length(e.t) < length(f.t)
+        return false
+    else
+        j=1
+        for l in e.t
+            search = true
+            l2 = f.t[j]
+            while search
+                # TODO
+                l2 = f.t[j]
+            end
+            if !isequal(l,l2)
+
+            end
+        end
+        return true
+    end
+end
+function getid(eq,a,b,system)
+    for i in a:b
+        if iscontained(eq,system[i])
+            return i
+        end
+    end
+end
 
 #=    Stat prints   =#
 
@@ -164,12 +211,24 @@ function writesol(e,varmap)
     end
     return string(s,"\n")
 end
+function writewitness(s,witness,varmap)
+    for l in witness.w
+        if l.var>0
+            s = string(s,if !l.sign " ~" else " " end, varmap[l.var])
+        else
+            s = string(s," ",-l.var)
+        end
+    end
+    return s
+end
 function writered(e,varmap,witness)
     s = "red"
     for l in e.t
         s = string(s," ",l.coef,if !l.sign " ~" else " " end, varmap[l.var])
     end
-    return string(s," >= ",e.b," ; ",witness,"\n")
+    s = string(s," >= ",e.b," ;")
+    s = writewitness(s,witness,varmap)
+    return string(s,"\n")
 end
 function writepol(link,index,varmap)
     s = string("p")
@@ -191,8 +250,8 @@ function writepol(link,index,varmap)
             else
                 s = string(s," ",index[t])
             end
-        elseif t<=-10
-            s = string(s," ",varmap[-(index[t]+10)])
+        elseif t<=-100
+            s = string(s," ",varmap[-(index[t]+100)])
         end
     end
     return string(s,"\n")
@@ -232,10 +291,11 @@ function writedel(f,systemlink,i,succ,index,nbopb,dels)
         write(f,string("\n"))
     end
 end
-function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion)
+function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion,obj)
     index = zeros(Int,length(system))
     lastindex = 0
     open(string(path,"/smol.",file,".opb"),"w") do f
+        write(f,obj)
         for i in 1:nbopb
             if cone[i]
                 lastindex += 1
@@ -275,6 +335,7 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,
                     write(f,writered(eq,varmap,redwitness[i]))
                 elseif tlink == -5           # solx
                     write(f,writesol(eq,varmap))
+                    dels[i] = true # do not delete sol
                 end
             end
         end
@@ -595,7 +656,28 @@ function printcone(cone,nbopb)
     end
     println()
 end
-function printsummit(cone,invsys)
+function printorder(cone,invsys,varmap)
+    n = 30
+    # varocc = [length(i) for i in invsys] # order from var usage
+    # p = sortperm(varocc,rev=true)
+    # for i in 1:min(n,length(varmap))
+    #     j = p[i]
+    #     var = varmap[j]
+    #     occ = varocc[j]
+    #     print(var," ")
+    # end
+    println("Var order from usage in cone :")
+    varocc = [sum(cone[j] for j in i) for i in invsys] # order from var usage in cone
+    p = sortperm(varocc,rev=true)
+    for i in 1:min(n,length(varmap))
+        j = p[i]
+        var = varmap[j]
+        occ = varocc[j]
+        print(var," ")
+    end
+    println()
+end
+function printsummit(cone,invsys,varmap)
     max1 = 0
     maxi = Int[]
     smax = 0
@@ -630,7 +712,7 @@ function printsummit(cone,invsys)
     for i in maxi
         max3 = max(max3,sum(cone[j] for j in invsys[i]))
     end
-    println("summit:     ",max1,' ',maxi)
+    println("summit:     ",varmap[max1],' ',maxi)
     println("smolsummit: ",smax,' ',smaxi,' ',max2,' ',max3)
 end
 function varcone(system,cone,varmap)
