@@ -336,6 +336,9 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,
                 elseif tlink == -5           # solx
                     write(f,writesol(eq,varmap))
                     dels[i] = true # do not delete sol
+                elseif tlink == -6           # soli
+                    # write(f,writesol(eq,varmap)) #TODO
+                    # dels[i] = true # do not delete sol
                 end
             end
         end

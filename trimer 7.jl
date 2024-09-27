@@ -27,7 +27,7 @@ end
 function readeq(st,varmap)
     return readeq(st,varmap,1:2:length(st)-3)
 end
-function readeq(st,varmap,range)
+function readlits(st,varmap,range)
     lits = Vector{Lit}(undef,(length(range)))
     for i in range
         coef = parse(Int,st[i])
@@ -35,8 +35,16 @@ function readeq(st,varmap,range)
         var = readvar(st[i+1],varmap)
         lits[(i - range.start)÷range.step+1] = Lit(coef,sign,var)
     end
+    sort!(lits,by=x->x.var)
+    return lits
+end
+function readeq(st,varmap,range)
+    lits = readlits(st,varmap,range)
     eq = Eq(lits,parse(Int,st[end-1]))
     return eq
+end
+function readobj(st,varmap)
+    return readlits(st,varmap,2:2:length(st)-1)
 end
 function removespaces(st)
     r = findall(x->x=="",st)
@@ -53,8 +61,10 @@ function readopb(path,file)
     open(string(path,'/',file,".opb"),"r"; lock = false) do f
         for ss in eachline(f)
             if ss[1] != '*'                                     #do not parse comments
-                if ss[1:4] == "min:"
-                    obj = ss
+                if ss[1] == 'm'
+                    st = split(ss,' ') 
+                    removespaces(st)
+                    obj = readobj(st,varmap)
                 else
                     st = split(ss,' ')                              #structure of a line is: int var int var ... >= int ; 
                     removespaces(st)
@@ -268,6 +278,14 @@ function findfullassi(system,st,init,varmap)
     eq = Eq(lits,1)
     return eq
 end
+function findbound(system,st,init,varmap,obj)
+    eq = findfullassi(system,st,init,varmap)
+    bound = 0
+    for l in eq.t
+
+    end
+    return eq
+end
 function readwitnessvar(s,varmap)
     if s=="0"
         return 0
@@ -367,7 +385,7 @@ function readred(system,systemlink,st,varmap,redwitness,c,f)
     redwitness[c] = Red(w,subsys,systemlink)
     return eq
 end
-function readveripb(path,file,system,varmap)
+function readveripb(path,file,system,varmap,obj)
     systemlink = Vector{Int}[]
     redwitness = Dict{Int, Red}()
     com = Dict{Int, String}()
@@ -404,7 +422,12 @@ function readveripb(path,file,system,varmap)
                 elseif type == "red"  
                     push!(systemlink,[-4])
                     eq = readred(system,systemlink,st,varmap,redwitness,c,f)
-                elseif type == "sol" || type == "soli" || type == "solx"         # on ajoute la negation au probleme pour chercher d'autres solutions. jusqua contradiction finale. dans la preuve c.est juste des contraintes pour casser toutes les soloutions trouvees
+                elseif type == "sol" 
+                    println("SAT Not supported.")
+                elseif type == "soli" 
+                    push!(systemlink,[-6])
+                    eq = findbound(system,st,c,varmap,obj)
+                elseif type == "solx"         # on ajoute la negation de la sol au probleme pour chercher d'autres solutions. jusqua contradiction finale. dans la preuve c.est juste des contraintes pour casser toutes les soloutions trouvees
                     push!(systemlink,[-5])
                     eq = findfullassi(system,st,c,varmap)
                 elseif type == "output"
@@ -628,7 +651,7 @@ end
 function readinstance(path,file)
     system,varmap,obj = readopb(path,file)
     nbopb = length(system)
-    system,systemlink,redwitness,output,conclusion,com,version = readveripb(path,file,system,varmap)
+    system,systemlink,redwitness,output,conclusion,com,version = readveripb(path,file,system,varmap,obj)
     return system,systemlink,redwitness,nbopb,varmap,output,conclusion,com,version,obj
 end
 function runtrimmer(file)
