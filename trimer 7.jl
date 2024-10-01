@@ -46,10 +46,6 @@ end
 function readobj(st,varmap)
     return readlits(st,varmap,2:2:length(st)-1)
 end
-function removespaces(st)
-    r = findall(x->x=="",st)
-    deleteat!(st,r)
-end
 function remove(s,st)
     r = findall(x->x==s,st)
     deleteat!(st,r)
@@ -62,12 +58,10 @@ function readopb(path,file)
         for ss in eachline(f)
             if ss[1] != '*'                                     #do not parse comments
                 if ss[1] == 'm'
-                    st = split(ss,' ') 
-                    removespaces(st)
+                    st = split(ss,keepempty=false)
                     obj = readobj(st,varmap)
                 else
-                    st = split(ss,' ')                              #structure of a line is: int var int var ... >= int ; 
-                    removespaces(st)
+                    st = split(ss,keepempty=false)              #structure of a line is: int var int var ... >= int ; 
                     eq = readeq(st,varmap)
                     if length(eq.t)==0 && eq.b==1
                         printstyled(" !opb"; color = :blue)
@@ -202,7 +196,7 @@ function solvepol(st,system,link,init,varmap)
             noLP = true
             push!(stack,weaken(pop!(stack),))
             push!(link,-5)
-        elseif i[1]=='~'||i[1]=='x'
+        elseif !isdigit(i[1])
             sign = i[1]!='~'
             var = readvar(i,varmap)
             push!(stack,Eq([Lit(0,sign,var)],0))
@@ -300,8 +294,7 @@ function fuckparsers(f)
     while length(ss)==0
         ss = readline(f)
     end
-    st = split(ss,' ')
-    removespaces(st)
+    st = split(ss,keepempty=false)
     type = st[1]
     return type,st
 end
@@ -378,7 +371,9 @@ function readred(system,systemlink,st,varmap,redwitness,c,f)
     end
     w = readwitness(st[i+1:j],varmap)
     if st[end] == "begin"
-        readsubproof(system,systemlink,eq,w,c,f,varmap)
+        println("So it begins")
+        return eq
+        # readsubproof(system,systemlink,eq,w,c,f,varmap)
     end
     subsys = Eq[]
     subsystemlink = Vector{Int}[]
@@ -394,11 +389,9 @@ function readveripb(path,file,system,varmap,obj)
     d = length(system)
     open(string(path,'/',file,extention),"r"; lock = false) do f
         for ss in eachline(f)
-            st = split(ss,' ')
+            st = split(ss,keepempty=false)
             if length(ss)>0
-                removespaces(st)
                 type = st[1]
-                println(st)
                 eq = Eq([],0)
                 if type == "u" || type == "rup"
                     eq = readeq(st,varmap,2:2:length(st)-3)     # can fail if space is missing omg
@@ -412,7 +405,7 @@ function readveripb(path,file,system,varmap,obj)
                     if st[end] == ";" 
                         eq = readeq(st,varmap,2:2:length(st)-3)
                         normcoefeq(eq)
-                        printstyled("ia ID is missing";color = red)
+                        printstyled("ia ID is missing";color = :red)
                         l = 0 # l = getid(eq,1,c-1,system)
                     else
                         eq = readeq(st,varmap,2:2:length(st)-4)
@@ -436,6 +429,8 @@ function readveripb(path,file,system,varmap,obj)
                     conclusion = st[2]
                     if conclusion == "BOUNDS"
                         println("BOUNDS Not supported.")
+                    elseif conclusion == "SAT" && !isequal(system[end],Eq([],1))
+                        println("SAT Not supported.")
                     end
                 elseif type == "*trim"
                     com[length(system)+1] = ss[7:end]
@@ -646,6 +641,7 @@ function rup(system,invsys,antecedants,init,assi,front,cone)# I am putting back 
             end
         end
     end
+    println(init)
     printstyled(" rup faled \n"; color = :red)
 end
 function readinstance(path,file)
@@ -665,7 +661,13 @@ function runtrimmer(file)
     print(prettytime(tri),' ')
     invsys = getinvsys(system,varmap)
     normcoefsystem(system)
-    if conclusion in ["BOUNDS"] || conclusion in ["SAT"] && isequal(system[end],Eq([],1)) return end
+    # println(conclusion)
+    # printeq(system[end])
+    # if conclusion == "SAT" println("nique ta mere fais un if merdfe") end
+    # if isequal(system[end],Eq([],1)) println("ALO") end
+    if conclusion in ["BOUNDS"] || conclusion in ["SAT"] && !isequal(system[end],Eq([],1)) return println() end
+    printsys(system)
+    # println(systemlink)
     tms = @elapsed begin
         cone = makesmol(system,invsys,varmap,systemlink,nbopb)
     end
@@ -676,7 +678,7 @@ function runtrimmer(file)
 
     printcom(file,system,invsys,cone,com)
     # printsummit(cone,invsys,varmap)
-    printorder(cone,invsys,varmap)
+    printorder(file,cone,invsys,varmap)
     if file[1]=='b'
         vcone = varcone(system,cone,varmap)
         patcone,tarcone = patterntargetcone(vcone,varmap)
@@ -731,17 +733,19 @@ function main()
     list = cd(readdir, proofs)
     list = [s[1:end-4] for s in list if s[end-3:end]==".opb" && s[1:5]!="smol."]
     list = [s for s in list if isfile(string(proofs,"/",s,extention))]
-    list = [s for s in list if isfile(string(proofs,"/",s,extention))]
     stats = [stat(string(proofs,"/",file,extention)).size for file in list]
 
     println(list)
     p = sortperm(stats)
-    for i in 21:length(stats)
-
+    # for i in 1:length(stats)
+        # for i in 1:length(stats) if !(i in [4,7,10])
+        for i in 1:length(stats) if (i in [10,21,22,23,26,29,30])
+        # for i in [10]
+        print(i)
         ins = list[p[i]]
         printstyled(ins,"\n"; color = :yellow)
         runtrimmer(ins)
-    end
+    end  end
     # readrepartition()
 end
 

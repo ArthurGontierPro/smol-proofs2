@@ -260,8 +260,9 @@ function invlink(systemlink,succ::Vector{Vector{Int}},nbopb)
     for i in eachindex(systemlink)
         if isassigned(systemlink,i)
             t = systemlink[i]
-            for j in t
-                if j>0
+            for k in eachindex(t)
+                j = t[k]
+                if j>0 && (k==length(t)||(t[k+1]!=-2&&t[k+1]!=-3)) # dont put coefficient as id
                     if isassigned(succ,j)
                         push!(succ[j],i+nbopb)
                     else
@@ -494,7 +495,7 @@ function printcom(file,system,invsys,cone,com)
     ti = sort!(collect(keys(com)))
     for i in ti#eachindex(com)
         s = com[i]
-        st = split(s,' ')
+        st = split(ss,keepempty=false)
         type = string(st[1])
         removespaces(st)
         j = findfirst(isequal(type),names)
@@ -602,14 +603,14 @@ function readrepartition()
     open(string(proofs,'/',"arepartition"),"r"; lock = false) do f
         for ss in eachline(f)
             if ss!="" && ss[1] != ' ' && ss[1] != '.'
-                st  = split(ss,' ')
+                st  = split(ss,keepempty=false)
                 cko = parse(Int,st[end-1][2:end])
                 ckp = parse(Int,st[end])
                 ins = string(st[1],' ',cko,' ',ckp)
                 if ckp>10
                     ss = readline(f)
                     ss = replace(ss,'.'=>" 0")
-                    st = split(ss,' ')
+                    st = split(ss,keepempty=false)
                     removespaces(st)
                     for i in 1:101
                         v =  parse(Int,st[i])
@@ -619,7 +620,7 @@ function readrepartition()
                     nb1 += 1
                     ss = readline(f)
                     ss = replace(ss,'.'=>" 0")
-                    st = split(ss,' ')
+                    st = split(ss,keepempty=false)
                     removespaces(st)
                     for i in 1:101
                         v =  parse(Int,st[i])
@@ -659,7 +660,7 @@ function printcone(cone,nbopb)
     end
     println()
 end
-function printorder(cone,invsys,varmap)
+function printorder(file,cone,invsys,varmap)
     n = 30
     # varocc = [length(i) for i in invsys] # order from var usage
     # p = sortperm(varocc,rev=true)
@@ -670,13 +671,21 @@ function printorder(cone,invsys,varmap)
     #     print(var," ")
     # end
     println("Var order from usage in cone :")
+    s = "map<string,int> order { "     
     varocc = [sum(cone[j] for j in i) for i in invsys] # order from var usage in cone
     p = sortperm(varocc,rev=true)
-    for i in 1:min(n,length(varmap))
+    for i in eachindex(varmap)
         j = p[i]
         var = varmap[j]
         occ = varocc[j]
-        print(var," ")
+        s = string(s,"{\"",var,"\",",occ,"}, ")
+        if i<n
+            print(var," ")
+        end
+    end
+    s = s[1:end-2]*"};"
+    open(string(proofs,"/cone_var_order_",file,".txt"),"w") do f
+        write(f,s)
     end
     println()
 end
@@ -742,7 +751,7 @@ function patterntargetcone(varcone,varmap)
     tarcone = Set{Int}()
     for i in findall(varcone)
         s = varmap[i]
-        st = split(s,'_')
+        st = split(ss,keepempty=false)
         p = parse(Int,st[1][2:end])
         t = parse(Int,st[2])
         push!(patcone,p)

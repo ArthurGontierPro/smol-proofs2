@@ -993,3 +993,4 @@ julia --check-bounds=no 'trimer 5.jl'
 # scp arthur@fataepyc-01.dcs.gla.ac.uk:/scratch/mult_single_bc.pbp mult_single_bc.pbp
 
 # scp -r arthur@fataepyc-01.dcs.gla.ac.uk:/scratch/proofs_to_trim/small/ small/
+# scp -r arthur@fataepyc-01.dcs.gla.ac.uk:/scratch/proofs_to_trim/medium/ medium/
