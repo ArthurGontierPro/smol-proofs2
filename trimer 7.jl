@@ -27,6 +27,25 @@ end
 function readeq(st,varmap)
     return readeq(st,varmap,1:2:length(st)-3)
 end
+function merge(lits)
+    c=0
+    del = Vector{Int}()
+    i=j=1
+    while i<length(lits)
+        j = i
+        while lits[i].var==lits[j+1].var && j<=length(lits)
+            j+=1
+            lits[i],cc = add(lits[i],lits[j])
+            c+=cc
+            push!(del,j)
+        end
+        i = j+1
+    end
+    if length(del)>0
+        lits = [lits[i] for i in eachindex(lits) if !(i in del)]
+    end
+    return lits,c
+end
 function readlits(st,varmap,range)
     lits = Vector{Lit}(undef,(length(range)))
     for i in range
@@ -40,7 +59,8 @@ function readlits(st,varmap,range)
 end
 function readeq(st,varmap,range)
     lits = readlits(st,varmap,range)
-    eq = Eq(lits,parse(Int,st[end-1]))
+    lits,c = merge(lits)
+    eq = Eq(lits,parse(Int,st[end-1])-c)
     return eq
 end
 function readobj(st,varmap)
@@ -166,7 +186,7 @@ function solvepol(st,system,link,init,varmap)
         id = init-id
     end
     eq = copyeq(system[id])
-    stack = Stack{Eq}()
+    stack = Vector{Eq}()
     push!(stack,eq)
     push!(link,id)
     lastsaturate = false
@@ -175,12 +195,15 @@ function solvepol(st,system,link,init,varmap)
         i=st[j]
         if i=="+"
             push!(stack,addeq(pop!(stack),pop!(stack)))     
+            # normcoefeq(stack[end])
             push!(link,-1)
         elseif i=="*"
             push!(stack,multiply(pop!(stack),link[end]))
+            # normcoefeq(stack[end])
             push!(link,-2)
         elseif i=="d"
             push!(stack,divide(pop!(stack),link[end]))
+            # normcoefeq(stack[end])
             push!(link,-3)
             noLP = true
         elseif i=="s"
@@ -199,7 +222,7 @@ function solvepol(st,system,link,init,varmap)
         elseif !isdigit(i[1])
             sign = i[1]!='~'
             var = readvar(i,varmap)
-            push!(stack,Eq([Lit(0,sign,var)],0))
+            push!(stack,Eq([Lit(1,sign,var)],0))
             push!(link,-var-100) # ATTENTION HARDCODING DE SHIFT
         elseif i!="0"
             id = parse(Int,i)
@@ -517,9 +540,17 @@ function makesmol(system,invsys,varmap,systemlink,nbopb)
                 tlink = systemlink[i-nbopb][1]
                 if tlink == -1 
                     antecedants .=false ; assi.=0
-                    rup(system,invsys,antecedants,i,assi,front,cone)
-                    append!(systemlink[i-nbopb],findall(antecedants))
-                    fixfront(front,antecedants)
+                    if rup(system,invsys,antecedants,i,assi,front,cone)
+                        append!(systemlink[i-nbopb],findall(antecedants))
+                        fixfront(front,antecedants)
+                    else 
+                        println("\n",i," s=",slack(reverse(system[i]),assi))
+                        println(writepol(systemlink[i-1-nbopb],[i for i in eachindex(system)],varmap))
+                        println(writeeq(system[i-1],varmap))
+                        println(writeeq(system[i],varmap))
+                        printstyled(" rup faled \n"; color = :red)
+                        return cone 
+                    end
                 elseif tlink >= -3
                     antecedants .= false
                     fixante(systemlink,antecedants,i-nbopb)
@@ -586,7 +617,7 @@ function updateprioquebit(eq,cone,front,que,invsys,s,i,init,assi::Vector{Int8},a
             assi[l.var] = l.sign ? 1 : 2
             antecedants[i] = true
             for id in invsys[l.var]
-                if id<=init
+                if id<=init && id!=i
                     que[id] = true
                     if cone[id] || front[id]
                         r1 = min(r1,id)
@@ -611,38 +642,36 @@ function rup(system,invsys,antecedants,init,assi,front,cone)# I am putting back 
             s = slack(eq,assi)
             if s<0
                 antecedants[i] = true
-                return
+                return true
             else
                 r0,r1 = updateprioquebit(eq,cone,front,que,invsys,s,i,init,assi,antecedants,r0,r1)
             end
             que[i] = false
-        end
-        i+=1
-        if prio
-            if r1<i 
-                i = r1
+            i+=1
+            if prio
+                i = min(i,r1)
                 r1 = init+1
-            elseif i == init+1
-                if r0<init+1
-                    prio = false
-                    i = r0
+            else
+                if r1<init+1 # if init == 450 printstyled("\n upgrade"; color=  :blue) end
+                    prio = true
+                    r0 = min(i,r0)
+                    i = r1
+                    r1 = init+1
+                else
+                    i = min(i,r0)
                     r0 = init+1
                 end
             end
         else
-            if r1<init+1
-                prio = true
-                r0 = min(i,r0)
-                i = r1
-                r1 = init+1
-            elseif r0<i 
-                i = r0
-                r0 = init+1
-            end
+            i+=1
+        end
+        if prio && i==init+1 # if init == 450 printstyled("\n drop"; color=  :cyan) end
+            prio=false
+            i=r0
+            r0=init+1
         end
     end
-    println(init)
-    printstyled(" rup faled \n"; color = :red)
+    return false
 end
 function readinstance(path,file)
     system,varmap,obj = readopb(path,file)
@@ -652,6 +681,7 @@ function readinstance(path,file)
 end
 function runtrimmer(file)
     tvp = @elapsed begin
+        # v1 = run(`veripb --trace --useColor $proofs/$file.opb $proofs/$file$extention`)
         v1 = read(`veripb $proofs/$file.opb $proofs/$file$extention`)
     end
     print(prettytime(tvp),' ')
@@ -661,13 +691,21 @@ function runtrimmer(file)
     print(prettytime(tri),' ')
     invsys = getinvsys(system,varmap)
     normcoefsystem(system)
-    # println(conclusion)
-    # printeq(system[end])
-    # if conclusion == "SAT" println("nique ta mere fais un if merdfe") end
-    # if isequal(system[end],Eq([],1)) println("ALO") end
+
     if conclusion in ["BOUNDS"] || conclusion in ["SAT"] && !isequal(system[end],Eq([],1)) return println() end
-    printsys(system)
+    # printsys(system)
     # println(systemlink)
+    # println(184)
+    # for t in invsys[184]
+    #     print(t)
+    #     printeq(system[t])
+    # end
+    # println(185)
+    # for t in invsys[185]
+    #     print(t)
+    #     printeq(system[t])
+    # end
+
     tms = @elapsed begin
         cone = makesmol(system,invsys,varmap,systemlink,nbopb)
     end
@@ -750,3 +788,23 @@ function main()
 end
 
 main()
+
+
+
+#=
+line 094: p 386 418 1000 * + 132 90 * + 343 + 399 9000 * + 403 900 * + 358 10 * + 75 + 91 d
+
+ConstraintId 386: 1000 i0_sb0 2000 i0_sb1 4000 i0_sb2 8000 i0_sb3 91 i1_eb0 182 i1_eb1 364 i1_eb2 728 i1_eb3 90 ~i2_nb0 180 ~i2_nb1 360 ~i2_nb2 720 ~i2_nb3 1 i3_db0 2 i3_db1 4 i3_db2 8 i3_db3 9000 ~i4_mb0 18 000 ~i4_mb1 36000 ~i4_mb2 72000 ~i4_mb3 900 ~i5_ob0 1800 ~i5_ob1 3600 ~i5_ob2 7200 ~i5_ob3 10 i6_rb0 20 i6_rb1 40 i6_rb2 80 i6_rb3 1 ~i7_yb0 2 ~i7_yb1 4 ~i7_yb2 8 ~i7_yb3 >= 149865
+ConstraintId 386: 91 i1_eb0 182 i1_eb1 364 i1_eb2 728 i1_eb3 900 ~i5_ob0 1800 ~i5_ob1 3600 ~i5_ob2 7200 ~i5_ob3 10 i6_rb0 20 i6_rb1 40 i6_rb2 80 i6_rb3 1 ~i7_yb0 2 ~i7_yb1 4 ~i7_yb2 8 ~i7_yb3 >= 149865
+leftover
+6000 i0g10 360 ~i2g4 9000 ~i4g1 >= 15360
+  ConstraintId 418: 1 ~i0_sb0 2 ~i0_sb1 4 ~i0_sb2 8 ~i0_sb3 6 i0g10 >= 6
+  ConstraintId 132: 1 i2_nb0 2 i2_nb1 4 i2_nb2 8 i2_nb3 4 ~i2g4 >= 4
+  ConstraintId 343: 1 ~i3_db0 2 ~i3_db1 4 ~i3_db2 8 ~i3_db3 7 i3g9 >= 7
+  ConstraintId 399: 1 i4_mb0 2 i4_mb1 4 i4_mb2 8 i4_mb3 1 ~i4g1 >= 1
+  ConstraintId 403: 1 i5_ob0 2 i5_ob1 4 i5_ob2 8 i5_ob3 0 ~i5g0 >= 0
+  ConstraintId 358: 1 ~i6_rb0 2 ~i6_rb1 4 ~i6_rb2 8 ~i6_rb3 7 i6g9 >= 7
+  ConstraintId 075: 1 i7_yb0 2 i7_yb1 4 i7_yb2 8 i7_yb3 2 ~i7g2 >= 2
+
+
+=#

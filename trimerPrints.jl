@@ -275,8 +275,10 @@ function invlink(systemlink,succ::Vector{Vector{Int}},nbopb)
 end
 function writedel(f,systemlink,i,succ,index,nbopb,dels)
     isdel = false
-    for p in systemlink[i-nbopb]
-        if p>nbopb && !dels[p] 
+    link = systemlink[i-nbopb]
+    for k in eachindex(link)
+        p = link[k]
+        if p>nbopb && (k==length(link)||(link[k+1]!=-2&&link[k+1]!=-3)) && !dels[p] 
             m = maximum(succ[p])
             if m == i
                 if !isdel
