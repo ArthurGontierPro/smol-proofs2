@@ -777,7 +777,7 @@ function main()
     p = sortperm(stats)
     # for i in 1:length(stats)
         # for i in 1:length(stats) if !(i in [4,7,10])
-        for i in 17:length(stats) if !(i in [21,22,23,26,29,30])
+        for i in 1:length(stats) if !(i in [21,22,23,26,29,30])
         # for i in [10]
         print(i)
         ins = list[p[i]]

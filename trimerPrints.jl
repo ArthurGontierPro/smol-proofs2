@@ -322,7 +322,9 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,
                 tlink = systemlink[i-nbopb][1]
                 if tlink == -1               # rup
                     write(f,writeu(eq,varmap))
-                    writedel(f,systemlink,i,succ,index,nbopb,dels)
+                    if length(eq.t)>0 
+                        writedel(f,systemlink,i,succ,index,nbopb,dels)
+                    end
                 elseif tlink == -2           # pol
                     write(f,writepol(systemlink[i-nbopb],index,varmap))
                     writedel(f,systemlink,i,succ,index,nbopb,dels)
