@@ -33,7 +33,7 @@ function merge(lits)
     i=j=1
     while i<length(lits)
         j = i
-        while lits[i].var==lits[j+1].var && j<=length(lits)
+        while j<length(lits) && lits[i].var==lits[j+1].var
             j+=1
             lits[i],cc = add(lits[i],lits[j])
             c+=cc
@@ -777,7 +777,7 @@ function main()
     p = sortperm(stats)
     # for i in 1:length(stats)
         # for i in 1:length(stats) if !(i in [4,7,10])
-        for i in 1:length(stats) if (i in [10,21,22,23,26,29,30])
+        for i in 17:length(stats) if !(i in [21,22,23,26,29,30])
         # for i in [10]
         print(i)
         ins = list[p[i]]
@@ -788,23 +788,3 @@ function main()
 end
 
 main()
-
-
-
-#=
-line 094: p 386 418 1000 * + 132 90 * + 343 + 399 9000 * + 403 900 * + 358 10 * + 75 + 91 d
-
-ConstraintId 386: 1000 i0_sb0 2000 i0_sb1 4000 i0_sb2 8000 i0_sb3 91 i1_eb0 182 i1_eb1 364 i1_eb2 728 i1_eb3 90 ~i2_nb0 180 ~i2_nb1 360 ~i2_nb2 720 ~i2_nb3 1 i3_db0 2 i3_db1 4 i3_db2 8 i3_db3 9000 ~i4_mb0 18 000 ~i4_mb1 36000 ~i4_mb2 72000 ~i4_mb3 900 ~i5_ob0 1800 ~i5_ob1 3600 ~i5_ob2 7200 ~i5_ob3 10 i6_rb0 20 i6_rb1 40 i6_rb2 80 i6_rb3 1 ~i7_yb0 2 ~i7_yb1 4 ~i7_yb2 8 ~i7_yb3 >= 149865
-ConstraintId 386: 91 i1_eb0 182 i1_eb1 364 i1_eb2 728 i1_eb3 900 ~i5_ob0 1800 ~i5_ob1 3600 ~i5_ob2 7200 ~i5_ob3 10 i6_rb0 20 i6_rb1 40 i6_rb2 80 i6_rb3 1 ~i7_yb0 2 ~i7_yb1 4 ~i7_yb2 8 ~i7_yb3 >= 149865
-leftover
-6000 i0g10 360 ~i2g4 9000 ~i4g1 >= 15360
-  ConstraintId 418: 1 ~i0_sb0 2 ~i0_sb1 4 ~i0_sb2 8 ~i0_sb3 6 i0g10 >= 6
-  ConstraintId 132: 1 i2_nb0 2 i2_nb1 4 i2_nb2 8 i2_nb3 4 ~i2g4 >= 4
-  ConstraintId 343: 1 ~i3_db0 2 ~i3_db1 4 ~i3_db2 8 ~i3_db3 7 i3g9 >= 7
-  ConstraintId 399: 1 i4_mb0 2 i4_mb1 4 i4_mb2 8 i4_mb3 1 ~i4g1 >= 1
-  ConstraintId 403: 1 i5_ob0 2 i5_ob1 4 i5_ob2 8 i5_ob3 0 ~i5g0 >= 0
-  ConstraintId 358: 1 ~i6_rb0 2 ~i6_rb1 4 ~i6_rb2 8 ~i6_rb3 7 i6g9 >= 7
-  ConstraintId 075: 1 i7_yb0 2 i7_yb1 4 i7_yb2 8 i7_yb3 2 ~i7g2 >= 2
-
-
-=#
