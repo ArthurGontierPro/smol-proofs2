@@ -161,8 +161,7 @@ function divide(eq,d)
     end
     return Eq(lits,ceil(Int,eq.b/d))
 end
-function weaken(eq,eqvar) # les eq sont supposees normalise avec des coef positifs seulement.
-    var = eqvar.t[1].var
+function weaken(eq,var) # les eq sont supposees normalise avec des coef positifs seulement.
     lits = copy(eq.t)
     for l in lits
         if l.var==var
@@ -170,7 +169,7 @@ function weaken(eq,eqvar) # les eq sont supposees normalise avec des coef positi
         end
     end
     lits = removenulllits(lits) 
-    return Eq(lits,b)
+    return Eq(lits,eq.b)
 end
 function saturate(eq)
     for l in eq.t
@@ -183,10 +182,11 @@ end
 function solvepol(st,system,link,init,varmap)
     id = parse(Int,st[2])
     if id<1
-        id = init-id
+        id = init+id
     end
     eq = copyeq(system[id])
     stack = Vector{Eq}()
+    weakvar = ""
     push!(stack,eq)
     push!(link,id)
     lastsaturate = false
@@ -217,13 +217,17 @@ function solvepol(st,system,link,init,varmap)
             push!(link,-4)
         elseif i=="w"
             noLP = true
-            push!(stack,weaken(pop!(stack),))
+            push!(stack,weaken(pop!(stack),readvar(weakvar,varmap)))
             push!(link,-5)
         elseif !isdigit(i[1])
-            sign = i[1]!='~'
-            var = readvar(i,varmap)
-            push!(stack,Eq([Lit(1,sign,var)],0))
-            push!(link,-var-100) # ATTENTION HARDCODING DE SHIFT
+            if length(st)>j && st[j+1] == "w"
+                weakvar = st[j]
+            else
+                sign = i[1]!='~'
+                var = readvar(i,varmap)
+                push!(stack,Eq([Lit(1,sign,var)],0))
+                push!(link,-var-100) # ATTENTION HARDCODING DE SHIFT
+            end
         elseif i!="0"
             id = parse(Int,i)
             if id<1
@@ -314,7 +318,7 @@ function readwitnessvar(s,varmap)
 end
 function fuckparsers(f)
     ss = readline(f)
-    while length(ss)==0
+    while length(ss)==0 || ss[1]=='*'
         ss = readline(f)
     end
     st = split(ss,keepempty=false)
@@ -364,8 +368,12 @@ function readsubproof(system,systemlink,eq,w,c,f,varmap)
         if type == "proofgoal"
             if st[2][1] == '#'
                 push!(system,reverse(applywitness(eq,w)))
+                push!(systemlink,[-7])
+                c+=1
             else
                 push!(system,reverse(applywitness(system[parse(Int,st[2])],w)))
+                push!(systemlink,[-8])
+                c+=1
             end
             type,st = fuckparsers(f)
             while type != "end"
@@ -384,6 +392,7 @@ function readsubproof(system,systemlink,eq,w,c,f,varmap)
         end
         type,st = fuckparsers(f)
     end
+    println("endred")
 end
 function readred(system,systemlink,st,varmap,redwitness,c,f)
     i = findfirst(x->x==";",st)
@@ -395,8 +404,7 @@ function readred(system,systemlink,st,varmap,redwitness,c,f)
     w = readwitness(st[i+1:j],varmap)
     if st[end] == "begin"
         println("So it begins")
-        return eq
-        # readsubproof(system,systemlink,eq,w,c,f,varmap)
+        readsubproof(system,systemlink,eq,w,c,f,varmap)
     end
     subsys = Eq[]
     subsystemlink = Vector{Int}[]
@@ -458,7 +466,7 @@ function readveripb(path,file,system,varmap,obj)
                 elseif type == "*trim"
                     com[length(system)+1] = ss[7:end]
                 elseif !(type in ["#","w","*","f","d","del","end","pseudo-Boolean"])#,"de","co","en","ps"])
-                    println("unknown: ",ss)
+                    println("unknown2: ",ss)
                 end
                 if length(eq.t)!=0 || eq.b!=0
                     normcoefeq(eq)
@@ -777,7 +785,7 @@ function main()
     p = sortperm(stats)
     # for i in 1:length(stats)
         # for i in 1:length(stats) if !(i in [4,7,10])
-        for i in 1:length(stats) if !(i in [21,22,23,26,29,30])
+        for i in 1:length(stats) if (i in [21,22,23,26,29,30])
         # for i in [10]
         print(i)
         ins = list[p[i]]
@@ -788,3 +796,121 @@ function main()
 end
 
 main()
+
+
+a = [[
+[1 , 2 , 4 , 3 , 5 , 6 , 7],
+[4 , 5 , 6 , 7],
+[1 , 2 , 3 , 4 , 5 , 6 , 7],
+[5 , 6],
+[1 , 3 , 2 , 4 , 5 , 6 , 7],
+[],
+[6],
+[1 , 2 , 3 , 4 , 5 , 6 , 7],
+[1 , 2 , 3 , 4 , 5 , 6 , 7],
+[1 , 2 , 3 , 4 , 5 , 6],
+[],
+[3 , 4 , 5 , 6 , 7],
+[1 , 2 , 3 , 4 , 5 , 6]
+],[
+[1 , 2],
+[7 , 2 , 3],
+[1 , 2 , 3 , 7],
+[],
+[4 , 5 , 6 , 7],
+[5 , 4 , 3 , 2 , 1 , 7],
+[2 , 3 , 4 , 5],
+[7 , 5 , 4 , 3 , 2 , 1],
+[1 , 2 , 3 , 4 , 5],
+[1 , 2 , 4 , 3 , 5],
+[],
+[],
+[1 , 3 , 4 , 5]
+],[
+[1 , 2 , 3 , 4 , 6 , 5 , 7],
+[4 , 5 , 6 , 7],
+[1 , 2 , 3 , 4 , 5 , 6 , 7],
+[2],
+[1 , 2 , 3 , 4 , 5 , 6 , 7],
+[1 , 2 , 3 , 4 , 5 , 6 , 7],
+[2 , 3 , 5 , 6 , 7],
+[1 , 2 , 4 , 3 , 5 , 6 , 7],
+[1 , 2 , 3 , 4 , 5 , 6],
+[1 , 2 , 3 , 4 , 6],
+[],
+[3 , 4 , 5 , 6 , 7],
+[]
+],[
+[1 , 2 , 3 , 4 , 5 , 6 , 7],
+[5 , 7 , 4],
+[1 , 2 , 3 , 4 , 5 , 6 , 7],
+[],
+[1 , 2 , 3 , 4 , 5 , 6 , 7],
+[5 , 4 , 3 , 2 , 1],
+[],
+[6 , 7 , 2 , 1],
+[1 , 2 , 3 , 4 , 5 , 6 , 7],
+[1 , 2 , 3 , 4 , 5],
+[],
+[3 , 4 , 5 , 6 , 7],
+[]
+],[
+[1 , 2 , 3 , 4 , 5 , 6 , 7],
+[4 , 5 , 6],
+[1 , 2 , 3 , 5 , 4 , 6 , 7],
+[],
+[1 , 2 , 3 , 4 , 5],
+[4 , 3 , 2 , 1],
+[1 , 2 , 4 , 3 , 5 , 6],
+[1 , 2 , 3 , 4 , 5 , 6 , 7],
+[1 , 2 , 3],
+[1 , 2 , 3 , 4 , 5 , 6],
+[],
+[3 , 4 , 5 , 6 , 7],
+[]]]
+
+for w in a
+    aa = zeros(Int,7)
+    for p in w
+        for j in p
+            aa[j]+=1
+        end
+    end
+    println(aa)
+end
+
+#=
+[7, 7, 8, 9, 10, 11, 7]
+[7, 8, 8, 7, 7, 1, 5]
+[7, 9, 9, 9, 9, 10, 8]
+[7, 7, 7, 8, 8, 6, 7]
+[8, 8, 9, 9, 8, 7, 4]
+
+   lundi 15 to 16 -> 11/13
+   lundi 14 to 15 -> 10/13
+mercredi 15 to 16 -> 10/13
+=#
+
+b = [
+[2 , 1 , 3 , 4],
+[2 , 3 , 4 , 1],
+[1 , 2 , 3 , 4],
+[4 , 3 , 2 , 1],
+[1 , 2 , 3 , 4],
+[4 , 3 , 2 , 1],
+[3 , 2 , 1 , 4],
+[1 , 2 , 3 , 4],
+[1 , 2 , 3 , 4],
+[1 , 2 , 3 , 4]
+]
+
+score = zeros(Int,4)
+for p in b
+    for i in eachindex(p)
+        w = p[i]
+        score[w]+=5-i
+    end
+end
+println(score)
+
+ # [28, 30, 25, 17]
