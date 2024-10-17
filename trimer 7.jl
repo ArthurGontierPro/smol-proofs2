@@ -1,4 +1,5 @@
-using Profile,StatProfilerHTML,DataStructures,Graphs,GraphPlot,Compose,Cairo
+# using Profile,DataStructures,Graphs,GraphPlot,Compose,Cairo
+# using StatProfilerHTML
 ~a=1-a
 mutable struct Lit
     coef::Int
@@ -11,8 +12,8 @@ mutable struct Eq
 end
 mutable struct Red
     w::Vector{Lit}
-    systems::Vector{Vector{Eq}}
-    syslinks::Vector{Vector{Int}}
+    range::UnitRange{Int64}
+    pgranges::Vector{UnitRange{Int64}}
 end
 function readvar(s,varmap)
     tmp = split(s,'~')[end]
@@ -217,16 +218,17 @@ function solvepol(st,system,link,init,varmap)
             push!(link,-4)
         elseif i=="w"
             noLP = true
-            push!(stack,weaken(pop!(stack),readvar(weakvar,varmap)))
+            push!(stack,weaken(pop!(stack),weakvar))
             push!(link,-5)
         elseif !isdigit(i[1])
             if length(st)>j && st[j+1] == "w"
-                weakvar = st[j]
+                weakvar = readvar(i,varmap)
+                push!(link,-100weakvar-99) # ATTENTION HARDCODING DE SHIFT
             else
                 sign = i[1]!='~'
                 var = readvar(i,varmap)
                 push!(stack,Eq([Lit(1,sign,var)],0))
-                push!(link,-var-100) # ATTENTION HARDCODING DE SHIFT
+                push!(link,-100var-99sign) # ATTENTION HARDCODING DE SHIFT
             end
         elseif i!="0"
             id = parse(Int,i)
@@ -349,6 +351,8 @@ function applywitness(eq,w) # je supppose que les literaux opposes ne s.influenc
                     # b-= (~((-w[i+1]) ⊻ l.sign)) * l.coef # w s c  0 0 c  0 1 0  1 0 0  1 1 c
                     b-= (-w[i+1].var) * l.coef
                 end
+            else
+                push!(t,l)
             end
         end
     end
@@ -362,22 +366,26 @@ function readsubproof(system,systemlink,eq,w,c,f,varmap)
     # -2 est la negation de la contrainte declaree dans le red
     # end -1  le -1 donne l'id de la contradiction. on peux aussi mettre c -1
     # l'affectation du temoins refais une nouvelle contrainte. on en repart pas pour le rup.
-    push!(system,reverse(eq))
+    nbopb = length(system)-length(systemlink)
     type,st = fuckparsers(f)
+    redid = c-1
+    # subsys = Vector{Vector{Eq}}()
+    # subsyslink = Vector{Vector{Vector{Int}}}()
+    pgranges = Vector{UnitRange{Int64}}()
     while type !="end"
         if type == "proofgoal"
-            if st[2][1] == '#'
+            pgid = c
+            if st[2][1] == '#' # le proofgoal #1 dans un red c'est simplement l'eq 
                 push!(system,reverse(applywitness(eq,w)))
                 push!(systemlink,[-7])
-                c+=1
             else
-                push!(system,reverse(applywitness(system[parse(Int,st[2])],w)))
-                push!(systemlink,[-8])
-                c+=1
+                pgref = parse(Int,st[2])
+                push!(system,reverse(applywitness(system[pgref],w)))
+                push!(systemlink,[-8,pgref])
             end
+            c+=1
             type,st = fuckparsers(f)
             while type != "end"
-                println(st)
                 eq = Eq([],0)
                 if type == "u" || type == "rup"
                     eq = readeq(st,varmap,2:2:length(st)-3)     # can fail if space is missing omg
@@ -386,15 +394,25 @@ function readsubproof(system,systemlink,eq,w,c,f,varmap)
                     push!(systemlink,[-2])
                     eq = solvepol(st,system,systemlink[end],c,varmap)
                 end
-                # TODO a un moment il faut ajouter les eq dans le systemem mon grand
+                if length(eq.t)!=0 || eq.b!=0
+                    normcoefeq(eq)
+                    push!(system,eq)
+                    c+=1
+                end
                 type,st = fuckparsers(f)
             end
+            push!(pgranges,pgid:c-1)
+            # push!(subsys,splice!(system,pgid:c))
+            # push!(subsyslink,splice!(systemlink,(pgid-nbopb-1):(c-nbopb-1)))
+            # c = pgid
         end
         type,st = fuckparsers(f)
     end
     println("endred")
+    println(redid:c-1,pgranges)
+    return redid:c-1,pgranges,c
 end
-function readred(system,systemlink,st,varmap,redwitness,c,f)
+function readred(system,systemlink,st,varmap,redwitness,redid,f)
     i = findfirst(x->x==";",st)
     eq = readeq(st[2:i],varmap)
     j = findlast(x->x==";",st)
@@ -402,17 +420,23 @@ function readred(system,systemlink,st,varmap,redwitness,c,f)
         j=length(st)
     end
     w = readwitness(st[i+1:j],varmap)
+    push!(system,reverse(eq))
+    c = redid+1
+    # subsys = Vector{Vector{Eq}}()
+    # subsyslink = Vector{Vector{Int}}()
+    range = 0:0
+    pgranges = Vector{UnitRange{Int64}}()
     if st[end] == "begin"
         println("So it begins")
-        readsubproof(system,systemlink,eq,w,c,f,varmap)
+        range,pgranges,c = readsubproof(system,systemlink,eq,w,c,f,varmap)
+        # printsys(system[range])
     end
-    subsys = Eq[]
-    subsystemlink = Vector{Int}[]
-    redwitness[c] = Red(w,subsys,systemlink)
-    return eq
+    redwitness[redid] = Red(w,range,pgranges)
+    push!(system,eq)
+    return c+1
 end
 function readveripb(path,file,system,varmap,obj)
-    systemlink = Vector{Int}[]
+    systemlink = Vector{Vector{Int}}()
     redwitness = Dict{Int, Red}()
     com = Dict{Int, String}()
     output = conclusion = ""
@@ -445,7 +469,8 @@ function readveripb(path,file,system,varmap,obj)
                     push!(systemlink,[-3,l])
                 elseif type == "red"  
                     push!(systemlink,[-4])
-                    eq = readred(system,systemlink,st,varmap,redwitness,c,f)
+                    c = readred(system,systemlink,st,varmap,redwitness,c,f)
+                    eq = Eq([],0)
                 elseif type == "sol" 
                     println("SAT Not supported.")
                 elseif type == "soli" 
@@ -578,7 +603,7 @@ function addinvsys(invsys,eq,id)
         end
     end
 end
-function getinvsys(system,varmap)
+function getinvsys(system,systemlink,varmap)
     invsys = Vector{Vector{Int}}(undef,length(varmap))
     for i in eachindex(system)
         addinvsys(invsys,system[i],i)
@@ -689,16 +714,18 @@ function readinstance(path,file)
 end
 function runtrimmer(file)
     tvp = @elapsed begin
-        # v1 = run(`veripb --trace --useColor $proofs/$file.opb $proofs/$file$extention`)
-        v1 = read(`veripb $proofs/$file.opb $proofs/$file$extention`)
+        v1 = run(`veripb --trace --useColor $proofs/$file.opb $proofs/$file$extention`)
+        # v1 = read(`veripb $proofs/$file.opb $proofs/$file$extention`)
     end
     print(prettytime(tvp),' ')
     tri = @elapsed begin
         system,systemlink,redwitness,nbopb,varmap,output,conclusion,com,version,obj = readinstance(proofs,file)
     end
     print(prettytime(tri),' ')
-    invsys = getinvsys(system,varmap)
+    invsys = getinvsys(system,systemlink,varmap)
     normcoefsystem(system)
+end
+function a(file)
 
     if conclusion in ["BOUNDS"] || conclusion in ["SAT"] && !isequal(system[end],Eq([],1)) return println() end
     # printsys(system)
@@ -795,9 +822,14 @@ function main()
     # readrepartition()
 end
 
-main()
+# main()
+
+ins = "circuit_prune_root_test"
+
+runtrimmer(ins)
 
 
+#=
 a = [[
 [1 , 2 , 4 , 3 , 5 , 6 , 7],
 [4 , 5 , 6 , 7],
@@ -914,3 +946,4 @@ end
 println(score)
 
  # [28, 30, 25, 17]
+ =#

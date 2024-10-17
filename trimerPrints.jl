@@ -251,7 +251,8 @@ function writepol(link,index,varmap)
                 s = string(s," ",index[t])
             end
         elseif t<=-100
-            s = string(s," ",varmap[-(index[t]+100)])
+            sign = mod((-index[t]),100)==1
+            s = string(s,if sign " " else " ~" end,varmap[(-index[t]) ÷ 100])
         end
     end
     return string(s,"\n")
