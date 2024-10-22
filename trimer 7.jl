@@ -75,8 +75,10 @@ function readopb(path,file)
     system = Eq[]
     varmap = String[]
     obj = ""
+    # f = read(string(path,'/',file,".opb"),String)
     open(string(path,'/',file,".opb"),"r"; lock = false) do f
         for ss in eachline(f)
+        # for ss in split(f,'\n',keepempty=false)
             if ss[1] != '*'                                     #do not parse comments
                 if ss[1] == 'm'
                     st = split(ss,keepempty=false)
@@ -257,7 +259,7 @@ function solvepol(st,system,link,init,varmap)
     end
     return res
 end
-function findfullassi(system,st,init,varmap)
+function findfullassi(system,st,init,varmap,prism)
     # isassi,assi = initassignement(varmap)
     assi = zeros(Int8,length(varmap))
     lits = Vector{Lit}(undef,length(st)-1)
@@ -271,19 +273,23 @@ function findfullassi(system,st,init,varmap)
     while changes
         changes = false
         for i in 1:init-1 # can be replaced with efficient unit propagation
-            eq = system[i]
-            s = slack(eq,assi)
-            if s<0
-                printstyled(" !sol"; color = :red)
-                print(" ",i," ")
-                printeq(eq)
-                lits = [Lit(l.coef,!l.sign,l.var) for l in lits]
-                return Eq(lits,1)
-            else
-                for l in eq.t                    
-                    if l.coef > s && assi[l.var]==0
-                        assi[l.var] = l.sign ? 1 : 2
-                        changes = true
+            if !inprism(i,prism)
+                eq = system[i]
+                s = slack(eq,assi)
+                if s<0
+                    printstyled(" !sol"; color = :red)
+                    print(" ",i," ")
+                    println(st)
+                    println(writeeq(eq,varmap))
+                    printeq(eq)
+                    lits = [Lit(l.coef,!l.sign,l.var) for l in lits]
+                    return Eq(lits,1)
+                else
+                    for l in eq.t                    
+                        if l.coef > s && assi[l.var]==0
+                            assi[l.var] = l.sign ? 1 : 2
+                            changes = true
+                        end
                     end
                 end
             end
@@ -301,8 +307,8 @@ function findfullassi(system,st,init,varmap)
     eq = Eq(lits,1)
     return eq
 end
-function findbound(system,st,init,varmap,obj)
-    eq = findfullassi(system,st,init,varmap)
+function findbound(system,st,init,varmap,obj,prism)
+    eq = findfullassi(system,st,init,varmap,prism)
     bound = 0
     for l in eq.t
 
@@ -369,8 +375,6 @@ function readsubproof(system,systemlink,eq,w,c,f,varmap)
     nbopb = length(system)-length(systemlink)
     type,st = fuckparsers(f)
     redid = c-1
-    # subsys = Vector{Vector{Eq}}()
-    # subsyslink = Vector{Vector{Vector{Int}}}()
     pgranges = Vector{UnitRange{Int64}}()
     while type !="end"
         if type == "proofgoal"
@@ -402,17 +406,14 @@ function readsubproof(system,systemlink,eq,w,c,f,varmap)
                 type,st = fuckparsers(f)
             end
             push!(pgranges,pgid:c-1)
-            # push!(subsys,splice!(system,pgid:c))
-            # push!(subsyslink,splice!(systemlink,(pgid-nbopb-1):(c-nbopb-1)))
-            # c = pgid
         end
         type,st = fuckparsers(f)
     end
-    println("endred")
-    println(redid:c-1,pgranges)
+    # println("endred")
+    # println(redid:c-1,pgranges)
     return redid:c-1,pgranges,c
 end
-function readred(system,systemlink,st,varmap,redwitness,redid,f)
+function readred(system,systemlink,st,varmap,redwitness,redid,f,prism)
     i = findfirst(x->x==";",st)
     eq = readeq(st[2:i],varmap)
     j = findlast(x->x==";",st)
@@ -420,25 +421,31 @@ function readred(system,systemlink,st,varmap,redwitness,redid,f)
         j=length(st)
     end
     w = readwitness(st[i+1:j],varmap)
-    push!(system,reverse(eq))
-    c = redid+1
-    # subsys = Vector{Vector{Eq}}()
-    # subsyslink = Vector{Vector{Int}}()
+    c = redid
     range = 0:0
     pgranges = Vector{UnitRange{Int64}}()
     if st[end] == "begin"
         println("So it begins")
+        rev = reverse(eq)
+        normcoefeq(rev)
+        push!(system,rev)
+        push!(systemlink,[-9])
+        c+=1
         range,pgranges,c = readsubproof(system,systemlink,eq,w,c,f,varmap)
         # printsys(system[range])
+        push!(prism,range)
     end
-    redwitness[redid] = Red(w,range,pgranges)
+    normcoefeq(eq)
     push!(system,eq)
+    push!(systemlink,[-4])
+    redwitness[length(system)] = Red(w,range,pgranges)
     return c+1
 end
 function readveripb(path,file,system,varmap,obj)
     systemlink = Vector{Vector{Int}}()
     redwitness = Dict{Int, Red}()
     com = Dict{Int, String}()
+    prism = Vector{UnitRange{Int64}}() # the subproofs should not be available to all
     output = conclusion = ""
     c = length(system)+1
     d = length(system)
@@ -468,17 +475,17 @@ function readveripb(path,file,system,varmap,obj)
                     end
                     push!(systemlink,[-3,l])
                 elseif type == "red"  
-                    push!(systemlink,[-4])
-                    c = readred(system,systemlink,st,varmap,redwitness,c,f)
+                    c = readred(system,systemlink,st,varmap,redwitness,c,f,prism)
                     eq = Eq([],0)
                 elseif type == "sol" 
                     println("SAT Not supported.")
                 elseif type == "soli" 
-                    push!(systemlink,[-6])
-                    eq = findbound(system,st,c,varmap,obj)
+                    println("BOUNDS Not supported.")
+                    # push!(systemlink,[-6])
+                    # eq = findbound(system,st,c,varmap,obj)
                 elseif type == "solx"         # on ajoute la negation de la sol au probleme pour chercher d'autres solutions. jusqua contradiction finale. dans la preuve c.est juste des contraintes pour casser toutes les soloutions trouvees
                     push!(systemlink,[-5])
-                    eq = findfullassi(system,st,c,varmap)
+                    eq = findfullassi(system,st,c,varmap,prism)
                 elseif type == "output"
                     output = st[2]
                 elseif type == "conclusion"
@@ -548,7 +555,7 @@ function fixfront(front::Vector{Bool},antecedants::Vector{Int})
         end
     end
 end
-function makesmol(system,invsys,varmap,systemlink,nbopb)
+function makesmol(system,invsys,varmap,systemlink,nbopb,prism)
     n = length(system)
     antecedants = zeros(Bool,n)
     assi = zeros(Int8,length(varmap))
@@ -560,12 +567,15 @@ function makesmol(system,invsys,varmap,systemlink,nbopb)
     if systemlink[firstcontradiction-nbopb][1] == -2         # pol case
         fixfront(front,systemlink[firstcontradiction-nbopb])
     else
-        upquebit(system,invsys,assi,front)
+        upquebit(system,invsys,assi,front,prism)
         # println("  init : ",sum(front))#,findall(front)
         append!(systemlink[firstcontradiction-nbopb],findall(front))
     end
     while true in front
         i = findlast(front)
+        if inprism(i,prism)
+            println("WTF ",i)
+        else
         front[i] = false
         if !cone[i] 
             cone[i] = true
@@ -573,9 +583,9 @@ function makesmol(system,invsys,varmap,systemlink,nbopb)
                 tlink = systemlink[i-nbopb][1]
                 if tlink == -1 
                     antecedants .=false ; assi.=0
-                    if rup(system,invsys,antecedants,i,assi,front,cone)
+                    if rup(system,invsys,antecedants,i,assi,front,cone,prism)
                         append!(systemlink[i-nbopb],findall(antecedants))
-                        fixfront(front,antecedants)
+                        fixfront(front,antecedants) 
                     else 
                         println("\n",i," s=",slack(reverse(system[i]),assi))
                         println(writepol(systemlink[i-1-nbopb],[i for i in eachindex(system)],varmap))
@@ -590,7 +600,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb)
                     fixfront(front,antecedants)
                 end
             end
-        end
+        end end
     end
     return cone
 end
@@ -624,11 +634,11 @@ function updatequebit(eq,que,invsys,s,i,assi::Vector{Int8},antecedants)
     end
     return rewind
 end
-function upquebit(system,invsys,assi,antecedants)
+function upquebit(system,invsys,assi,antecedants,prism)
     que = ones(Bool,length(system))
     i = 1
     while i<=length(system)
-        if que[i]
+        if que[i] && !inprism(i,prism)
             eq = system[i]
             s = slack(eq,assi)
             if s<0
@@ -663,14 +673,14 @@ function updateprioquebit(eq,cone,front,que,invsys,s,i,init,assi::Vector{Int8},a
     end
     return r0,r1
 end
-function rup(system,invsys,antecedants,init,assi,front,cone)# I am putting back cone and front together because they will both end up in the cone at the end.
+function rup(system,invsys,antecedants,init,assi,front,cone,prism)# I am putting back cone and front together because they will both end up in the cone at the end.
     que = ones(Bool,init)
     rev = reverse(system[init])
     prio = true
     r0 = i = 1
     r1 = init+1
     while i<=init
-        if que[i] && (!prio || (prio&&(front[i]||cone[i])))
+        if que[i] && (!prio || (prio&&(front[i]||cone[i])))  && !inprism(i,prism)
             eq = i==init ? rev : system[i]
             s = slack(eq,assi)
             if s<0
@@ -712,21 +722,39 @@ function readinstance(path,file)
     system,systemlink,redwitness,output,conclusion,com,version = readveripb(path,file,system,varmap,obj)
     return system,systemlink,redwitness,nbopb,varmap,output,conclusion,com,version,obj
 end
-function runtrimmer(file)
-    tvp = @elapsed begin
-        v1 = run(`veripb --trace --useColor $proofs/$file.opb $proofs/$file$extention`)
-        # v1 = read(`veripb $proofs/$file.opb $proofs/$file$extention`)
+function inprism(n,prism)
+    for r in prism
+        if n in r return true end
     end
-    print(prettytime(tvp),' ')
+    return false
+end
+function  availableranges(redwitness)
+    prism = [a.range for (_,a) in redwitness if a.range!=0:0]
+    return prism
+end
+function runtrimmer(file)
+    # for i in 1:5
+    # @time files = read(string(proofs,"/",file,extention))
+    # println(length(files))
+    # @time files = read(string(proofs,"/",file,extention),String)
+    # println(length(files))
+    # @time files = readlines(string(proofs,"/",file,extention))
+    # println(length(files))
+    # end
+    
+    # tvp = @elapsed begin
+        # v1 = run(`veripb --trace --useColor $proofs/$file.opb $proofs/$file$extention`)
+        # v1 = read(`veripb $proofs/$file.opb $proofs/$file$extention`)
+    # end
+    # print(prettytime(tvp),' ')
     tri = @elapsed begin
         system,systemlink,redwitness,nbopb,varmap,output,conclusion,com,version,obj = readinstance(proofs,file)
     end
     print(prettytime(tri),' ')
     invsys = getinvsys(system,systemlink,varmap)
+    prism = availableranges(redwitness)
     normcoefsystem(system)
-end
-function a(file)
-
+ 
     if conclusion in ["BOUNDS"] || conclusion in ["SAT"] && !isequal(system[end],Eq([],1)) return println() end
     # printsys(system)
     # println(systemlink)
@@ -742,9 +770,10 @@ function a(file)
     # end
 
     tms = @elapsed begin
-        cone = makesmol(system,invsys,varmap,systemlink,nbopb)
+        cone = makesmol(system,invsys,varmap,systemlink,nbopb,prism)
     end
     println(prettytime(tms))
+
     twc = @elapsed begin
         writeconedel(proofs,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion,obj)
     end
@@ -788,6 +817,7 @@ const benchs = "veriPB/newSIPbenchmarks"
 const solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
 # const proofs = "veriPB/proofs"    
 const proofs = "veriPB/proofs/small"    
+# const proofs = "veriPB/proofs/medium"    
 # const proofs = "veriPB/prooframdisk"    
 # const benchs = "newSIPbenchmarks"
 # const solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
@@ -825,7 +855,7 @@ end
 # main()
 
 ins = "circuit_prune_root_test"
-
+# ins = "mult_experiment_gac"
 runtrimmer(ins)
 
 
