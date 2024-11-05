@@ -159,10 +159,22 @@ function printlit(l)
     if !l.sign printstyled('~'; color = :red) end
     printstyled(l.var; color = :green)
 end
+function printlit(l,varmap)
+    printstyled(l.coef,' '; color = :blue)
+    if !l.sign printstyled('~'; color = :red) end
+    printstyled(varmap[l.var]; color = :green)
+end
 function printeq(e)
     for l in e.t
         print("  ")
         printlit(l)
+    end
+    println("  >= ",e.b)
+end
+function printeq(e,varmap)
+    for l in e.t
+        print("  ")
+        printlit(l,varmap)
     end
     println("  >= ",e.b)
 end
@@ -221,14 +233,14 @@ function writewitness(s,witness,varmap)
     end
     return s
 end
-function writered(e,varmap,witness)
+function writered(e,varmap,witness,beg)
     s = "red"
     for l in e.t
         s = string(s," ",l.coef,if !l.sign " ~" else " " end, varmap[l.var])
     end
     s = string(s," >= ",e.b," ;")
     s = writewitness(s,witness,varmap)
-    return string(s,"\n")
+    return string(s,beg,"\n")
 end
 function writepol(link,index,varmap)
     s = string("p")
@@ -251,8 +263,8 @@ function writepol(link,index,varmap)
                 s = string(s," ",index[t])
             end
         elseif t<=-100
-            sign = mod((-index[t]),100)==1
-            s = string(s,if sign " " else " ~" end,varmap[(-index[t]) ÷ 100])
+            sign = mod((-t),100)!=1
+            s = string(s,if sign " " else " ~" end,varmap[(-t) ÷ 100])
         end
     end
     return string(s,"\n")
@@ -295,7 +307,7 @@ function writedel(f,systemlink,i,succ,index,nbopb,dels)
         write(f,string("\n"))
     end
 end
-function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion,obj)
+function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion,obj,prism)
     index = zeros(Int,length(system))
     lastindex = 0
     open(string(path,"/smol.",file,".opb"),"w") do f
@@ -310,12 +322,13 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,
         end
     end
     succ = Vector{Vector{Int}}(undef,length(system))
-    dels = zeros(Bool,length(system))
+    dels = ones(Bool,length(system))
     invlink(systemlink,succ,nbopb)
     open(string(path,"/smol.",file,extention),"w") do f
         write(f,string("pseudo-Boolean proof version ",version,"\n"))
         write(f,string("f ",sum(cone[1:nbopb])," 0\n"))
         for i in nbopb+1:length(system)
+            # if inprism(i,prism) cone[i] = true end
             if cone[i]
                 lastindex += 1
                 index[i] = lastindex
@@ -337,9 +350,32 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,
                 elseif tlink == -3           # ia
                     write(f,writeia(eq,systemlink[i-nbopb][2],index,varmap))
                     writedel(f,systemlink,i,succ,index,nbopb,dels)
-                elseif tlink == -4           # red
-                    write(f,writered(eq,varmap,redwitness[i]))
-                elseif tlink == -5           # solx
+                elseif tlink == -4           # red alone
+                    write(f,writered(eq,varmap,redwitness[i],""))
+                elseif tlink == -5           # rup in subproof
+                    write(f,"    ")
+                    write(f,writeu(eq,varmap))
+                    # if length(eq.t)>0 
+                    #     writedel(f,systemlink,i,succ,index,nbopb,dels)
+                    # end
+                elseif tlink == -6           # pol in subproofs
+                    write(f,"    ")
+                    write(f,writepol(systemlink[i-nbopb],index,varmap))
+                    # writedel(f,systemlink,i,succ,index,nbopb,dels)
+                elseif tlink == -9           # red with begin initial reverse equation (will be followed by subproof)
+                    write(f,writered(reverse(eq),varmap,redwitness[i]," ; begin"))
+                elseif tlink == -7           # red proofgoal #
+                    write(f,"    proofgoal #1\n")
+                elseif tlink == -8           # red proofgoal normal
+                    write(f,string("    proofgoal ",index[systemlink[i-nbopb][2]],"\n"))
+                elseif tlink == -10          # red proofgoal #
+                    write(f,"    end -1\n")
+                    next = systemlink[i-nbopb][1]
+                    if next != -7 && next !=8  
+                        write(f,"end\n") 
+                    end
+                    # write(f,writeeq(eq,varmap))
+                elseif tlink == -20           # solx
                     write(f,writesol(eq,varmap))
                     dels[i] = true # do not delete sol
                 elseif tlink == -6           # soli

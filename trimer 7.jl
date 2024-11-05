@@ -166,13 +166,15 @@ function divide(eq,d)
 end
 function weaken(eq,var) # les eq sont supposees normalise avec des coef positifs seulement.
     lits = copy(eq.t)
+    b = eq.b
     for l in lits
         if l.var==var
+            b-=l.coef
             l.coef = 0
         end
     end
     lits = removenulllits(lits) 
-    return Eq(lits,eq.b)
+    return Eq(lits,b)
 end
 function saturate(eq)
     for l in eq.t
@@ -352,10 +354,14 @@ function applywitness(eq,w) # je supppose que les literaux opposes ne s.influenc
         for i in 1:2:length(w)
             if l.var == w[i].var
                 if w[i+1].var > 0
-                    push!(t,Lit(l.coef,!(l.sign ⊻ w[i+1].sign),w[i+1].var))
+                    if l.sign != w[i].sign
+                        b-= l.coef
+                    end
                 else # negatives var are constants. the coef seems useless
                     # b-= (~((-w[i+1]) ⊻ l.sign)) * l.coef # w s c  0 0 c  0 1 0  1 0 0  1 1 c
-                    b-= (-w[i+1].var) * l.coef
+                    if l.sign == w[i].sign
+                        b-= l.coef
+                    end
                 end
             else
                 push!(t,l)
@@ -384,7 +390,10 @@ function readsubproof(system,systemlink,eq,w,c,f,varmap)
                 push!(systemlink,[-7])
             else
                 pgref = parse(Int,st[2])
+                # printeq(system[pgref],varmap)
                 push!(system,reverse(applywitness(system[pgref],w)))
+                # printeq(system[end],varmap)
+                # println()
                 push!(systemlink,[-8,pgref])
             end
             c+=1
@@ -393,9 +402,9 @@ function readsubproof(system,systemlink,eq,w,c,f,varmap)
                 eq = Eq([],0)
                 if type == "u" || type == "rup"
                     eq = readeq(st,varmap,2:2:length(st)-3)     # can fail if space is missing omg
-                    push!(systemlink,[-1])
+                    push!(systemlink,[-5])
                 elseif type == "p" || type == "pol"
-                    push!(systemlink,[-2])
+                    push!(systemlink,[-6])
                     eq = solvepol(st,system,systemlink[end],c,varmap)
                 end
                 if length(eq.t)!=0 || eq.b!=0
@@ -409,8 +418,6 @@ function readsubproof(system,systemlink,eq,w,c,f,varmap)
         end
         type,st = fuckparsers(f)
     end
-    # println("endred")
-    # println(redid:c-1,pgranges)
     return redid:c-1,pgranges,c
 end
 function readred(system,systemlink,st,varmap,redwitness,redid,f,prism)
@@ -432,12 +439,14 @@ function readred(system,systemlink,st,varmap,redwitness,redid,f,prism)
         push!(systemlink,[-9])
         c+=1
         range,pgranges,c = readsubproof(system,systemlink,eq,w,c,f,varmap)
-        # printsys(system[range])
         push!(prism,range)
+        push!(systemlink,[-10])
+    else
+        push!(systemlink,[-4])
     end
     normcoefeq(eq)
     push!(system,eq)
-    push!(systemlink,[-4])
+    redwitness[redid] = Red(w,range,pgranges)
     redwitness[length(system)] = Red(w,range,pgranges)
     return c+1
 end
@@ -479,12 +488,14 @@ function readveripb(path,file,system,varmap,obj)
                     eq = Eq([],0)
                 elseif type == "sol" 
                     println("SAT Not supported.")
+                    eq = Eq([Lit(0,true,1)],15) # just to add something to not break the id count
                 elseif type == "soli" 
-                    println("BOUNDS Not supported.")
+                    println("BOUNDS Not supported(soli)")
                     # push!(systemlink,[-6])
                     # eq = findbound(system,st,c,varmap,obj)
+                    eq = Eq([Lit(0,true,1)],15) # just to add something to not break the id count
                 elseif type == "solx"         # on ajoute la negation de la sol au probleme pour chercher d'autres solutions. jusqua contradiction finale. dans la preuve c.est juste des contraintes pour casser toutes les soloutions trouvees
-                    push!(systemlink,[-5])
+                    push!(systemlink,[-20])
                     eq = findfullassi(system,st,c,varmap,prism)
                 elseif type == "output"
                     output = st[2]
@@ -492,7 +503,7 @@ function readveripb(path,file,system,varmap,obj)
                     conclusion = st[2]
                     if conclusion == "BOUNDS"
                         println("BOUNDS Not supported.")
-                    elseif conclusion == "SAT" && !isequal(system[end],Eq([],1))
+                    elseif !isequal(system[end],Eq([],1)) && (conclusion == "SAT" || conclusion == "NONE")
                         println("SAT Not supported.")
                     end
                 elseif type == "*trim"
@@ -555,7 +566,7 @@ function fixfront(front::Vector{Bool},antecedants::Vector{Int})
         end
     end
 end
-function makesmol(system,invsys,varmap,systemlink,nbopb,prism)
+function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness)
     n = length(system)
     antecedants = zeros(Bool,n)
     assi = zeros(Int8,length(varmap))
@@ -571,11 +582,9 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism)
         # println("  init : ",sum(front))#,findall(front)
         append!(systemlink[firstcontradiction-nbopb],findall(front))
     end
+    red = Red([],0:0,[]);
     while true in front
         i = findlast(front)
-        if inprism(i,prism)
-            println("WTF ",i)
-        else
         front[i] = false
         if !cone[i] 
             cone[i] = true
@@ -583,7 +592,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism)
                 tlink = systemlink[i-nbopb][1]
                 if tlink == -1 
                     antecedants .=false ; assi.=0
-                    if rup(system,invsys,antecedants,i,assi,front,cone,prism)
+                    if rup(system,invsys,antecedants,i,assi,front,cone,prism,0:0)
                         append!(systemlink[i-nbopb],findall(antecedants))
                         fixfront(front,antecedants) 
                     else 
@@ -591,16 +600,37 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism)
                         println(writepol(systemlink[i-1-nbopb],[i for i in eachindex(system)],varmap))
                         println(writeeq(system[i-1],varmap))
                         println(writeeq(system[i],varmap))
-                        printstyled(" rup faled \n"; color = :red)
+                        printstyled(" rup failed \n"; color = :red)
                         return cone 
                     end
                 elseif tlink >= -3
                     antecedants .= false
                     fixante(systemlink,antecedants,i-nbopb)
                     fixfront(front,antecedants)
+                elseif tlink == -10 # (end of subproof)
+                    red = redwitness[i]
+                    front[red.range] .= true
+                    for i in red.range
+                        # printeq(system[i],varmap)
+                    end
+                elseif tlink == -5
+                    subran = findfirst(x->i in x,red.pgranges)
+                    antecedants .=false ; assi.=0
+                    if rup(system,invsys,antecedants,i,assi,front,cone,prism,red.pgranges[subran])
+                        # printeq(system[i])
+                        # println(findall(antecedants))
+                        append!(systemlink[i-nbopb],findall(antecedants))
+                        fixfront(front,antecedants) 
+                    else printstyled(" subproof rup failed \n"; color = :red)
+                    end
+                elseif tlink == -6 || tlink == -8
+                    antecedants .= false
+                    fixante(systemlink,antecedants,i-nbopb)
+                    fixfront(front,antecedants)
+                elseif tlink == -7
                 end
             end
-        end end
+        end
     end
     return cone
 end
@@ -673,14 +703,14 @@ function updateprioquebit(eq,cone,front,que,invsys,s,i,init,assi::Vector{Int8},a
     end
     return r0,r1
 end
-function rup(system,invsys,antecedants,init,assi,front,cone,prism)# I am putting back cone and front together because they will both end up in the cone at the end.
+function rup(system,invsys,antecedants,init,assi,front,cone,prism,subrange)# I am putting back cone and front together because they will both end up in the cone at the end.
     que = ones(Bool,init)
     rev = reverse(system[init])
     prio = true
     r0 = i = 1
     r1 = init+1
     while i<=init
-        if que[i] && (!prio || (prio&&(front[i]||cone[i])))  && !inprism(i,prism)
+        if que[i] && (!prio || (prio&&(front[i]||cone[i]))) && (!inprism(i,prism) || (i in subrange))
             eq = i==init ? rev : system[i]
             s = slack(eq,assi)
             if s<0
@@ -742,11 +772,14 @@ function runtrimmer(file)
     # println(length(files))
     # end
     
-    # tvp = @elapsed begin
+    tvp = @elapsed begin
         # v1 = run(`veripb --trace --useColor $proofs/$file.opb $proofs/$file$extention`)
-        # v1 = read(`veripb $proofs/$file.opb $proofs/$file$extention`)
-    # end
+        v1 = read(`veripb $proofs/$file.opb $proofs/$file$extention`)
+    end
     # print(prettytime(tvp),' ')
+
+# end
+# function a()
     tri = @elapsed begin
         system,systemlink,redwitness,nbopb,varmap,output,conclusion,com,version,obj = readinstance(proofs,file)
     end
@@ -755,7 +788,7 @@ function runtrimmer(file)
     prism = availableranges(redwitness)
     normcoefsystem(system)
  
-    if conclusion in ["BOUNDS"] || conclusion in ["SAT"] && !isequal(system[end],Eq([],1)) return println() end
+    if conclusion in ["BOUNDS"] || conclusion in ["SAT","NONE"] && !isequal(system[end],Eq([],1)) return println() end
     # printsys(system)
     # println(systemlink)
     # println(184)
@@ -770,18 +803,26 @@ function runtrimmer(file)
     # end
 
     tms = @elapsed begin
-        cone = makesmol(system,invsys,varmap,systemlink,nbopb,prism)
+        cone = makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness)
     end
+    cone.=true
     println(prettytime(tms))
+    # for (i,a) in redwitness
+    #     if cone[i] && a.range != 0:0
+    #         for j in a.range
+    #             cone[j] = true
+    #         end
+    #     end
+    # end
 
     twc = @elapsed begin
-        writeconedel(proofs,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion,obj)
+        writeconedel(proofs,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion,obj,prism)
     end
 
-    printcom(file,system,invsys,cone,com)
+    # printcom(file,system,invsys,cone,com) # only works for subgraph solver with additionnals comments.
     # printsummit(cone,invsys,varmap)
     printorder(file,cone,invsys,varmap)
-    if file[1]=='b'
+    if file[1:3]=="bio"
         vcone = varcone(system,cone,varmap)
         patcone,tarcone = patterntargetcone(vcone,varmap)
         printbioconegraphs(file,cone,patcone,tarcone)
@@ -790,6 +831,8 @@ function runtrimmer(file)
 
     # writeshortrepartition(proofs,file,cone,nbopb)
     tvs = @elapsed begin
+        # v2 = run(`veripb --trace --useColor --traceFail $proofs/smol.$file.opb $proofs/smol.$file$extention`) 
+        # v2 = run(`veripb --traceFail --useColor $proofs/smol.$file.opb $proofs/smol.$file$extention`) 
         v2 = read(`veripb $proofs/smol.$file.opb $proofs/smol.$file$extention`) # --forceCheckDeletion
     end
     so = stat(string(proofs,"/",file,".opb")).size + stat(string(proofs,"/",file,extention)).size
@@ -816,8 +859,8 @@ end
 const benchs = "veriPB/newSIPbenchmarks"
 const solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
 # const proofs = "veriPB/proofs"    
-const proofs = "veriPB/proofs/small"    
-# const proofs = "veriPB/proofs/medium"    
+# const proofs = "veriPB/proofs/small"    
+const proofs = "veriPB/proofs/medium"    
 # const proofs = "veriPB/prooframdisk"    
 # const benchs = "newSIPbenchmarks"
 # const solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
@@ -841,25 +884,219 @@ function main()
     println(list)
     p = sortperm(stats)
     # for i in 1:length(stats)
-        # for i in 1:length(stats) if !(i in [4,7,10])
-        for i in 1:length(stats) if (i in [21,22,23,26,29,30])
+        # for i in 1:length(stats) if !(i in [23]) # 23 ia ID missing
+        for i in 10:length(stats) if !(i in [0])
+            # for i in 1:length(stats) if !(i in [4,7,10])
+        # for i in 1:length(stats) if (i in [21,22,23,26,29,30])
         # for i in [10]
         print(i)
         ins = list[p[i]]
         printstyled(ins,"\n"; color = :yellow)
         runtrimmer(ins)
-    end  end
+    end  
+    end
     # readrepartition()
 end
 
-# main()
+main()
 
-ins = "circuit_prune_root_test"
-# ins = "mult_experiment_gac"
-runtrimmer(ins)
+# ins = "circuit_prune_root_test"
+# ins = "mult_experiment_gac" # pas de contradictions donc pas de trimmer.
+# runtrimmer(ins)
 
 
 #=
+de base
+line 735: red -1 p1_pos0b0 -2 p1_pos0b1 -4 p1_pos0b2 1 p2_pos0b0 2 p2_pos0b1 4 p2_pos0b2 8 f19 >= 1 ; f19 -> 1 ; begin
+  ** proofgoals from formula **
+  proofgoal 879: 1 p1_pos0b0 2 p1_pos0b1 4 p1_pos0b2 1 ~p2_pos0b0 2 ~p2_pos0b1 4 ~p2_pos0b2 >= 8
+  ** proofgoal from satisfying added constraint **
+  proofgoal #1: 1 ~p1_pos0b0 2 ~p1_pos0b1 4 ~p1_pos0b2 1 p2_pos0b0 2 p2_pos0b1 4 p2_pos0b2 >= 0
+  ** proofgoals from order **
+  ** proofgoals from objective **
+  ConstraintId 880: 8 ~f19 1 p1_pos0b0 2 p1_pos0b1 4 p1_pos0b2 1 ~p2_pos0b0 2 ~p2_pos0b1 4 ~p2_pos0b2 >= 15
+line 736:      proofgoal 879
+  ConstraintId 881: 1 ~p1_pos0b0 2 ~p1_pos0b1 4 ~p1_pos0b2 1 p2_pos0b0 2 p2_pos0b1 4 p2_pos0b2 >= 7
+line 737:      p -2 f19 w
+  ConstraintId 882: 1 p1_pos0b0 2 p1_pos0b1 4 p1_pos0b2 1 ~p2_pos0b0 2 ~p2_pos0b1 4 ~p2_pos0b2 >= 7
+line 738: p 500 573 + s 646 + s 719 + s 774 + s 790 + s 838 + s 854 + s 870 + s
+  ConstraintId 883: 1 ~p0e0 1 p1e1 1 p1e2 1 p1e3 1 p1e4 1 p1e5 1 p2e1 1 p2e2 1 p2e3 1 p2e4 1 p2e5 1 ~p3e0 1 ~p4e0 1 ~p5e0 >= 5
+line 739: u 1 ~p2e0 >= 1 ;
+  ConstraintId 884: 1 ~p2e0 >= 1
+line 740: p 427 573 + s 646 + s 719 + s 774 + s 790 + s 838 + s 854 + s 870 + s
+  ConstraintId 885: 1 ~p0e1 1 p1e0 1 p1e2 1 p1e3 1 p1e4 1 p1e5 1 p2e0 1 p2e2 1 p2e3 1 p2e4 1 p2e5 1 ~p3e1 1 ~p4e1 1 ~p5e1 >= 5
+line 741: u 1 ~p2e1 >= 1 ;
+  ConstraintId 886: 1 ~p2e1 >= 1
+line 742: p 427 500 + s 646 + s 719 + s 774 + s 790 + s 838 + s 854 + s 870 + s
+  ConstraintId 887: 1 ~p0e2 1 p1e0 1 p1e1 1 p1e3 1 p1e4 1 p1e5 1 p2e0 1 p2e1 1 p2e3 1 p2e4 1 p2e5 1 ~p3e2 1 ~p4e2 1 ~p5e2 >= 5
+line 743: u 1 ~p2e2 >= 1 ;
+  ConstraintId 888: 1 ~p2e2 >= 1
+line 744: p 427 500 + s 573 + s 719 + s 774 + s 790 + s 838 + s 854 + s 870 + s
+  ConstraintId 889: 1 ~p0e3 1 p1e0 1 p1e1 1 p1e2 1 p1e4 1 p1e5 1 p2e0 1 p2e1 1 p2e2 1 p2e4 1 p2e5 1 ~p3e3 1 ~p4e3 1 ~p5e3 >= 5
+line 745: u 1 ~p2e3 >= 1 ;
+  ConstraintId 890: 1 ~p2e3 >= 1
+line 746: p 427 500 + s 573 + s 646 + s 774 + s 790 + s 838 + s 854 + s 870 + s
+  ConstraintId 891: 1 ~p0e4 1 p1e0 1 p1e1 1 p1e2 1 p1e3 1 p1e5 1 p2e0 1 p2e1 1 p2e2 1 p2e3 1 p2e5 1 ~p3e4 1 ~p4e4 1 ~p5e4 >= 5
+line 747: u 1 ~p2e4 >= 1 ;
+  ConstraintId 892: 1 ~p2e4 >= 1
+line 748: p 427 500 + s 573 + s 646 + s 719 + s 790 + s 838 + s 854 + s 870 + s
+  ConstraintId 893: 1 ~p0e5 1 p1e0 1 p1e1 1 p1e2 1 p1e3 1 p1e4 1 p2e0 1 p2e1 1 p2e2 1 p2e3 1 p2e4 1 ~p3e5 1 ~p4e5 1 ~p5e5 >= 5
+line 749: u 1 ~p2e5 >= 1 ;
+  ConstraintId 894: 1 ~p2e5 >= 1
+line 750: u >= 1 ;
+  ConstraintId 895: >= 1
+line 751:      end -1
+  ConstraintId  - : deleting 881, 882, 883, 884, 885, 886, 887, 888, 889, 890, 891, 892, 893, 894, 895
+line 752: end
+    automatically proved #1, constraint is trivial.
+  ConstraintId 896: 8 f19 1 ~p1_pos0b0 2 ~p1_pos0b1 4 ~p1_pos0b2 1 p2_pos0b0 2 p2_pos0b1 4 p2_pos0b2 >= 8
+  ConstraintId  - : deleting 880
+
+
+
+
+  line 337: red 1 ~p1_pos0b0 2 ~p1_pos0b1 4 ~p1_pos0b2 1 p2_pos0b0 2 p2_pos0b1 4 p2_pos0b2 8 f19 >= 8 ; f19 1 ; begin
+  ** proofgoals from formula **
+  proofgoal 495: 1 p1_pos0b0 2 p1_pos0b1 4 p1_pos0b2 1 ~p2_pos0b0 2 ~p2_pos0b1 4 ~p2_pos0b2 >= 8
+  ** proofgoal from satisfying added constraint **
+  proofgoal #1: 1 ~p1_pos0b0 2 ~p1_pos0b1 4 ~p1_pos0b2 1 p2_pos0b0 2 p2_pos0b1 4 p2_pos0b2 >= 0
+  ** proofgoals from order **
+  ** proofgoals from objective **
+  ConstraintId 496: 8 ~f19 1 p1_pos0b0 2 p1_pos0b1 4 p1_pos0b2 1 ~p2_pos0b0 2 ~p2_pos0b1 4 ~p2_pos0b2 >= 15
+line 338:     proofgoal 495
+  ConstraintId 497: 1 ~p1_pos0b0 2 ~p1_pos0b1 4 ~p1_pos0b2 1 p2_pos0b0 2 p2_pos0b1 4 p2_pos0b2 >= 7
+line 339:     p 496 f19 w
+  ConstraintId 498: 1 p1_pos0b0 2 p1_pos0b1 4 p1_pos0b2 1 ~p2_pos0b0 2 ~p2_pos0b1 4 ~p2_pos0b2 >= 7
+line 340:     p 286 317 + s 344 + s 372 + s 391 + s 407 + s 455 + s 471 + s 487 + s
+  ConstraintId 499: 1 ~p0e0 1 p1e1 1 p1e2 1 p1e3 1 p1e4 1 p1e5 1 p2e1 1 p2e2 1 p2e3 1 p2e4 1 p2e5 1 ~p3e0 1 ~p4e0 1 ~p5e0 >= 5
+line 341:     u 1 ~p2e0 >= 1 ;
+  ConstraintId 500: 1 ~p2e0 >= 1
+line 342:     p 254 317 + s 344 + s 372 + s 391 + s 407 + s 455 + s 471 + s 487 + s
+  ConstraintId 501: 1 ~p0e1 1 p1e0 1 p1e2 1 p1e3 1 p1e4 1 p1e5 1 p2e0 1 p2e2 1 p2e3 1 p2e4 1 p2e5 1 ~p3e1 1 ~p4e1 1 ~p5e1 >= 5
+line 343:     u 1 ~p2e1 >= 1 ;
+  ConstraintId 502: 1 ~p2e1 >= 1
+line 344:     p 254 286 + s 344 + s 372 + s 391 + s 407 + s 455 + s 471 + s 487 + s
+  ConstraintId 503: 1 ~p0e2 1 p1e0 1 p1e1 1 p1e3 1 p1e4 1 p1e5 1 p2e0 1 p2e1 1 p2e3 1 p2e4 1 p2e5 1 ~p3e2 1 ~p4e2 1 ~p5e2 >= 5
+line 345:     u 1 ~p2e2 >= 1 ;
+  ConstraintId 504: 1 ~p2e2 >= 1
+line 346:     p 254 286 + s 317 + s 372 + s 391 + s 407 + s 455 + s 471 + s 487 + s
+  ConstraintId 505: 1 ~p0e3 1 p1e0 1 p1e1 1 p1e2 1 p1e4 1 p1e5 1 p2e0 1 p2e1 1 p2e2 1 p2e4 1 p2e5 1 ~p3e3 1 ~p4e3 1 ~p5e3 >= 5
+line 347:     u 1 ~p2e3 >= 1 ;
+  ConstraintId 506: 1 ~p2e3 >= 1
+line 348:     p 254 286 + s 317 + s 344 + s 391 + s 407 + s 455 + s 471 + s 487 + s
+  ConstraintId 507: 1 ~p0e4 1 p1e0 1 p1e1 1 p1e2 1 p1e3 1 p1e5 1 p2e0 1 p2e1 1 p2e2 1 p2e3 1 p2e5 1 ~p3e4 1 ~p4e4 1 ~p5e4 >= 5
+line 349:     u 1 ~p2e4 >= 1 ;
+  ConstraintId 508: 1 ~p2e4 >= 1
+line 350:     p 254 286 + s 317 + s 344 + s 372 + s 407 + s 455 + s 471 + s 487 + s
+  ConstraintId 509: 1 ~p0e5 1 p1e0 1 p1e1 1 p1e2 1 p1e3 1 p1e4 1 p2e0 1 p2e1 1 p2e2 1 p2e3 1 p2e4 1 ~p3e5 1 ~p4e5 1 ~p5e5 >= 5
+line 351:     u 1 ~p2e5 >= 1 ;
+  ConstraintId 510: 1 ~p2e5 >= 1
+line 352:     u >= 1 ;
+  ConstraintId 511: >= 1
+line 353:     end -1
+  ConstraintId  - : deleting 497, 498, 499, 500, 501, 502, 503, 504, 505, 506, 507, 508, 509, 510, 511
+line 354: end
+    automatically proved #1, constraint is trivial.
+  ConstraintId 512: 8 f19 1 ~p1_pos0b0 2 ~p1_pos0b1 4 ~p1_pos0b2 1 p2_pos0b0 2 p2_pos0b1 4 p2_pos0b2 >= 8
+  ConstraintId  - : deleting 496
+
+
+
+
+
+line 734: red 1 p1_pos0b0 2 p1_pos0b1 4 p1_pos0b2 -1 p2_pos0b0 -2 p2_pos0b1 -4 p2_pos0b2 8 ~f19 >= 1 ; f19 -> 0 ;
+  ** proofgoals from formula **
+  ** proofgoal from satisfying added constraint **
+  proofgoal #1: 1 p1_pos0b0 2 p1_pos0b1 4 p1_pos0b2 1 ~p2_pos0b0 2 ~p2_pos0b1 4 ~p2_pos0b2 >= 0
+  ** proofgoals from order **
+  ** proofgoals from objective **
+    automatically proved #1, constraint is trivial.
+  ConstraintId 879: 8 ~f19 1 p1_pos0b0 2 p1_pos0b1 4 p1_pos0b2 1 ~p2_pos0b0 2 ~p2_pos0b1 4 ~p2_pos0b2 >= 8
+
+
+line 735: red -1 p1_pos0b0 -2 p1_pos0b1 -4 p1_pos0b2 1 p2_pos0b0 2 p2_pos0b1 4 p2_pos0b2 8 f19 >= 1 ; f19 -> 1 ; begin
+  ** proofgoals from formula **
+  proofgoal 879: 1 p1_pos0b0 2 p1_pos0b1 4 p1_pos0b2 1 ~p2_pos0b0 2 ~p2_pos0b1 4 ~p2_pos0b2 >= 8
+  ** proofgoal from satisfying added constraint **
+  proofgoal #1: 1 ~p1_pos0b0 2 ~p1_pos0b1 4 ~p1_pos0b2 1 p2_pos0b0 2 p2_pos0b1 4 p2_pos0b2 >= 0
+  ** proofgoals from order **
+  ** proofgoals from objective **
+  ConstraintId 880: 8 ~f19 1 p1_pos0b0 2 p1_pos0b1 4 p1_pos0b2 1 ~p2_pos0b0 2 ~p2_pos0b1 4 ~p2_pos0b2 >= 15
+line 736:      proofgoal 879
+  ConstraintId 881: 1 ~p1_pos0b0 2 ~p1_pos0b1 4 ~p1_pos0b2 1 p2_pos0b0 2 p2_pos0b1 4 p2_pos0b2 >= 7
+line 737:      p -2 f19 w
+  ConstraintId 882: 1 p1_pos0b0 2 p1_pos0b1 4 p1_pos0b2 1 ~p2_pos0b0 2 ~p2_pos0b1 4 ~p2_pos0b2 >= 7
+line 738: p 500 573 + s 646 + s 719 + s 774 + s 790 + s 838 + s 854 + s 870 + s
+  ConstraintId 883: 1 ~p0e0 1 p1e1 1 p1e2 1 p1e3 1 p1e4 1 p1e5 1 p2e1 1 p2e2 1 p2e3 1 p2e4 1 p2e5 1 ~p3e0 1 ~p4e0 1 ~p5e0 >= 5
+line 739: u 1 ~p2e0 >= 1 ;
+  ConstraintId 884: 1 ~p2e0 >= 1
+line 740: p 427 573 + s 646 + s 719 + s 774 + s 790 + s 838 + s 854 + s 870 + s
+  ConstraintId 885: 1 ~p0e1 1 p1e0 1 p1e2 1 p1e3 1 p1e4 1 p1e5 1 p2e0 1 p2e2 1 p2e3 1 p2e4 1 p2e5 1 ~p3e1 1 ~p4e1 1 ~p5e1 >= 5
+line 741: u 1 ~p2e1 >= 1 ;
+  ConstraintId 886: 1 ~p2e1 >= 1
+line 742: p 427 500 + s 646 + s 719 + s 774 + s 790 + s 838 + s 854 + s 870 + s
+  ConstraintId 887: 1 ~p0e2 1 p1e0 1 p1e1 1 p1e3 1 p1e4 1 p1e5 1 p2e0 1 p2e1 1 p2e3 1 p2e4 1 p2e5 1 ~p3e2 1 ~p4e2 1 ~p5e2 >= 5
+line 743: u 1 ~p2e2 >= 1 ;
+  ConstraintId 888: 1 ~p2e2 >= 1
+line 744: p 427 500 + s 573 + s 719 + s 774 + s 790 + s 838 + s 854 + s 870 + s
+  ConstraintId 889: 1 ~p0e3 1 p1e0 1 p1e1 1 p1e2 1 p1e4 1 p1e5 1 p2e0 1 p2e1 1 p2e2 1 p2e4 1 p2e5 1 ~p3e3 1 ~p4e3 1 ~p5e3 >= 5
+line 745: u 1 ~p2e3 >= 1 ;
+  ConstraintId 890: 1 ~p2e3 >= 1
+line 746: p 427 500 + s 573 + s 646 + s 774 + s 790 + s 838 + s 854 + s 870 + s
+  ConstraintId 891: 1 ~p0e4 1 p1e0 1 p1e1 1 p1e2 1 p1e3 1 p1e5 1 p2e0 1 p2e1 1 p2e2 1 p2e3 1 p2e5 1 ~p3e4 1 ~p4e4 1 ~p5e4 >= 5
+line 747: u 1 ~p2e4 >= 1 ;
+  ConstraintId 892: 1 ~p2e4 >= 1
+line 748: p 427 500 + s 573 + s 646 + s 719 + s 790 + s 838 + s 854 + s 870 + s
+  ConstraintId 893: 1 ~p0e5 1 p1e0 1 p1e1 1 p1e2 1 p1e3 1 p1e4 1 p2e0 1 p2e1 1 p2e2 1 p2e3 1 p2e4 1 ~p3e5 1 ~p4e5 1 ~p5e5 >= 5
+line 749: u 1 ~p2e5 >= 1 ;
+  ConstraintId 894: 1 ~p2e5 >= 1
+line 750: u >= 1 ;
+  ConstraintId 895: >= 1
+line 751:      end -1
+  ConstraintId  - : deleting 881, 882, 883, 884, 885, 886, 887, 888, 889, 890, 891, 892, 893, 894, 895
+line 752: end
+    automatically proved #1, constraint is trivial.
+  ConstraintId 896: 8 f19 1 ~p1_pos0b0 2 ~p1_pos0b1 4 ~p1_pos0b2 1 p2_pos0b0 2 p2_pos0b1 4 p2_pos0b2 >= 8
+  ConstraintId  - : deleting 880
+
+
+
+line 340: red 1 p1_pos0b0 2 p1_pos0b1 4 p1_pos0b2 1 ~p2_pos0b0 2 ~p2_pos0b1 4 ~p2_pos0b2 8 ~f19 >= 8 ; f19 0
+  ** proofgoals from formula **
+  ** proofgoal from satisfying added constraint **
+  proofgoal #1: 1 p1_pos0b0 2 p1_pos0b1 4 p1_pos0b2 1 ~p2_pos0b0 2 ~p2_pos0b1 4 ~p2_pos0b2 >= 0
+  ** proofgoals from order **
+  ** proofgoals from objective **
+    automatically proved #1, constraint is trivial.
+  ConstraintId 491: 8 ~f19 1 p1_pos0b0 2 p1_pos0b1 4 p1_pos0b2 1 ~p2_pos0b0 2 ~p2_pos0b1 4 ~p2_pos0b2 >= 8
+
+
+line 341: red 1 ~p1_pos0b0 2 ~p1_pos0b1 4 ~p1_pos0b2 1 p2_pos0b0 2 p2_pos0b1 4 p2_pos0b2 8 f19 >= 8 ; f19 1 ; begin
+  ** proofgoals from formula **
+  proofgoal 491: 1 p1_pos0b0 2 p1_pos0b1 4 p1_pos0b2 1 ~p2_pos0b0 2 ~p2_pos0b1 4 ~p2_pos0b2 >= 8
+  ** proofgoal from satisfying added constraint **
+  proofgoal #1: 1 ~p1_pos0b0 2 ~p1_pos0b1 4 ~p1_pos0b2 1 p2_pos0b0 2 p2_pos0b1 4 p2_pos0b2 >= 0
+  ** proofgoals from order **
+  ** proofgoals from objective **
+  ConstraintId 492: 8 ~f19 1 p1_pos0b0 2 p1_pos0b1 4 p1_pos0b2 1 ~p2_pos0b0 2 ~p2_pos0b1 4 ~p2_pos0b2 >= 15
+line 342:     proofgoal 491
+  ConstraintId 493: 1 ~p1_pos0b0 2 ~p1_pos0b1 4 ~p1_pos0b2 1 p2_pos0b0 2 p2_pos0b1 4 p2_pos0b2 >= 7
+line 343:     p 492 f19 w
+  ConstraintId 494: 1 p1_pos0b0 2 p1_pos0b1 4 p1_pos0b2 1 ~p2_pos0b0 2 ~p2_pos0b1 4 ~p2_pos0b2 >= 7
+line 344:     p 285 313 + s 340 + s 368 + s 387 + s 403 + s 451 + s 467 + s 483 + s
+  ConstraintId 495: 1 ~p0e0 1 p1e1 1 p1e2 1 p1e3 1 p1e4 1 p1e5 1 p2e1 1 p2e2 1 p2e3 1 p2e4 1 p2e5 1 ~p3e0 1 ~p4e0 1 ~p5e0 >= 5
+line 345:     u 1 ~p2e0 >= 1 ;
+  ConstraintId 496: 1 ~p2e0 >= 1
+line 346:     p 255 313 + s 340 + s 368 + s 387 + s 403 + s 451 + s 467 + s 483 + s
+  ConstraintId 497: 1 ~p0e1 1 p1e0 1 p1e2 1 p1e3 1 p1e4 1 p1e5 1 p2e0 1 p2e2 1 p2e3 1 p2e4 1 p2e5 1 ~p3e1 1 ~p4e1 1 ~p5e1 >= 5
+line 347:     u 1 ~p2e1 >= 1 ;
+  ConstraintId 498: 1 ~p2e1 >= 1
+line 348:     p 255 285 + s 340 + s 368 + s 387 + s 403 + s 451 + s 467 + s 483 + s
+  ConstraintId 499: 1 ~p0e2 1 p1e0 1 p1e1 1 p1e3 1 p1e4 1 p1e5 1 p2e0 1 p2e1 1 p2e3 1 p2e4 1 p2e5 1 ~p3e2 1 ~p4e2 1 ~p5e2 >= 5
+line 349:     u 1 ~p2e2 >= 1 ;
+
+
+
 a = [[
 [1 , 2 , 4 , 3 , 5 , 6 , 7],
 [4 , 5 , 6 , 7],
