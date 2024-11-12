@@ -272,10 +272,10 @@ end
 function invlink(systemlink,succ::Vector{Vector{Int}},nbopb)
     for i in eachindex(systemlink)
         if isassigned(systemlink,i)
-            t = systemlink[i]
-            for k in eachindex(t)
-                j = t[k]
-                if j>0 && (k==length(t)||(t[k+1]!=-2&&t[k+1]!=-3)) # dont put coefficient as id
+            link = systemlink[i]
+            for k in eachindex(link)
+                j = link[k]
+                if isid(link,k,nbopb) 
                     if isassigned(succ,j)
                         push!(succ[j],i+nbopb)
                     else
@@ -286,12 +286,15 @@ function invlink(systemlink,succ::Vector{Vector{Int}},nbopb)
         end
     end
 end
+function isid(link,k,nbopb)                 # dont put mult and div coefficients as id and weakned variables too
+    return link[k]>nbopb && (k==length(link)||(link[k+1] != -2 && link[k+1] != -3))
+end
 function writedel(f,systemlink,i,succ,index,nbopb,dels)
     isdel = false
     link = systemlink[i-nbopb]
     for k in eachindex(link)
         p = link[k]
-        if p>nbopb && (k==length(link)||(link[k+1]!=-2&&link[k+1]!=-3)) && !dels[p] 
+        if isid(link,k,nbopb) && !dels[p] 
             m = maximum(succ[p])
             if m == i
                 if !isdel
@@ -300,6 +303,8 @@ function writedel(f,systemlink,i,succ,index,nbopb,dels)
                 end
                 dels[p] = true
                 write(f,string(index[p]," "))
+                if index[p] == 0
+                    printstyled(string(" index is 0 for ",p," => ",index[p],"\n"); color = :red)                end
             end
         end
     end
@@ -322,13 +327,17 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,
         end
     end
     succ = Vector{Vector{Int}}(undef,length(system))
-    dels = ones(Bool,length(system))
+    dels = zeros(Bool,length(system))
+    for p in prism
+        dels[p].=true # we dont delete red and supproofs because veripb is already doing it
+    end
+    # dels = ones(Bool,length(system)) # uncomment if you dont want deletions.
     invlink(systemlink,succ,nbopb)
+    todel = Vector{Int}()
     open(string(path,"/smol.",file,extention),"w") do f
         write(f,string("pseudo-Boolean proof version ",version,"\n"))
         write(f,string("f ",sum(cone[1:nbopb])," 0\n"))
         for i in nbopb+1:length(system)
-            # if inprism(i,prism) cone[i] = true end
             if cone[i]
                 lastindex += 1
                 index[i] = lastindex
@@ -342,45 +351,50 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,
                 elseif tlink == -2           # pol
                     write(f,writepol(systemlink[i-nbopb],index,varmap))
                     writedel(f,systemlink,i,succ,index,nbopb,dels)
-
-                    # write(f,writeia(eq,i,index,varmap))
-                    # write(f,string("del id ",lastindex,"\n"))
-                    # lastindex += 1
-                    # index[i] = lastindex
                 elseif tlink == -3           # ia
                     write(f,writeia(eq,systemlink[i-nbopb][2],index,varmap))
                     writedel(f,systemlink,i,succ,index,nbopb,dels)
                 elseif tlink == -4           # red alone
                     write(f,writered(eq,varmap,redwitness[i],""))
+                    # writedel(f,systemlink,i,succ,index,nbopb,dels) # since simple red have no antecedants, they cannot trigger deletions ie they cannot be the last successor of a previous eq
+                    dels[i] = true  # we dont delete red statements
                 elseif tlink == -5           # rup in subproof
                     write(f,"    ")
                     write(f,writeu(eq,varmap))
-                    # if length(eq.t)>0 
-                    #     writedel(f,systemlink,i,succ,index,nbopb,dels)
-                    # end
+                    push!(todel,i)
                 elseif tlink == -6           # pol in subproofs
                     write(f,"    ")
                     write(f,writepol(systemlink[i-nbopb],index,varmap))
-                    # writedel(f,systemlink,i,succ,index,nbopb,dels)
+                    push!(todel,i)
                 elseif tlink == -9           # red with begin initial reverse equation (will be followed by subproof)
                     write(f,writered(reverse(eq),varmap,redwitness[i]," ; begin"))
+                    todel = [i]
+                    dels[i] = true  # we dont delete red statements
                 elseif tlink == -7           # red proofgoal #
                     write(f,"    proofgoal #1\n")
                 elseif tlink == -8           # red proofgoal normal
                     write(f,string("    proofgoal ",index[systemlink[i-nbopb][2]],"\n"))
-                elseif tlink == -10          # red proofgoal #
+                    push!(todel,i)
+                elseif tlink == -10          # red proofgoal end
+                    lastindex -= 1
                     write(f,"    end -1\n")
                     next = systemlink[i-nbopb][1]
-                    if next != -7 && next !=8  
+                    if next != -7 && next !=8  # if no more proofgoals, end the subproof
+                        lastindex += 1
                         write(f,"end\n") 
+                        for ii in todel
+                            writedel(f,systemlink,ii,succ,index,nbopb,dels)
+                        end
                     end
-                    # write(f,writeeq(eq,varmap))
                 elseif tlink == -20           # solx
                     write(f,writesol(eq,varmap))
                     dels[i] = true # do not delete sol
-                elseif tlink == -6           # soli
+                # elseif tlink == -6           # soli
                     # write(f,writesol(eq,varmap)) #TODO
                     # dels[i] = true # do not delete sol
+                else
+                    println("ERROR tlink = ",tlink)
+                    lastindex -= 1
                 end
             end
         end
@@ -410,33 +424,37 @@ function writerepartition(path,file,cone,nbopb)
     end
 end
 function writeshortrepartition(path,file,cone,nbopb)
-    open(string(path,"/arepartition"), "a") do f
-        chunk = nbopb ÷ 100
-        proofchunk = (length(cone)-nbopb) ÷ 100
-        write(f,string(file," opb and proof chunks are :",chunk," ",proofchunk,"\n"))
-        s = 0
-        j = 1
-        for i in eachindex(cone)
-            if cone[i] 
-                s += cone[i]
-            end
-            if i-j==chunk
-                if s == 0
-                    write(f,string("."))
-                else
-                    write(f,string(" ",100s÷chunk))
+    if nbopb>100 && length(cone)-nbopb>100
+        open(string(path,"/arepartition"), "a") do f
+            println(nbopb)
+            println(length(cone))
+            chunk = nbopb ÷ 100
+            proofchunk = (length(cone)-nbopb) ÷ 100
+            write(f,string(file," opb and proof chunks are :",chunk," ",proofchunk,"\n"))
+            s = 0
+            j = 1
+            for i in eachindex(cone)
+                if cone[i] 
+                    s += cone[i]
                 end
-                s = 0 
-                j = i
+                if i-j==chunk
+                    if s == 0
+                        write(f,string("."))
+                    else
+                        write(f,string(" ",100s÷chunk))
+                    end
+                    s = 0 
+                    j = i
+                end
+                if i==nbopb
+                    write(f,string(" ",s,"\n"))
+                    chunk = proofchunk
+                    s = 0
+                    j = i
+                end
             end
-            if i==nbopb
-                write(f,string(" ",s,"\n"))
-                chunk = proofchunk
-                s = 0
-                j = i
-            end
+            write(f,string(" ",s,"\n"))
         end
-        write(f,string(" ",s,"\n"))
     end
 end
 function prettybytes(b)
@@ -647,30 +665,29 @@ function readrepartition()
                 st  = split(ss,keepempty=false)
                 cko = parse(Int,st[end-1][2:end])
                 ckp = parse(Int,st[end])
-                ins = string(st[1],' ',cko,' ',ckp)
-                if ckp>10
-                    ss = readline(f)
-                    ss = replace(ss,'.'=>" 0")
-                    st = split(ss,keepempty=false)
-                    removespaces(st)
-                    for i in 1:101
-                        v =  parse(Int,st[i])
-                        t1[i] = v
-                        Σ1[i] +=v
-                    end
-                    nb1 += 1
-                    ss = readline(f)
-                    ss = replace(ss,'.'=>" 0")
-                    st = split(ss,keepempty=false)
-                    removespaces(st)
-                    for i in 1:101
-                        v =  parse(Int,st[i])
-                        t2[i] = v
-                        Σ2[i] +=v
-                    end
-                    nb2 += 1
-                    printrepartition(ins,t1,t2)
+                ins = string(st[1]," (opb chunk size:",cko,") (pbp chunk size:",ckp,')')
+                ss = readline(f)
+                ss = replace(ss,'.'=>" 0")
+                st = split(ss,keepempty=false)
+                # removespaces(st)
+                for i in 1:101
+                    v = cko>0 ? parse(Int,st[i]) : 100
+                    t1[i] = v
+                    Σ1[i] +=v
                 end
+                nb1 += 1
+                ss = readline(f)
+                ss = replace(ss,'.'=>" 0")
+                st = split(ss,keepempty=false)
+                # removespaces(st)
+                for i in 1:101
+                    ckp>0 ? parse(Int,st[i]) : 100
+                    v =  parse(Int,st[i])
+                    t2[i] = v
+                    Σ2[i] +=v
+                end
+                nb2 += 1
+                printrepartition(ins,t1,t2)
             end
         end
     end
@@ -702,7 +719,7 @@ function printcone(cone,nbopb)
     println()
 end
 function printorder(file,cone,invsys,varmap)
-    n = 30
+    n = 30 # limit the number of most used var
     # varocc = [length(i) for i in invsys] # order from var usage
     # p = sortperm(varocc,rev=true)
     # for i in 1:min(n,length(varmap))
@@ -711,7 +728,7 @@ function printorder(file,cone,invsys,varmap)
     #     occ = varocc[j]
     #     print(var," ")
     # end
-    println("Var order from usage in cone :")
+    # println("Var order from usage in cone :")
     s = "map<string,int> order { "     
     varocc = [sum(cone[j] for j in i) for i in invsys] # order from var usage in cone
     p = sortperm(varocc,rev=true)
@@ -721,14 +738,14 @@ function printorder(file,cone,invsys,varmap)
         occ = varocc[j]
         s = string(s,"{\"",var,"\",",occ,"}, ")
         if i<n
-            print(var," ")
+            # print(var," ")
         end
     end
     s = s[1:end-2]*"};"
     open(string(proofs,"/cone_var_order_",file,".txt"),"w") do f
         write(f,s)
     end
-    println()
+    # println()
 end
 function printsummit(cone,invsys,varmap)
     max1 = 0
