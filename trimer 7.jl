@@ -572,7 +572,7 @@ function fixredsystemlink(systemlink,prism,nbopb)
     for range in prism
         for i in range
             for j in eachindex(systemlink[i-nbopb])
-                if isid(systemlink[i-nbopb],j,nbopb)
+                if isid(systemlink[i-nbopb],j)
                     push!(systemlink[range.stop-nbopb],systemlink[i-nbopb][j])
                 end
             end
@@ -807,7 +807,9 @@ function runtrimmer(file)
 
     # printcom(file,system,invsys,cone,com) # only works for subgraph solver with additionnals comments.
     # printsummit(cone,invsys,varmap)
-    printorder(file,cone,invsys,varmap)
+    varocc = printorder(file,cone,invsys,varmap)
+    ciaranshow(proofs,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
+
     if file[1:3]=="bio"
         vcone = varcone(system,cone,varmap)
         patcone,tarcone = patterntargetcone(vcone,varmap)

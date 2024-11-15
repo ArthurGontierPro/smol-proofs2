@@ -1711,3 +1711,13 @@ succ = [[],[7],[5,6],[5,7],[6]]
 
 =#
 
+#= CHUFFED EVENTS ENCODINGS
+
+EVENT_C = 1,		// Any change in the domain of the variable
+EVENT_L = 2,		// Lower bound change of the variable
+EVENT_U = 4,		// Upper bound change of the variable
+EVENT_F = 8,		// When the variable is fixed
+EVENT_LU = 6,		// Lower and upper bound change of the variable
+EVENT_LF = 10,		// Lower bound change and fixation of the variable
+EVENT_UF = 12		// Upper bound change and fixation of the variable
+=#
