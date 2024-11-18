@@ -277,7 +277,9 @@ function invlink(systemlink,succ::Vector{Vector{Int}},nbopb)
                 j = link[k]
                 if isid(link,k) 
                     if isassigned(succ,j)
-                        push!(succ[j],i+nbopb)
+                        if !(i+nbopb in succ[j])
+                            push!(succ[j],i+nbopb)
+                        end
                     else
                         succ[j] = [i+nbopb]
                     end
@@ -427,8 +429,6 @@ end
 function writeshortrepartition(path,file,cone,nbopb)
     if nbopb>100 && length(cone)-nbopb>100
         open(string(path,"/arepartition"), "a") do f
-            println(nbopb)
-            println(length(cone))
             chunk = nbopb ÷ 100
             proofchunk = (length(cone)-nbopb) ÷ 100
             write(f,string(file," opb and proof chunks are :",chunk," ",proofchunk,"\n"))
@@ -942,23 +942,23 @@ end
 
 # reprint the proof with colors for ciaran
 function printpred(i,link,nbpred,maxpred,index,nbopb)
-    s = string( "\\tr{",round(nbpred[i-nbopb]/maxpred,digits = 3),"}{Pred (",nbpred[i-nbopb],") ")
+    s = string( "<span style=\"color: rgb(",Int(round(255*nbpred[i-nbopb]/maxpred)),",0,0)\">Pred (",nbpred[i-nbopb],") ")
     for k in eachindex(link)
         if isid(link,k)
-            s = string(s,index[link[k]]," ")
+            s = string(s,lid(index[link[k]]))
         end
     end
-    return string(s,"}\n")
+    return string(s,"</span>\n")
 end
 function printsucc(i,succ,nbsucc,maxsucc,index)
-    s = string( "\\tv{",round(nbsucc[i]/maxsucc,digits = 3),"}{Succ (",nbsucc[i],") ")
+    s = string( "<span style=\"color: rgb(0,",Int(round(200*nbsucc[i]/maxsucc)),",0)\">Succ (",nbsucc[i],") ")
     for j in succ
-        s = string(s,index[j]," ")
+        s = string(s,lid(index[j]))
     end
-    return string(s,"}\n")
+    return string(s,"</span>\n")
 end
 function writelitcolor(l,varmap,varocc,m,r)
-    return string(l.coef," ",if l.sign "" else "~" end, "\\tc{",round((varocc[l.var]-m)/r,digits = 3),"}{",varmap[l.var],"}")
+    return string(l.coef," ",if l.sign "" else "~" end, "<span style=\"color: rgb(",Int(round(255*(varocc[l.var]-m)/r)),",0,255)\">",varmap[l.var],"</span>")
 end
 function writeeqcolor(e,varmap,varocc,m,r)
     s = ""
@@ -966,6 +966,29 @@ function writeeqcolor(e,varmap,varocc,m,r)
         s = string(s,writelitcolor(l,varmap,varocc,m,r)," ")
     end
     return string(s,">= ",e.b," ;\n")
+end
+function writedelcolor(f,systemlink,i,succ,index,nbopb,dels)
+    isdel = false
+    link = systemlink[i-nbopb]
+    for k in eachindex(link)
+        p = link[k]
+        if isid(link,k) && !dels[p] 
+            m = maximum(succ[p])
+            if m == i
+                if !isdel
+                    write(f,string("del id "))
+                    isdel = true
+                end
+                dels[p] = true
+                write(f,lid(index[p]))
+                if index[p] == 0
+                    printstyled(string(" index is 0 for ",p," => ",index[p],"\n"); color = :red)                end
+            end
+        end
+    end
+    if isdel
+        write(f,string("\n"))
+    end
 end
 function makelinefit(len,s)
     if length(s)<len
@@ -990,6 +1013,27 @@ function findallindexfirst(index,cone)
         end
     end
 end
+function wid(i)
+    return string("<span id=\"",i,"\">Id ",i,"</span> ")
+end
+function lid(i)
+    return string("<a href=\"#",i,"\">",i,"</a> ")
+end
+function writeredcolor(e,varmap,witness,beg,varocc,m,r)
+    s = "red "
+    for l in e.t
+        s = string(s,writelitcolor(l,varmap,varocc,m,r)," ")
+    end
+    s = string(s,">= ",e.b," ;")
+    for l in witness.w
+        if l.var>0
+            s = string(s,if !l.sign " ~" else " " end, "<span style=\"color: rgb(",Int(round(255*(varocc[l.var]-m)/r)),",0,255)\">",varmap[l.var],"</span>")
+        else
+            s = string(s," ",-l.var)
+        end
+    end
+    return string(s,beg,"\n")
+end
 function ciaranshow(path,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
     succ = Vector{Vector{Int}}(undef,length(system))
     dels = zeros(Bool,length(system))
@@ -1005,90 +1049,108 @@ function ciaranshow(path,file,version,system,cone,systemlink,redwitness,nbopb,va
     maxsucc = maximum(nbsucc)
     nbpred = [sum(Int(isid(link,k)) for k in eachindex(link)) for link in systemlink]
     maxpred = maximum(nbpred)
-    len = 200
     ID = [i for i in eachindex(cone)]
     m = minimum(varocc)
     r = maximum(varocc) - m
     index = zeros(Int,length(system))
     lastindex = 0
     findallindexfirst(index,cone)
-    open(string(proofs,"/ciaran_show_",file,".opb.tex"),"w") do f
-        write(f,"\\documentclass[varwidth=20cm,margin=1cm]{standalone}\n\\usepackage{fancyvrb}\n\\usepackage{xcolor}\n")
-        write(f,"\\newcommand{\\tc}[2]{\\textcolor[rgb]{#1,0,1}{#2}}\n\\newcommand{\\tb}[2]{\\textcolor[rgb]{0,#1,1}{#2}}\n\\newcommand{\\tr}[2]{\\textcolor[rgb]{#1,0,0}{#2}}\n\\newcommand{\\tv}[2]{\\textcolor[rgb]{0,#1,0}{#2}}\n")
-        write(f,"\\begin{document}\n\\begin{Verbatim}[commandchars=\\\\\\{\\}]\n")
-        write(f,"======================   ",file,".opb   ======================\n")
+    open(string(proofs,"/ciaran_show_",file,".html"),"w") do f
+        write(f,"<html><head><style> a {color: inherit;text-decoration: none;}</style></head><body style=\"font-family: Courier, monospace; background-color:#a9a9a9 \"><pre>\n")
+        write(f,"======================   ",file,".opb   ======================   <a href=\"#pbp\" style=\"color: blue;\">Go to pbp</a>\n")
         write(f,obj)
         for i in 1:nbopb
             eq = system[i]
             if cone[i]
                 lastindex += 1
-                write(f,makelinefit(len,string("Id ",lastindex," ",writeeqcolor(eq,varmap,varocc,m,r))))
-                # write(f,printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nblinks))
-                write(f,makelinefit(len,printsucc(i,succ[i],nbsucc,maxsucc,index)))
+                write(f,string(wid(lastindex),writeeqcolor(eq,varmap,varocc,m,r)))
+                write(f,printsucc(i,succ[i],nbsucc,maxsucc,index))
             else
-                write(f,makelinefit(len,writeeq(eq,varmap)))
+                write(f,writeeq(eq,varmap))
             end
         end
-        write(f,"======================   ",file,".pbp   ======================\n")
+        write(f,"<span id=\"pbp\">======================   ",file,".pbp   ======================</span>\n")
         for i in nbopb+1:length(system)
             eq = system[i]
             tlink = systemlink[i-nbopb][1]
             if cone[i]
                 lastindex += 1
                 if tlink == -1               # rup
-                    write(f,makelinefit(len,string("Id ",lastindex," u ",writeeqcolor(eq,varmap,varocc,m,r))))
-                    write(f,makelinefit(len,printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb)))
+                    write(f,string(wid(lastindex)," u ",writeeqcolor(eq,varmap,varocc,m,r)))
+                    write(f,printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
                     if length(eq.t)>0 
-                        write(f,makelinefit(len,printsucc(i,succ[i],nbsucc,maxsucc,index)))
-                        writedel(f,systemlink,i,succ,index,nbopb,dels)
+                        write(f,printsucc(i,succ[i],nbsucc,maxsucc,index))
+                        writedelcolor(f,systemlink,i,succ,index,nbopb,dels)
                     end
-                # elseif tlink == -2           # pol
-                #     write(f,writepol(systemlink[i-nbopb],index,varmap))
-                #     writedel(f,systemlink,i,succ,index,nbopb,dels)
-                # elseif tlink == -3           # ia
-                #     write(f,writeia(eq,systemlink[i-nbopb][2],index,varmap))
-                #     writedel(f,systemlink,i,succ,index,nbopb,dels)
-                # elseif tlink == -4           # red alone
-                #     write(f,writered(eq,varmap,redwitness[i],""))
-                #     # writedel(f,systemlink,i,succ,index,nbopb,dels) # since simple red have no antecedants, they cannot trigger deletions ie they cannot be the last successor of a previous eq
-                #     dels[i] = true  # we dont delete red statements
-                # elseif tlink == -5           # rup in subproof
-                #     write(f,"    ")
-                #     write(f,writeu(eq,varmap))
-                #     push!(todel,i)
-                # elseif tlink == -6           # pol in subproofs
-                #     write(f,"    ")
-                #     write(f,writepol(systemlink[i-nbopb],index,varmap))
-                #     push!(todel,i)
-                # elseif tlink == -9           # red with begin initial reverse equation (will be followed by subproof)
-                #     write(f,writered(reverse(eq),varmap,redwitness[i]," ; begin"))
-                #     todel = [i]
-                #     dels[i] = true  # we dont delete red statements
-                # elseif tlink == -7           # red proofgoal #
-                #     write(f,"    proofgoal #1\n")
-                # elseif tlink == -8           # red proofgoal normal
-                #     write(f,string("    proofgoal ",index[systemlink[i-nbopb][2]],"\n"))
-                #     push!(todel,i)
-                # elseif tlink == -10          # red proofgoal end
-                #     lastindex -= 1
-                #     write(f,"    end -1\n")
-                #     next = systemlink[i-nbopb][1]
-                #     if next != -7 && next !=8  # if no more proofgoals, end the subproof
-                #         lastindex += 1
-                #         write(f,"end\n") 
-                #         for ii in todel
-                #             writedel(f,systemlink,ii,succ,index,nbopb,dels)
-                #         end
-                #     end
-                # elseif tlink == -20           # solx
-                #     write(f,writesol(eq,varmap))
-                #     dels[i] = true # do not delete sol
-                # # elseif tlink == -6           # soli
-                #     # write(f,writesol(eq,varmap)) #TODO
-                #     # dels[i] = true # do not delete sol
-                # else
-                #     println("ERROR tlink = ",tlink)
-                #     lastindex -= 1
+                elseif tlink == -2           # pol
+                    write(f,string(wid(lastindex),writepol(systemlink[i-nbopb],index,varmap)))
+                    write(f,writeeqcolor(eq,varmap,varocc,m,r))
+                    write(f,printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
+                    write(f,printsucc(i,succ[i],nbsucc,maxsucc,index))
+                    writedelcolor(f,systemlink,i,succ,index,nbopb,dels)
+                elseif tlink == -3           # ia
+                    write(f,string(wid(lastindex)," ia ",writeeqcolor(e,varmap,varocc,m,r)[1:end-1]," ",lid(index[systemlink[i-nbopb][2]]),"\n"))
+                    write(f,printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
+                    write(f,printsucc(i,succ[i],nbsucc,maxsucc,index))
+                    writedelcolor(f,systemlink,i,succ,index,nbopb,dels)
+                elseif tlink == -4           # red alone
+                    write(f,string(wid(lastindex),writeredcolor(eq,varmap,redwitness[i],"",varocc,m,r)))
+                    write(f,printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
+                    write(f,printsucc(i,succ[i],nbsucc,maxsucc,index))
+                    # writedel(f,systemlink,i,succ,index,nbopb,dels) # since simple red have no antecedants, they cannot trigger deletions ie they cannot be the last successor of a previous eq
+                    dels[i] = true  # we dont delete red statements
+                elseif tlink == -5           # rup in subproof
+                    write(f,"    ")
+                    write(f,string(wid(lastindex)," u ",writeeqcolor(eq,varmap,varocc,m,r)))
+                    write(f,"    ",printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
+                    if isassigned(succ,i) write(f,"    ",printsucc(i,succ[i],nbsucc,maxsucc,index))
+                    else write(f,"    Succ (0)\n") end
+                    push!(todel,i)
+                elseif tlink == -6           # pol in subproofs
+                    write(f,"    ")
+                    write(f,string(wid(lastindex),writepol(systemlink[i-nbopb],index,varmap)))
+                    write(f,"    ",writeeqcolor(eq,varmap,varocc,m,r))
+                    write(f,"    ",printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
+                    if isassigned(succ,i) write(f,"    ",printsucc(i,succ[i],nbsucc,maxsucc,index))
+                    else write(f,"    Succ (0)\n") end
+                    push!(todel,i)
+                elseif tlink == -9           # red with begin initial reverse equation (will be followed by subproof)
+                    write(f,string(wid(lastindex),writeredcolor(reverse(eq),varmap,redwitness[i]," ; begin",varocc,m,r)))
+                    write(f,"    ",printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
+                    write(f,"    ",printsucc(i,succ[i],nbsucc,maxsucc,index))
+                    todel = [i]
+                    dels[i] = true  # we dont delete red statements
+                elseif tlink == -7           # red proofgoal #
+                    write(f,"    ",wid(lastindex),"proofgoal #1\n")
+                    write(f,"    ",writeeqcolor(eq,varmap,varocc,m,r))
+                    write(f,"    ",printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
+                    write(f,"    ",printsucc(i,succ[i],nbsucc,maxsucc,index))
+                elseif tlink == -8           # red proofgoal normal
+                    write(f,string("    ",wid(lastindex),"proofgoal ",lid(index[systemlink[i-nbopb][2]]),"\n"))
+                    write(f,"    ",writeeqcolor(eq,varmap,varocc,m,r))
+                    write(f,"    ",printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
+                    if isassigned(succ,i) write(f,"    ",printsucc(i,succ[i],nbsucc,maxsucc,index)) end
+                    push!(todel,i)
+                elseif tlink == -10          # red proofgoal end
+                    lastindex -= 1
+                    write(f,"    end -1\n")
+                    next = systemlink[i-nbopb][1]
+                    if next != -7 && next !=8  # if no more proofgoals, end the subproof
+                        lastindex += 1
+                        write(f,"end\n") 
+                        for ii in todel
+                            writedelcolor(f,systemlink,ii,succ,index,nbopb,dels)
+                        end
+                    end
+                elseif tlink == -20           # solx
+                    write(f,string(wid(lastindex),writesol(eq,varmap)))
+                    dels[i] = true # do not delete sol
+                # elseif tlink == -6           # soli
+                    # write(f,writesol(eq,varmap)) #TODO
+                    # dels[i] = true # do not delete sol
+                else
+                    println("ERROR tlink = ",tlink)
+                    lastindex -= 1
                 end
             else
                 if tlink == -1               # rup
@@ -1124,7 +1186,7 @@ function ciaranshow(path,file,version,system,cone,systemlink,redwitness,nbopb,va
                 end
             end
         end
-        write(f,"\\end{Verbatim}\n\\end{document}")
+        write(f,"</pre></body></html>")
     end
 end
 # end

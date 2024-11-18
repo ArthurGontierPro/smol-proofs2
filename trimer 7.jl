@@ -572,11 +572,12 @@ function fixredsystemlink(systemlink,prism,nbopb)
     for range in prism
         for i in range
             for j in eachindex(systemlink[i-nbopb])
-                if isid(systemlink[i-nbopb],j)
-                    push!(systemlink[range.stop-nbopb],systemlink[i-nbopb][j])
+                if isid(systemlink[i-nbopb],j) && !(systemlink[i-nbopb][j] in systemlink[range.start-nbopb])
+                    push!(systemlink[range.start-nbopb],systemlink[i-nbopb][j])
                 end
             end
         end
+        sort!(systemlink[range.start-nbopb])
     end
 end
 function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness)
@@ -804,12 +805,10 @@ function runtrimmer(file)
     twc = @elapsed begin
         writeconedel(proofs,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion,obj,prism)
     end
-
     # printcom(file,system,invsys,cone,com) # only works for subgraph solver with additionnals comments.
     # printsummit(cone,invsys,varmap)
     varocc = printorder(file,cone,invsys,varmap)
     ciaranshow(proofs,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
-
     if file[1:3]=="bio"
         vcone = varcone(system,cone,varmap)
         patcone,tarcone = patterntargetcone(vcone,varmap)
@@ -875,7 +874,7 @@ function main()
 
     println(list)
     p = sortperm(stats)
-    for i in 1:length(stats) 
+    for i in 30:30#length(stats) 
     # for i in 1:length(stats) if !(i in [23]) # small | 23 ia ID missing
     # for i in 1:length(stats) if !(i in [0]) # medium
         print(i,' ')
@@ -883,7 +882,7 @@ function main()
         printstyled(ins,"\n"; color = :yellow)
         runtrimmer(ins)
     end
-    readrepartition()
+    # readrepartition()
 
 end
 
