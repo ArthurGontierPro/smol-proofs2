@@ -629,7 +629,11 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness)
                     fixfront(front,antecedants)
                 elseif tlink == -10                 # (end of subproof)
                     red = redwitness[i]
-                    front[red.range] .= true
+                    front[red.range.start] = true
+                    for subr in red.pgranges
+                        front[subr.start] = true
+                        front[subr.stop] = true
+                    end
                 elseif tlink == -5                  # subproof rup
                     subran = findfirst(x->i in x,red.pgranges)
                     antecedants .=false ; assi.=0
