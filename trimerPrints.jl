@@ -334,7 +334,7 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,
     for p in prism
         dels[p].=true # we dont delete red and supproofs because veripb is already doing it
     end
-    # dels = ones(Bool,length(system)) # uncomment if you dont want deletions.
+    dels = ones(Bool,length(system)) # uncomment if you dont want deletions.
     invlink(systemlink,succ,cone,nbopb)
     todel = Vector{Int}()
     open(string(path,"/smol.",file,extention),"w") do f

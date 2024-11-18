@@ -572,8 +572,9 @@ function fixredsystemlink(systemlink,prism,nbopb)
     for range in prism
         for i in range
             for j in eachindex(systemlink[i-nbopb])
-                if isid(systemlink[i-nbopb],j) && !(systemlink[i-nbopb][j] in systemlink[range.start-nbopb])
-                    push!(systemlink[range.start-nbopb],systemlink[i-nbopb][j])
+                k = systemlink[i-nbopb][j]
+                if isid(systemlink[i-nbopb],j) && !(k in systemlink[range.start-nbopb]) && k<range.start-nbopb
+                    push!(systemlink[range.start-nbopb],k)
                 end
             end
         end
@@ -880,7 +881,7 @@ function main()
 
     println(list)
     p = sortperm(stats)
-    for i in 30:30#length(stats) 
+    for i in 21:21#length(stats) 
     # for i in 1:length(stats) if !(i in [23]) # small | 23 ia ID missing
     # for i in 1:length(stats) if !(i in [0]) # medium
         print(i,' ')
