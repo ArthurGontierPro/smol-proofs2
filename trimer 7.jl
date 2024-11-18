@@ -606,22 +606,23 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness)
     while true in front
         i = findlast(front)
         front[i] = false
-        if !cone[i] 
+        if !cone[i]
             cone[i] = true
             if i>nbopb
                 tlink = systemlink[i-nbopb][1]
                 if tlink == -1                      # u statement 
                     antecedants .=false ; assi.=0
                     if rup(system,invsys,antecedants,i,assi,front,cone,prism,0:0)
+                        antecedants[i] = false
                         append!(systemlink[i-nbopb],findall(antecedants))
-                        fixfront(front,antecedants) 
-                    else 
+                        fixfront(front,antecedants)
+                    else
                         println("\n",i," s=",slack(reverse(system[i]),assi))
                         println(writepol(systemlink[i-1-nbopb],[i for i in eachindex(system)],varmap))
                         println(writeeq(system[i-1],varmap))
                         println(writeeq(system[i],varmap))
                         printstyled(" rup failed \n"; color = :red)
-                        return cone 
+                        return cone
                     end
                 elseif tlink >= -3                  # pol and ia statements
                     antecedants .= false
@@ -638,6 +639,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness)
                     subran = findfirst(x->i in x,red.pgranges)
                     antecedants .=false ; assi.=0
                     if rup(system,invsys,antecedants,i,assi,front,cone,prism,red.pgranges[subran])
+                        antecedants[i] = false
                         append!(systemlink[i-nbopb],findall(antecedants))
                         fixfront(front,antecedants) 
                     else printstyled(" subproof rup failed \n"; color = :red)

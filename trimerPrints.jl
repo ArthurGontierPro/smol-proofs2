@@ -269,13 +269,13 @@ function writepol(link,index,varmap)
     end
     return string(s,"\n")
 end
-function invlink(systemlink,succ::Vector{Vector{Int}},nbopb)
+function invlink(systemlink,succ::Vector{Vector{Int}},cone,nbopb)
     for i in eachindex(systemlink)
         if isassigned(systemlink,i)
             link = systemlink[i]
             for k in eachindex(link)
                 j = link[k]
-                if isid(link,k) 
+                if isid(link,k) && cone[i+nbopb]
                     if isassigned(succ,j)
                         if !(i+nbopb in succ[j])
                             push!(succ[j],i+nbopb)
@@ -335,7 +335,7 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,
         dels[p].=true # we dont delete red and supproofs because veripb is already doing it
     end
     # dels = ones(Bool,length(system)) # uncomment if you dont want deletions.
-    invlink(systemlink,succ,nbopb)
+    invlink(systemlink,succ,cone,nbopb)
     todel = Vector{Int}()
     open(string(path,"/smol.",file,extention),"w") do f
         write(f,string("pseudo-Boolean proof version ",version,"\n"))
@@ -942,7 +942,7 @@ end
 
 # reprint the proof with colors for ciaran
 function printpred(i,link,nbpred,maxpred,index,nbopb)
-    s = string( "<span style=\"color: rgb(",Int(round(255*nbpred[i-nbopb]/maxpred)),",0,0)\">Pred (",nbpred[i-nbopb],") ")
+    s = string( "<span style=\"color: rgb(",Int(round(200*nbpred[i-nbopb]/maxpred))+55,",0,0)\">Pred (",nbpred[i-nbopb],") ")
     for k in eachindex(link)
         if isid(link,k)
             s = string(s,lid(index[link[k]]))
@@ -951,7 +951,7 @@ function printpred(i,link,nbpred,maxpred,index,nbopb)
     return string(s,"</span>\n")
 end
 function printsucc(i,succ,nbsucc,maxsucc,index)
-    s = string( "<span style=\"color: rgb(0,",Int(round(200*nbsucc[i]/maxsucc)),",0)\">Succ (",nbsucc[i],") ")
+    s = string( "<span style=\"color: rgb(0,",Int(round(150*nbsucc[i]/maxsucc))+55,",0)\">Succ (",nbsucc[i],") ")
     for j in succ
         s = string(s,lid(index[j]))
     end
@@ -1014,7 +1014,7 @@ function findallindexfirst(index,cone)
     end
 end
 function wid(i)
-    return string("<span id=\"",i,"\">Id ",i,"</span> ")
+    return string("<span style=\"background-color: rgb(160,160,0)\" id=\"",i,"\">Id ",i,"</span> ")
 end
 function lid(i)
     return string("<a href=\"#",i,"\">",i,"</a> ")
@@ -1042,7 +1042,7 @@ function ciaranshow(path,file,version,system,cone,systemlink,redwitness,nbopb,va
         dels[p].=true # we dont delete red and supproofs because veripb is already doing it
     end
     # dels = ones(Bool,length(system)) # uncomment if you dont want deletions.
-    invlink(systemlink,succ,nbopb)
+    invlink(systemlink,succ,cone,nbopb)
     todel = Vector{Int}()
 
     nbsucc = [if isassigned(succ,i) length(succ[i]) else 0 end for i in eachindex(succ)]
@@ -1076,7 +1076,7 @@ function ciaranshow(path,file,version,system,cone,systemlink,redwitness,nbopb,va
             if cone[i]
                 lastindex += 1
                 if tlink == -1               # rup
-                    write(f,string(wid(lastindex)," u ",writeeqcolor(eq,varmap,varocc,m,r)))
+                    write(f,string(wid(lastindex),"u ",writeeqcolor(eq,varmap,varocc,m,r)))
                     write(f,printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
                     if length(eq.t)>0 
                         write(f,printsucc(i,succ[i],nbsucc,maxsucc,index))
@@ -1089,7 +1089,7 @@ function ciaranshow(path,file,version,system,cone,systemlink,redwitness,nbopb,va
                     write(f,printsucc(i,succ[i],nbsucc,maxsucc,index))
                     writedelcolor(f,systemlink,i,succ,index,nbopb,dels)
                 elseif tlink == -3           # ia
-                    write(f,string(wid(lastindex)," ia ",writeeqcolor(e,varmap,varocc,m,r)[1:end-1]," ",lid(index[systemlink[i-nbopb][2]]),"\n"))
+                    write(f,string(wid(lastindex),"ia ",writeeqcolor(e,varmap,varocc,m,r)[1:end-1]," ",lid(index[systemlink[i-nbopb][2]]),"\n"))
                     write(f,printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
                     write(f,printsucc(i,succ[i],nbsucc,maxsucc,index))
                     writedelcolor(f,systemlink,i,succ,index,nbopb,dels)
@@ -1101,7 +1101,7 @@ function ciaranshow(path,file,version,system,cone,systemlink,redwitness,nbopb,va
                     dels[i] = true  # we dont delete red statements
                 elseif tlink == -5           # rup in subproof
                     write(f,"    ")
-                    write(f,string(wid(lastindex)," u ",writeeqcolor(eq,varmap,varocc,m,r)))
+                    write(f,string(wid(lastindex),"u ",writeeqcolor(eq,varmap,varocc,m,r)))
                     write(f,"    ",printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
                     if isassigned(succ,i) write(f,"    ",printsucc(i,succ[i],nbsucc,maxsucc,index))
                     else write(f,"    Succ (0)\n") end
