@@ -568,13 +568,15 @@ function fixfront(front::Vector{Bool},antecedants::Vector{Int})
         end
     end
 end
-function fixredsystemlink(systemlink,prism,nbopb)
+function fixredsystemlink(systemlink,cone,prism,nbopb)
     for range in prism
         for i in range
-            for j in eachindex(systemlink[i-nbopb])
-                k = systemlink[i-nbopb][j]
-                if isid(systemlink[i-nbopb],j) && !(k in systemlink[range.start-nbopb]) && k<range.start-nbopb
-                    push!(systemlink[range.start-nbopb],k)
+            if cone[i]
+                for j in eachindex(systemlink[i-nbopb])
+                    k = systemlink[i-nbopb][j]
+                    if isid(systemlink[i-nbopb],j) && !(k in systemlink[range.start-nbopb]) && k<range.start-nbopb
+                        push!(systemlink[range.start-nbopb],k)
+                    end
                 end
             end
         end
@@ -654,7 +656,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness)
             end
         end
     end
-    fixredsystemlink(systemlink,prism,nbopb)
+    fixredsystemlink(systemlink,cone,prism,nbopb)
     return cone
 end
 function addinvsys(invsys,eq,id)
@@ -855,8 +857,8 @@ end
 # const benchs = "veriPB/newSIPbenchmarks"
 # const solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
 # const proofs = "veriPB/proofs"    
-const proofs = "veriPB/proofs/small"    
-# const proofs = "veriPB/proofs/medium"    
+# const proofs = "veriPB/proofs/small"    
+const proofs = "veriPB/proofs/medium"    
 # const proofs = "veriPB/proofs/big"    
 # const proofs = "veriPB/prooframdisk"    
 # const benchs = "newSIPbenchmarks"
@@ -881,7 +883,7 @@ function main()
 
     println(list)
     p = sortperm(stats)
-    for i in 21:21#length(stats) 
+    for i in 1:length(stats) 
     # for i in 1:length(stats) if !(i in [23]) # small | 23 ia ID missing
     # for i in 1:length(stats) if !(i in [0]) # medium
         print(i,' ')

@@ -334,7 +334,7 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,
     for p in prism
         dels[p].=true # we dont delete red and supproofs because veripb is already doing it
     end
-    dels = ones(Bool,length(system)) # uncomment if you dont want deletions.
+    # dels = ones(Bool,length(system)) # uncomment if you dont want deletions.
     invlink(systemlink,succ,cone,nbopb)
     todel = Vector{Int}()
     open(string(path,"/smol.",file,extention),"w") do f
@@ -942,13 +942,17 @@ end
 
 # reprint the proof with colors for ciaran
 function printpred(i,link,nbpred,maxpred,index,nbopb)
-    s = string( "<span style=\"color: rgb(",Int(round(200*nbpred[i-nbopb]/maxpred))+55,",0,0)\">Pred (",nbpred[i-nbopb],") ")
-    for k in eachindex(link)
-        if isid(link,k)
-            s = string(s,lid(index[link[k]]))
+    if length(link)<=1
+        return ""
+    else
+        s = string( "<span style=\"color: rgb(",Int(round(200*nbpred[i-nbopb]/maxpred))+55,",0,0)\">Pred (",nbpred[i-nbopb],") ")
+        for k in eachindex(link)
+            if isid(link,k)
+                s = string(s,lid(index[link[k]]))
+            end
         end
+        return string(s,"</span>\n")
     end
-    return string(s,"</span>\n")
 end
 function printsucc(i,succ,nbsucc,maxsucc,index)
     s = string( "<span style=\"color: rgb(0,",Int(round(150*nbsucc[i]/maxsucc))+55,",0)\">Succ (",nbsucc[i],") ")
@@ -1103,21 +1107,19 @@ function ciaranshow(path,file,version,system,cone,systemlink,redwitness,nbopb,va
                     write(f,"    ")
                     write(f,string(wid(lastindex),"u ",writeeqcolor(eq,varmap,varocc,m,r)))
                     write(f,"    ",printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
-                    if isassigned(succ,i) write(f,"    ",printsucc(i,succ[i],nbsucc,maxsucc,index))
-                    else write(f,"    Succ (0)\n") end
+                    if isassigned(succ,i) write(f,"    ",printsucc(i,succ[i],nbsucc,maxsucc,index)) end
                     push!(todel,i)
                 elseif tlink == -6           # pol in subproofs
                     write(f,"    ")
                     write(f,string(wid(lastindex),writepol(systemlink[i-nbopb],index,varmap)))
                     write(f,"    ",writeeqcolor(eq,varmap,varocc,m,r))
                     write(f,"    ",printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
-                    if isassigned(succ,i) write(f,"    ",printsucc(i,succ[i],nbsucc,maxsucc,index))
-                    else write(f,"    Succ (0)\n") end
+                    if isassigned(succ,i) write(f,"    ",printsucc(i,succ[i],nbsucc,maxsucc,index)) end
                     push!(todel,i)
                 elseif tlink == -9           # red with begin initial reverse equation (will be followed by subproof)
                     write(f,string(wid(lastindex),writeredcolor(reverse(eq),varmap,redwitness[i]," ; begin",varocc,m,r)))
                     write(f,"    ",printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
-                    write(f,"    ",printsucc(i,succ[i],nbsucc,maxsucc,index))
+                    if isassigned(succ,i) write(f,"    ",printsucc(i,succ[i],nbsucc,maxsucc,index)) end
                     todel = [i]
                     dels[i] = true  # we dont delete red statements
                 elseif tlink == -7           # red proofgoal #
