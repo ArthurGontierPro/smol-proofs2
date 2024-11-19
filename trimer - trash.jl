@@ -1721,3 +1721,5 @@ EVENT_LU = 6,		// Lower and upper bound change of the variable
 EVENT_LF = 10,		// Lower bound change and fixation of the variable
 EVENT_UF = 12		// Upper bound change and fixation of the variable
 =#
+
+~a=1-a

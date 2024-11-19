@@ -1,6 +1,5 @@
 # using Profile,DataStructures,Graphs,GraphPlot,Compose,Cairo
 # using StatProfilerHTML
-~a=1-a
 mutable struct Lit
     coef::Int
     sign::Bool
@@ -11,7 +10,7 @@ mutable struct Eq
     b::Int
 end
 mutable struct Red
-    w::Vector{Lit}
+    w::Vector{Lit}                      # each odd is the variable and each next even is tha target (lit(0,0,-1) means constant 1 and 0 means constant 0)
     range::UnitRange{Int64}
     pgranges::Vector{UnitRange{Int64}}
 end
@@ -372,7 +371,7 @@ function applywitness(eq,w) # je supppose que les literaux opposes ne s.influenc
 end
 function readsubproof(system,systemlink,eq,w,c,f,varmap)
     # notations : 
-    # proofgoal i est la i eme contrainte de la formule F /\ ~C /\ ~Ciw
+    # proofgoal i est la i eme contrainte de la formule F /\ ~C /\` ~`Ciw
     # proofgoal #i est la i eme contrainte de la subproof ?
     # -1 est la contrainte qui est declaree dans le proofgoal. elle est affecte par w
     # -2 est la negation de la contrainte declaree dans le red
@@ -606,53 +605,71 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness)
         append!(systemlink[firstcontradiction-nbopb],findall(front))
     end
     red = Red([],0:0,[]);
-    while true in front
-        i = findlast(front)
-        front[i] = false
-        if !cone[i]
-            cone[i] = true
-            if i>nbopb
-                tlink = systemlink[i-nbopb][1]
-                if tlink == -1                      # u statement 
-                    antecedants .=false ; assi.=0
-                    if rup(system,invsys,antecedants,i,assi,front,cone,prism,0:0)
-                        antecedants[i] = false
-                        append!(systemlink[i-nbopb],findall(antecedants))
+    newpfgl = true
+    pfgl = Vector{UnitRange{Int64}}()
+    while newpfgl # restart if new frontless proofgoals are needed.
+        newpfgl = false
+        while true in front
+            i = findlast(front)
+            front[i] = false
+            if !cone[i]
+                cone[i] = true
+                if i>nbopb
+                    tlink = systemlink[i-nbopb][1]
+                    if tlink == -1                      # u statement 
+                        antecedants .=false ; assi.=0
+                        if rup(system,invsys,antecedants,i,assi,front,cone,prism,0:0)
+                            antecedants[i] = false
+                            append!(systemlink[i-nbopb],findall(antecedants))
+                            fixfront(front,antecedants)
+                        else
+                            println("\n",i," s=",slack(reverse(system[i]),assi))
+                            println(writepol(systemlink[i-1-nbopb],[i for i in eachindex(system)],varmap))
+                            println(writeeq(system[i-1],varmap))
+                            println(writeeq(system[i],varmap))
+                            printstyled(" rup failed \n"; color = :red)
+                            return cone
+                        end
+                    elseif tlink >= -3                  # pol and ia statements
+                        antecedants .= false
+                        fixante(systemlink,antecedants,i-nbopb)
                         fixfront(front,antecedants)
-                    else
-                        println("\n",i," s=",slack(reverse(system[i]),assi))
-                        println(writepol(systemlink[i-1-nbopb],[i for i in eachindex(system)],varmap))
-                        println(writeeq(system[i-1],varmap))
-                        println(writeeq(system[i],varmap))
-                        printstyled(" rup failed \n"; color = :red)
-                        return cone
+                    elseif tlink == -10                 # (end of subproof)
+                        red = redwitness[i]
+                        front[red.range.start] = true
+                        for subr in red.pgranges
+                            if systemlink[subr.start-nbopb] == -8 && !(front[subr.start]||cone[subr.start])
+                                push!(pfgl,subr)
+                            else
+                                front[subr.start] = true
+                                front[subr.stop] = true
+                            end
+                        end
+                    elseif tlink == -5                  # subproof rup
+                        subran = findfirst(x->i in x,red.pgranges)
+                        antecedants .=false ; assi.=0
+                        if rup(system,invsys,antecedants,i,assi,front,cone,prism,red.pgranges[subran])
+                            antecedants[i] = false
+                            append!(systemlink[i-nbopb],findall(antecedants))
+                            fixfront(front,antecedants) 
+                        else printstyled(" subproof rup failed \n"; color = :red)
+                        end
+                    elseif tlink == -6 || tlink == -8   # subproof pol and proofgoal of a previous eq
+                        antecedants .= false
+                        fixante(systemlink,antecedants,i-nbopb)
+                        fixfront(front,antecedants)
+                    elseif tlink == -7
                     end
-                elseif tlink >= -3                  # pol and ia statements
-                    antecedants .= false
-                    fixante(systemlink,antecedants,i-nbopb)
-                    fixfront(front,antecedants)
-                elseif tlink == -10                 # (end of subproof)
-                    red = redwitness[i]
-                    front[red.range.start] = true
-                    for subr in red.pgranges
-                        front[subr.start] = true
-                        front[subr.stop] = true
-                    end
-                elseif tlink == -5                  # subproof rup
-                    subran = findfirst(x->i in x,red.pgranges)
-                    antecedants .=false ; assi.=0
-                    if rup(system,invsys,antecedants,i,assi,front,cone,prism,red.pgranges[subran])
-                        antecedants[i] = false
-                        append!(systemlink[i-nbopb],findall(antecedants))
-                        fixfront(front,antecedants) 
-                    else printstyled(" subproof rup failed \n"; color = :red)
-                    end
-                elseif tlink == -6 || tlink == -8   # subproof pol and proofgoal of a previous eq
-                    antecedants .= false
-                    fixante(systemlink,antecedants,i-nbopb)
-                    fixfront(front,antecedants)
-                elseif tlink == -7
                 end
+            end
+        end
+        for r in pfgl           # we check if any new proofgoal is needed
+            id = systemlink[r.start-nbopb][2]
+            if cone[id] && !cone[r.start]
+                println("restart red at ")
+                printeq(system[r.start])
+                front[r.start] = front[r.stop] = true
+                newpfgl = true
             end
         end
     end
@@ -857,8 +874,8 @@ end
 # const benchs = "veriPB/newSIPbenchmarks"
 # const solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
 # const proofs = "veriPB/proofs"    
-# const proofs = "veriPB/proofs/small"    
-const proofs = "veriPB/proofs/medium"    
+const proofs = "veriPB/proofs/small"    
+# const proofs = "veriPB/proofs/medium"    
 # const proofs = "veriPB/proofs/big"    
 # const proofs = "veriPB/prooframdisk"    
 # const benchs = "newSIPbenchmarks"
