@@ -719,6 +719,7 @@ function printcone(cone,nbopb)
     end
     println()
 end
+function mkdir2(p) if !isdir(p) mkdir(p) end end
 function printorder(file,cone,invsys,varmap)
     n = 30 # limit the number of most used var
     # varocc = [length(i) for i in invsys] # order from var usage
@@ -743,7 +744,9 @@ function printorder(file,cone,invsys,varmap)
         end
     end
     s = s[1:end-2]*"};"
-    open(string(proofs,"/cone_var_order_",file,".txt"),"w") do f
+    dir = string(proofs,"/cone_var_order/")
+    mkdir2(dir)
+    open(string(dir,file,".cc"),"w") do f
         write(f,s)
     end
     # println()
@@ -1038,15 +1041,13 @@ function writeredcolor(e,varmap,witness,beg,varocc,m,r)
     end
     return string(s,beg,"\n")
 end
-function ciaranshow(path,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
-    succ = Vector{Vector{Int}}(undef,length(system))
+function ciaranshow(path,file,version,system,cone,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
     dels = zeros(Bool,length(system))
     dels[1:nbopb].=true
     for p in prism
         dels[p].=true # we dont delete red and supproofs because veripb is already doing it
     end
     # dels = ones(Bool,length(system)) # uncomment if you dont want deletions.
-    invlink(systemlink,succ,cone,nbopb)
     todel = Vector{Int}()
 
     nbsucc = [if isassigned(succ,i) length(succ[i]) else 0 end for i in eachindex(succ)]
@@ -1059,7 +1060,9 @@ function ciaranshow(path,file,version,system,cone,systemlink,redwitness,nbopb,va
     index = zeros(Int,length(system))
     lastindex = 0
     findallindexfirst(index,cone)
-    open(string(proofs,"/ciaran_show_",file,".html"),"w") do f
+    dir = string(proofs,"/ciaran_show/")
+    mkdir2(dir)
+    open(string(dir,file,".html"),"w") do f
         write(f,"<html><head><style> a {color: inherit;text-decoration: none;}</style></head><body style=\"font-family: Courier, monospace; background-color:#a9a9a9 \"><pre>\n")
         write(f,"======================   ",file,".opb   ======================   <a href=\"#pbp\" style=\"color: blue;\">Go to pbp</a>\n")
         write(f,obj)
@@ -1189,6 +1192,27 @@ function ciaranshow(path,file,version,system,cone,systemlink,redwitness,nbopb,va
             end
         end
         write(f,"</pre></body></html>")
+    end
+end
+function conegraphviz(file,cone,systemlink,succ,nbopb)
+    dir = string(proofs,"/cone_graphviz/")
+    mkdir2(dir)
+    open(string(dir,file,".dot"),"w") do f
+        write(f,"digraph G {\n splines=false;\nedge [color=lightgray];\n")
+        for i in findall(cone)
+            if isassigned(succ,i)
+                for j in succ[i]
+                    write(f,string(i,"->",j,";\n"))
+                end
+            end
+        end
+        write(f,"}")
+    end
+    t = @elapsed begin
+        v2 = read(`dot -O -T svg $proofs/cone_graphviz/$file.dot `) 
+    end
+    if t>5
+        println("graph sorted in ",prettytime(t)," s")
     end
 end
 # end
