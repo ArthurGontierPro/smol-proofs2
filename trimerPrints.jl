@@ -1041,7 +1041,7 @@ function writeredcolor(e,varmap,witness,beg,varocc,m,r)
     end
     return string(s,beg,"\n")
 end
-function ciaranshow(path,file,version,system,cone,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
+function ciaranshow(path,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
     dels = zeros(Bool,length(system))
     dels[1:nbopb].=true
     for p in prism
@@ -1049,7 +1049,6 @@ function ciaranshow(path,file,version,system,cone,systemlink,succ,redwitness,nbo
     end
     # dels = ones(Bool,length(system)) # uncomment if you dont want deletions.
     todel = Vector{Int}()
-
     nbsucc = [if isassigned(succ,i) length(succ[i]) else 0 end for i in eachindex(succ)]
     maxsucc = maximum(nbsucc)
     nbpred = [sum(Int(isid(link,k)) for k in eachindex(link)) for link in systemlink]
@@ -1057,9 +1056,7 @@ function ciaranshow(path,file,version,system,cone,systemlink,succ,redwitness,nbo
     ID = [i for i in eachindex(cone)]
     m = minimum(varocc)
     r = maximum(varocc) - m
-    index = zeros(Int,length(system))
     lastindex = 0
-    findallindexfirst(index,cone)
     dir = string(proofs,"/ciaran_show/")
     mkdir2(dir)
     open(string(dir,file,".html"),"w") do f
@@ -1194,7 +1191,7 @@ function ciaranshow(path,file,version,system,cone,systemlink,succ,redwitness,nbo
         write(f,"</pre></body></html>")
     end
 end
-function conegraphviz(file,cone,systemlink,succ,nbopb)
+function conegraphviz(file,cone,index,systemlink,succ,nbopb)
     dir = string(proofs,"/cone_graphviz/")
     mkdir2(dir)
     open(string(dir,file,".dot"),"w") do f
@@ -1202,7 +1199,7 @@ function conegraphviz(file,cone,systemlink,succ,nbopb)
         for i in findall(cone)
             if isassigned(succ,i)
                 for j in succ[i]
-                    write(f,string(i,"->",j,";\n"))
+                    write(f,string(index[i],"->",index[j],";\n"))
                 end
             end
         end
@@ -1215,6 +1212,27 @@ function conegraphviz(file,cone,systemlink,succ,nbopb)
         println("graph sorted in ",prettytime(t)," s")
     end
 end
+function showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
+    n = sum(cone)
+    M = zeros(Bool,n,n)
+    for i in findall(cone)
+        if isassigned(succ,i)
+            for j in succ[i]
+                M[index[i],index[j]] = true
+            end
+        end
+    end
+    for i in 1:n
+        for j in 1:n
+            if M[i,j] print('#') else print(' ') end
+        end
+        println()
+    end
+end
+
+
+
+
 # end
 # letter analysis
 # jakob using resolution proofs to analyze cdcl 2020 cp

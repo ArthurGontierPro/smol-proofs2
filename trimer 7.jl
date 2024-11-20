@@ -836,8 +836,13 @@ function runtrimmer(file)
     varocc = printorder(file,cone,invsys,varmap)
     succ = Vector{Vector{Int}}(undef,length(system))
     invlink(systemlink,succ,cone,nbopb)
-    conegraphviz(file,cone,systemlink,succ,nbopb)
-    ciaranshow(proofs,file,version,system,cone,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
+    index = zeros(Int,length(system)) # map the old indexes to the new ones
+    findallindexfirst(index,cone)
+
+
+    showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
+    # conegraphviz(file,cone,index,systemlink,succ,nbopb)
+    # ciaranshow(proofs,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
     if file[1:3]=="bio"
         vcone = varcone(system,cone,varmap)
         patcone,tarcone = patterntargetcone(vcone,varmap)
