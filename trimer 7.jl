@@ -908,9 +908,10 @@ function main()
 
     println(list)
     p = sortperm(stats)
-    for i in 1:length(stats) 
-    # for i in 1:length(stats) if !(i in [23]) # small | 23 ia ID missing
-    # for i in 1:length(stats) if !(i in [0]) # medium
+    # for i in 4:4#length(stats) 
+    for i in 29:29#length(stats) 
+        # for i in 1:length(stats) if !(i in [23]) # small | 23 ia ID missing
+        # for i in 1:length(stats) if !(i in [0]) # medium
         print(i,' ')
         ins = list[p[i]]
         printstyled(ins,"\n"; color = :yellow)

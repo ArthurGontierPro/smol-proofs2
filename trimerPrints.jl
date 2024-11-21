@@ -1212,7 +1212,26 @@ function conegraphviz(file,cone,index,systemlink,succ,nbopb)
         println("graph sorted in ",prettytime(t)," s")
     end
 end
-function showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
+function writematjs(name,a,n,f)
+    write(f,"const $name = [\n")
+    for i in 1:n
+        write(f,"[")
+        for j in 1:n
+            write(f,string(Int(a[i,j])))
+            if j<n write(f,", ") end
+        end
+        if i<n write(f,"],\n") else write(f,"]];\n") end
+    end
+end
+function distrec(M,i,n,D,rank)
+    for j in 1:n
+        if M[i,j] && D[i,j] > rank
+            D[i,j] = rank
+            distrec(M,j,n,D,rank+1)
+        end
+    end
+end
+function computeMD(file,cone,index,systemlink,succ,nbopb)
     n = sum(cone)
     M = zeros(Bool,n,n)
     for i in findall(cone)
@@ -1222,17 +1241,115 @@ function showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
             end
         end
     end
-    for i in 1:n
-        for j in 1:n
-            if M[i,j] print('#') else print(' ') end
-        end
-        println()
+    D = fill(n+1,(n,n))
+    distrec(M,1,n,D,1)
+    for i in eachindex(D)
+        if D[i]==n+1 D[i] = 0 end
+    end
+    return M,D,n
+end
+function showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
+    M,D,n = computeMD(file,cone,index,systemlink,succ,nbopb)
+    dir = string(proofs,"/cone_mat/")
+    mkdir2(dir)
+    open(string(dir,file,".html"),"w") do f
+        write(f,"<!DOCTYPE html><head>
+  <title> $file </title>
+  <script src=\"https://d3js.org/d3.v7.min.js\"></script>
+  <style>
+    .cell {
+      stroke: #ccc;
+      shape-rendering: crispEdges;
+    }
+    .label {
+      font-size: 14px;
+      font-family: Arial, sans-serif;
+      text-anchor: middle;
+    }
+  </style>
+</head>
+<body>
+  <script>")
+
+    writematjs("matrix",M,n,f)
+    writematjs("dist",D,n,f)
+    max = maximum(D)
+
+    write(f,"const size = 20; // Cell size
+    const n = matrix.length;
+    const max = $max;
+
+    // Create SVG
+    const svg = d3.select(\"body\")
+      .append(\"svg\")
+      .attr(\"width\", n * size+size)
+      .attr(\"height\", n * size+size);
+    let isHighlighted = false; // Track if the matrix is highlighted
+    // Draw cells
+    for (let row = 0; row < n; row++) {
+      for (let col = 0; col < n; col++) {
+        svg.append(\"rect\")
+          .datum({ value: matrix[row][col], row, col }) // Bind data directly
+          .attr(\"class\", \"cell\")
+          .attr(\"x\", col * size+size)
+          .attr(\"y\", row * size+size)
+          .attr(\"width\", size)
+          .attr(\"height\", size)
+          .attr(\"fill\", matrix[row][col] ? \"steelblue\" : \"white\")
+          .on(\"click\", function (event, d) {
+            if (isHighlighted) {
+          // Reset all cells
+          d3.selectAll(\".cell\")
+            .attr(\"fill\", d => d.value ? \"steelblue\" : \"white\");
+          isHighlighted = false; // Unset highlight
+        } else {
+            d3.selectAll(\".cell\")
+              .attr(\"fill\",  cell => {
+                const val = dist[cell.row][cell.col];
+                if (val>0&& cell!=d && d.value>0) {
+                    if (cell.row==row){
+                        return `rgb(0,\${55+val*200/max},0)`;
+                    }else if(cell.col==col) {
+                        return `rgb(\${55+val*200/max},0,0)`;
+                    }else{
+                        return matrix[cell.row][cell.col] ? \"steelblue\" : \"white\"
+                    }
+                }else{
+                        return matrix[cell.row][cell.col] ? \"steelblue\" : \"white\"
+                    }
+              });
+            isHighlighted = true; // Set highlight
+            }
+          });
+      }
+    }
+
+    // Add row labels
+    svg.selectAll(\".row-label\")
+      .data(d3.range(n))
+      .enter()
+      .append(\"text\")
+      .attr(\"class\", \"label\")
+      .attr(\"x\", size/2-2*size/10) // Offset for the label
+      .attr(\"y\", d => d * size + size + 2*size/10 + size / 2)
+      .text(d => d + 1); // Row numbers start from 1
+
+    // Add column labels
+    svg.selectAll(\".col-label\")
+      .data(d3.range(n))
+      .enter()
+      .append(\"text\")
+      .attr(\"class\", \"label\")
+      .attr(\"x\", d => d * size + size + size / 2)
+      .attr(\"y\", 8*size/10) // Offset for the label
+      .text(d => d + 1);
+
+  </script>
+  </body>
+</html>
+")
     end
 end
-
-
-
-
 # end
 # letter analysis
 # jakob using resolution proofs to analyze cdcl 2020 cp
