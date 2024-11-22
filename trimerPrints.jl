@@ -1350,7 +1350,9 @@ function showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
 ")
     end
 end
-# end
+
+
+
 # letter analysis
 # jakob using resolution proofs to analyze cdcl 2020 cp
 # kuldep meel crystalball

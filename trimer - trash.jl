@@ -1723,3 +1723,94 @@ EVENT_UF = 12		// Upper bound change and fixation of the variable
 =#
 
 ~a=1-a
+
+
+
+function updateprioquebitheap(eq,cone,front,que,que2,invsys,s,i,init,assi::Vector{Int8},antecedants)
+    for l in eq.t
+        if l.coef > s && assi[l.var]==0
+            assi[l.var] = l.sign ? 1 : 2
+            antecedants[i] = true
+            for id in invsys[l.var]
+                if id<=init && id!=i
+                    if cone[id] || front[id]
+                        ajoutas(que,id)
+                    else
+                        ajoutas(que2,id)
+                    end
+                end
+            end
+        end
+    end
+end
+function rupheap(system,invsys,antecedants,init,assi,front,cone,prism,subrange)# I am putting back cone and front together because they will both end up in the cone at the end.
+    que = Vector{Int}()             # create an empty min/max binary heap of prioque
+    que2 = Vector{Int}()             # create an empty min/max binary heap of basic que
+    for i in 1:init
+        if front[i] !! cone[i]
+            push!(que,i)
+        else
+            push!(que2,i)
+        end
+    end
+    rev = reverse(system[init])
+    prio = true
+    while length(que)>0 || length(que2)>0
+        i = length(que)>0 ? poptas(que) : poptas(que2)
+        if !inprism(i,prism) || (i in subrange)
+            eq = i==init ? rev : system[i]
+            s = slack(eq,assi)
+            if s<0
+                antecedants[i] = true
+                return true
+            else
+                updateprioquebitheap(eq,cone,front,que,que2,invsys,s,i,init,assi,antecedants)
+            end
+        end
+    end
+    return false
+end
+
+
+function ajoutas(t,e)           # heap implementation with uniqueness
+    push!(t,e)
+    i = length(t)
+    while (p = i>>1) > 0 && e < t[p]
+        t[i] = t[p]
+        i = p
+    end
+    t[i] = e
+end
+function poptas(t)
+    res = t[1]
+    e = pop!(t)
+    if e == res return res end
+    t[1] = e
+    i = 1
+    n = length(t)
+    while (g = i<<1) <= n
+        f = (d = g|1) > n || t[g] < t[d] ? g : d
+        t[f] < e || break
+        t[i] = t[f]
+        i = f
+    end
+    t[i] = e
+    return res
+end
+
+
+# t = Vector{Int}()
+# @time for e in 1600:-2:1
+#     ajoutas(t,e)
+# end
+# @time for e in 3:3:16
+#     ajoutas(t,e)
+# end
+
+# @time for i in 1:length(t)
+#     print(poptas(t),' ')
+# end
+
+
+# 0 & 0 & 426.6 KB & 941.4 KB &   221   & 0.21 & 0.27 &   125   & 0.71 & 0.09 & 1.02 \\\hline # noheap
+# 0 & 0 & 426.6 KB & 941.4 KB &   221   & 0.22 & 0.26 &   121   & 19.7 & 0.04 & 0.98 \\\hline # heap

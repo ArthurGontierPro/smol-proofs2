@@ -800,7 +800,7 @@ function inprism(n,prism)
     end
     return false
 end
-function  availableranges(redwitness)                   # build the prism, a range colections of all the red subproofs
+function availableranges(redwitness)                   # build the prism, a range colections of all the red subproofs
     prism = [a.range for (_,a) in redwitness if a.range!=0:0]
     return prism
 end
@@ -840,7 +840,7 @@ function runtrimmer(file)
     findallindexfirst(index,cone)
 
 
-    showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
+    # showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
     # conegraphviz(file,cone,index,systemlink,succ,nbopb)
     # ciaranshow(proofs,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
     if file[1:3]=="bio"
@@ -882,8 +882,8 @@ end
 # const benchs = "veriPB/newSIPbenchmarks"
 # const solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
 # const proofs = "veriPB/proofs"    
-const proofs = "veriPB/proofs/small"    
-# const proofs = "veriPB/proofs/medium"    
+# const proofs = "veriPB/proofs/small"    
+const proofs = "veriPB/proofs/medium"    
 # const proofs = "veriPB/proofs/big"    
 # const proofs = "veriPB/prooframdisk"    
 # const benchs = "newSIPbenchmarks"
@@ -908,8 +908,8 @@ function main()
 
     println(list)
     p = sortperm(stats)
-    # for i in 4:4#length(stats) 
-    for i in 29:29#length(stats) 
+    # for i in [4,29]#length(stats) 
+    for i in 1:length(stats) 
         # for i in 1:length(stats) if !(i in [23]) # small | 23 ia ID missing
         # for i in 1:length(stats) if !(i in [0]) # medium
         print(i,' ')
@@ -926,4 +926,3 @@ main()
 # ins = "circuit_prune_root_test"
 # ins = "mult_experiment_gac" # pas de contradictions donc pas de trimmer.
 # runtrimmer(ins)
-
