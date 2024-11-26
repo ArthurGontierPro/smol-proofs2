@@ -842,10 +842,13 @@ function runtrimmer(file)
     index = zeros(Int,length(system)) # map the old indexes to the new ones
     findallindexfirst(index,cone)
 
-
-    # showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
+    if CONFIG.adjm
+        showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
+    end
     # conegraphviz(file,cone,index,systemlink,succ,nbopb)
-    ciaranshow(proofs,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
+    if CONFIG.cshow
+        ciaranshow(proofs,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
+    end
     if file[1:3]=="bio"
         vcone = varcone(system,cone,varmap)
         patcone,tarcone = patterntargetcone(vcone,varmap)
@@ -890,6 +893,7 @@ struct Options
     veripb::Bool
     trace::Bool
     cshow::Bool
+    adjm::Bool
 end
 function parseargs(args)
     ins = ""
@@ -903,10 +907,12 @@ function parseargs(args)
     veripb = true
     trace = false
     cshow = false
+    adjm = false
     for (i, arg) in enumerate(args)
         if arg == "cd" cd() end # hack to add cd in paths
         if arg in ["noveripb","nv"] veripb = false end
         if arg in ["nosort","ns"] sort = false end
+        if arg in ["adj","adjm","adjmat"] adjm = false end
         if arg in ["cshow","show","cs","ciaran_show","ciaranshow"] cshow = false end
         if arg in ["--trace","-trace","trace","-tr","tr"] trace = true end
         if ispath(arg)&&isdir(arg) 
@@ -932,7 +938,7 @@ function parseargs(args)
     if split(ins,'.')[end] in ["opb","pbp"] ins = ins[1:end-4] end
     if proofs!="" print("Dir:$proofs ") end
     if ins!="" print("Ins:$ins ") end
-    return Options(ins,proofs,sort,veripb,trace,cshow)
+    return Options(ins,proofs,sort,veripb,trace,cshow,adjm)
 end
 # include("ladtograph.jl")
 include("trimerPrints.jl")

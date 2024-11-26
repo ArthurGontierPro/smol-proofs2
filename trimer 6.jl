@@ -975,6 +975,7 @@ nogood 4/339
 export JULIA_NUM_THREADS=192
 julia --check-bounds=no 'trimer 5.jl'
 =#
+# scp circuit_prune_skip_test.html arthur@fataepyc-01.dcs.gla.ac.uk:/scratch/circuit_prune_skip_test.html 
 
 # scp -r \\wsl.localhost\Ubuntu\home\arthur_gla\veriPB\trim\smol-proofs2\Instances\ arthur@fataepyc-01.dcs.gla.ac.uk:/users/grad/arthur/smol-proofs2
 # scp -r /home/arthur_gla/veriPB/newSIPbenchmarks/ arthur@fataepyc-01.dcs.gla.ac.uk:/users/grad/arthur/
