@@ -470,7 +470,7 @@ function readveripb(path,file,system,varmap,obj)
                 elseif type == "p" || type == "pol"
                     push!(systemlink,[-2])
                     eq = solvepol(st,system,systemlink[end],c,varmap)
-                    if !(length(eq.t)!=0 || eq.b!=0) println("POL empty") end
+                    if !(length(eq.t)!=0 || eq.b!=0) printstyled("POL empty"; color=:red) end
                 elseif type == "ia"
                     l = 0
                     if st[end] == ";" 
@@ -488,10 +488,10 @@ function readveripb(path,file,system,varmap,obj)
                     c = readred(system,systemlink,st,varmap,redwitness,c,f,prism)
                     eq = Eq([],0)
                 elseif type == "sol" 
-                    println("SAT Not supported.")
+                    printstyled("SAT Not supported."; color=:red)
                     eq = Eq([Lit(0,true,1)],15) # just to add something to not break the id count
                 elseif type == "soli" 
-                    println("BOUNDS Not supported(soli)")
+                    printstyled("BOUNDS Not supported(soli) "; color=:red)
                     # push!(systemlink,[-6])
                     # eq = findbound(system,st,c,varmap,obj)
                     eq = Eq([Lit(0,true,1)],15) # just to add something to not break the id count
@@ -503,14 +503,14 @@ function readveripb(path,file,system,varmap,obj)
                 elseif type == "conclusion"
                     conclusion = st[2]
                     if conclusion == "BOUNDS"
-                        println("BOUNDS Not supported.")
+                        printstyled("BOUNDS Not supported. "; color=:red)
                     elseif !isequal(system[end],Eq([],1)) && (conclusion == "SAT" || conclusion == "NONE")
-                        println("SAT Not supported.")
+                        printstyled("SAT Not supported."; color=:red)
                     end
                 elseif type == "*trim"
                     com[length(system)+1] = ss[7:end]
                 elseif !(type in ["#","w","*","f","d","del","end","pseudo-Boolean"])#,"de","co","en","ps"])
-                    println("unknown2: ",ss)
+                    printstyled("unknown2: ",ss; color=:red)
                 end
                 if length(eq.t)!=0 || eq.b!=0
                     normcoefeq(eq)
@@ -806,27 +806,30 @@ function availableranges(redwitness)                   # build the prism, a rang
 end
 function runtrimmer(file)
     tvp = @elapsed begin
-        # v1 = run(`veripb --trace --useColor $proofs/$file.opb $proofs/$file$extention`)
-        v1 = read(`veripb $proofs/$file.opb $proofs/$file$extention`)
+        if CONFIG.veripb
+            if CONFIG.trace
+                v1 = run(`veripb --trace --useColor $proofs/$file.opb $proofs/$file$extention`)
+            else
+                v1 = read(`veripb $proofs/$file.opb $proofs/$file$extention`)
+            end
+        end
     end
-    print(prettytime(tvp),' ')
+    printstyled(prettytime(tvp),' '; color = :cyan)
 
-# end
-# function a()
     tri = @elapsed begin
         system,systemlink,redwitness,nbopb,varmap,output,conclusion,com,version,obj = readinstance(proofs,file)
     end
-    print(prettytime(tri),' ')
+    printstyled(prettytime(tri),' '; color = :cyan)
+    normcoefsystem(system)
     invsys = getinvsys(system,systemlink,varmap)
     prism = availableranges(redwitness)
-    normcoefsystem(system)
  
     if conclusion in ["BOUNDS"] || conclusion in ["SAT","NONE"] && !isequal(system[end],Eq([],1)) return println() end
 
     tms = @elapsed begin
         cone = makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness)
     end
-    println(prettytime(tms))
+    printstyled(prettytime(tms),'\n'; color = :cyan)
 
     twc = @elapsed begin
         writeconedel(proofs,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion,obj,prism)
@@ -842,7 +845,7 @@ function runtrimmer(file)
 
     # showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
     # conegraphviz(file,cone,index,systemlink,succ,nbopb)
-    # ciaranshow(proofs,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
+    ciaranshow(proofs,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
     if file[1:3]=="bio"
         vcone = varcone(system,cone,varmap)
         patcone,tarcone = patterntargetcone(vcone,varmap)
@@ -852,11 +855,13 @@ function runtrimmer(file)
 
     writeshortrepartition(proofs,file,cone,nbopb)
     tvs = @elapsed begin
-        # v2 = run(`veripb --trace --useColor --traceFail $proofs/smol.$file.opb $proofs/smol.$file$extention`) 
-        # v2 = run(`veripb --trace --useColor $proofs/smol.$file.opb $proofs/smol.$file$extention`) 
-        # v2 = run(`veripb --traceFail --useColor $proofs/smol.$file.opb $proofs/smol.$file$extention`) 
-        # v2 = run(`veripb $proofs/smol.$file.opb $proofs/smol.$file$extention`) 
-        v2 = read(`veripb $proofs/smol.$file.opb $proofs/smol.$file$extention`) # --forceCheckDeletion
+        if CONFIG.veripb
+            if CONFIG.trace
+                v2 = run(`veripb --trace --useColor --traceFail $proofs/smol.$file.opb $proofs/smol.$file$extention`) 
+            else
+                v2 = read(`veripb $proofs/smol.$file.opb $proofs/smol.$file$extention`) 
+            end
+        end
     end
     so = stat(string(proofs,"/",file,".opb")).size + stat(string(proofs,"/",file,extention)).size
     st = stat(string(proofs,"/smol.",file,".opb")).size + stat(string(proofs,"/smol.",file,extention)).size
@@ -871,58 +876,103 @@ function runtrimmer(file)
     open(string(proofs,"/atable"), "a") do f
         write(f,string(t[1],",\n"))
     end
-    if v1!=v2
+    if CONFIG.veripb && v1!=v2
         printstyled("Traces are not identical\n"; color = :red)
         open(string(proofs,"/afailedtrims"), "a") do f
             write(f,string(file," \n"))
         end
     end
 end
-
-# const benchs = "veriPB/newSIPbenchmarks"
-# const solver = "veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-# const proofs = "veriPB/proofs"    
-# const proofs = "veriPB/proofs/small"    
-const proofs = "veriPB/proofs/medium"    
-# const proofs = "veriPB/proofs/big"    
-# const proofs = "veriPB/prooframdisk"    
-# const benchs = "newSIPbenchmarks"
-# const solver = "glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-# const proofs = "/cluster/proofs"
-# const proofs = "/scratch/proofs_to_trim/big"
-# const extention = ".veripb"
-const extention = ".pbp"
-# const path = proofs
-const version = "2.0"
-
-cd()
+struct Options
+    ins::String
+    proofs::String
+    sort::Bool
+    veripb::Bool
+    trace::Bool
+    cshow::Bool
+end
+function parseargs(args)
+    ins = ""
+    # proofs = "veriPB/proofs/small/"
+    # proofs = "veriPB/proofs/medium/"    
+    # proofs = "veriPB/proofs/big/"  
+    proofs = "/home/arthur_gla/veriPB/proofs/small/"
+    # proofs = "/cluster/proofs/"
+    # proofs = "/scratch/proofs_to_trim/big/"
+    sort = true
+    veripb = true
+    trace = false
+    cshow = false
+    for (i, arg) in enumerate(args)
+        if arg == "cd" cd() end # hack to add cd in paths
+        if arg in ["noveripb","nv"] veripb = false end
+        if arg in ["nosort","ns"] sort = false end
+        if arg in ["cshow","show","cs","ciaran_show","ciaranshow"] cshow = false end
+        if arg in ["--trace","-trace","trace","-tr","tr"] trace = true end
+        if ispath(arg)&&isdir(arg) 
+            if arg[end]!='/' 
+                proofs = arg*'/'
+            else proofs = arg end
+        end
+        if (ispath(arg)||ispath(arg*".opb"))&&(isfile(arg)||isfile(arg*".opb"))
+            if (tmp = findlast('/',arg))===nothing
+                ins = arg
+                proofs=""
+            else 
+                ins = arg[tmp+1:end]
+                proofs = arg[1:tmp-1]
+            end
+        end
+    end
+    for (i, arg) in enumerate(args)
+        if isfile(proofs*arg)||isfile(proofs*arg*".opb") 
+            ins = arg
+        end
+    end
+    if split(ins,'.')[end] in ["opb","pbp"] ins = ins[1:end-4] end
+    if proofs!="" print("Dir:$proofs ") end
+    if ins!="" print("Ins:$ins ") end
+    return Options(ins,proofs,sort,veripb,trace,cshow)
+end
 # include("ladtograph.jl")
 include("trimerPrints.jl")
 
+
+const CONFIG = parseargs(ARGS)
+const proofs = CONFIG.proofs
+const extention = ".pbp"
+const version = "2.0"
+
 function main()
-    cd()
-    list = cd(readdir, proofs)
-    list = [s[1:end-4] for s in list if s[end-3:end]==".opb" && s[1:5]!="smol."]
-    list = [s for s in list if isfile(string(proofs,"/",s,extention))]
-    stats = [stat(string(proofs,"/",file,extention)).size for file in list]
-
-    println(list)
-    p = sortperm(stats)
-    # for i in [4,29]#length(stats) 
-    for i in 1:length(stats) 
-        # for i in 1:length(stats) if !(i in [23]) # small | 23 ia ID missing
-        # for i in 1:length(stats) if !(i in [0]) # medium
-        print(i,' ')
-        ins = list[p[i]]
-        printstyled(ins,"\n"; color = :yellow)
-        runtrimmer(ins)
+    if CONFIG.ins != ""
+        runtrimmer(CONFIG.ins)
+    else
+        list = cd(readdir, proofs)
+        list = [s[1:end-4] for s in list if s[end-3:end]==".opb" && s[1:5]!="smol."]
+        list = [s for s in list if isfile(proofs*s*extention)]
+        if CONFIG.sort
+            stats = [stat(proofs*file*extention).size for file in list]
+            p = sortperm(stats)
+        else p = [i for i in eachindex(list)] end
+        println(list)
+        for i in eachindex(list)
+            print(i,' ')
+            ins = list[p[i]]
+            printstyled(ins,"    "; color = :yellow)
+            runtrimmer(ins)
+        end
+        # readrepartition()
     end
-    # readrepartition()
-
 end
 
 main()
 
+
 # ins = "circuit_prune_root_test"
 # ins = "mult_experiment_gac" # pas de contradictions donc pas de trimmer.
 # runtrimmer(ins)
+
+#  ENABLE_JITPROFILING=1 perf record -o /tmp/perf.data --call-graph dwarf -k 1 julia 'trimer 7.jl'
+#  perf inject --jit --input /tmp/perf.data --output /tmp/perf-jit.data
+#  perf report --call-graph -G -i /tmp/perf-jit.data
+#pch fw firmware tpm
