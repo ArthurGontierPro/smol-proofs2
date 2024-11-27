@@ -6,7 +6,7 @@
 struct Options
     ins::String     # one instance name (leave blank if you want all instances)
     proofs::String  # directory containing instances.
-    sort::Bool      # sort the instances byy size
+    sort::Bool      # sort the instances by size
     veripb::Bool    # veripb comparison (need veripb installed)
     trace::Bool     # veripb trace
     cshow::Bool     # prettyprint of the proof in html
@@ -15,7 +15,7 @@ struct Options
 end
 function parseargs(args)
     ins = ""
-    proofs = "/home/arthur_gla/veriPB/proofs/small/"
+    proofs = pwd()*"/"
     sort = true
     veripb = true
     trace = false
@@ -28,7 +28,7 @@ function parseargs(args)
         if arg in ["nosort","ns"] sort = false end
         if arg in ["adj","adjm","adjmat"] adjm = false end
         if arg in ["varorder","order","vo"] order = true end
-        if arg in ["cshow","show","cs","ciaran_show","ciaranshow"] cshow = false end
+        if arg in ["cshow","show","cs","ciaran_show","ciaranshow"] cshow = true end
         if arg in ["--trace","-trace","trace","-tr","tr"] trace = true end
         if ispath(arg)&&isdir(arg) 
             if arg[end]!='/' 
@@ -73,23 +73,23 @@ mutable struct Red                      # w: witness. range: id range from beign
     range::UnitRange{Int64}
     pgranges::Vector{UnitRange{Int64}}
 end
-# include("trimerPrints.jl")
 function main()
     if CONFIG.ins != ""
         runtrimmer(CONFIG.ins)
     else
         list = cd(readdir, proofs)
+        list = [s for s in list if length(s)>5]
         list = [s[1:end-4] for s in list if s[end-3:end]==".opb" && s[1:5]!="smol."]
         list = [s for s in list if isfile(proofs*s*extention)]
         if CONFIG.sort
-            stats = [stat(proofs*file*extention).size for file in list]
+            stats = [stat(proofs*file*extention).size+stat(proofs*file*".opb").size for file in list]
             p = sortperm(stats)
         else p = [i for i in eachindex(list)] end
-        println(list)
+        println(list[p])
         for i in eachindex(list)
             print(i,' ')
             ins = list[p[i]]
-            printstyled(ins,"    "; color = :yellow)
+            printstyled(ins,"  "; color = :yellow)
             runtrimmer(ins)
         end
     end
@@ -104,11 +104,11 @@ function runtrimmer(file)
             end
         end
     end
-    printstyled(prettytime(tvp),' '; color = :cyan)
+    printstyled(prettytime(tvp),"  "; color = :cyan)
     tri = @elapsed begin
         system,systemlink,redwitness,nbopb,varmap,output,conclusion,version,obj = readinstance(proofs,file)
     end
-    printstyled(prettytime(tri),' '; color = :cyan)
+    printstyled(prettytime(tri),"  "; color = :cyan)
     normcoefsystem(system)
     invsys = getinvsys(system,systemlink,varmap)
     prism = availableranges(redwitness)
@@ -142,6 +142,7 @@ function runtrimmer(file)
     end
     so = stat(string(proofs,"/",file,".opb")).size + stat(string(proofs,"/",file,extention)).size
     st = stat(string(proofs,"/smol.",file,".opb")).size + stat(string(proofs,"/smol.",file,extention)).size
+    if !CONFIG.veripb tvp = tvs = 0.1 end
     if file[1] == 'b'
         t = [roundt([parse(Float64,file[end-5:end-3]),parse(Float64,file[end-2:end]),so,st,st/so,tvp,tvs,tvs/tvp,tms,twc,tri],3)]
     elseif file[1] == 'L'
@@ -282,7 +283,7 @@ function rup(system,invsys,antecedants,init,assi,front,cone,prism,subrange)# I a
                 i = min(i,r1)
                 r1 = init+1
             else
-                if r1<init+1 # if init == 450 printstyled("\n upgrade"; color=  :blue) end
+                if r1<init+1
                     prio = true
                     r0 = min(i,r0)
                     i = r1
@@ -295,7 +296,7 @@ function rup(system,invsys,antecedants,init,assi,front,cone,prism,subrange)# I a
         else
             i+=1
         end
-        if prio && i==init+1 # if init == 450 printstyled("\n drop"; color=  :cyan) end
+        if prio && i==init+1
             prio=false
             i=r0
             r0=init+1
@@ -1016,7 +1017,7 @@ function ciaranshow(path,file,version,system,cone,index,systemlink,succ,redwitne
                     write(f,printsucc(i,succ[i],nbsucc,maxsucc,index))
                     writedelcolor(f,systemlink,i,succ,index,nbopb,dels)
                 elseif tlink == -3           # ia
-                    write(f,string(wid(lastindex),"ia ",writeeqcolor(e,varmap,varocc,m,r)[1:end-1]," ",lid(index[systemlink[i-nbopb][2]]),"\n"))
+                    write(f,string(wid(lastindex),"ia ",writeeqcolor(eq,varmap,varocc,m,r)[1:end-1]," ",lid(index[systemlink[i-nbopb][2]]),"\n"))
                     write(f,printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
                     write(f,printsucc(i,succ[i],nbsucc,maxsucc,index))
                     writedelcolor(f,systemlink,i,succ,index,nbopb,dels)
@@ -1409,7 +1410,7 @@ function solvepol(st,system,link,init,varmap)
     end
     res = Eq(lits2,eq.b)
     if !noLP
-        printstyled("POL simplification is hard disabled ")
+        printstyled("POL simplification is hard disabled "; collor = :red)
         # p2 = simplepol(res,system,link)
     end
     if lastsaturate
@@ -1617,7 +1618,7 @@ function readveripb(path,file,system,varmap,obj)
                     l = 0
                     if st[end] == ";" 
                         eq = readeq(st,varmap,2:2:length(st)-4)
-                        printstyled("ia ID is missing";color = :red)
+                        printstyled("missing ia ID ";color = :red)
                     else
                         eq = readeq(st,varmap,2:2:length(st)-5)
                         l = parse(Int,st[end])
@@ -1649,7 +1650,7 @@ function readveripb(path,file,system,varmap,obj)
                     elseif !isequal(system[end],Eq([],1)) && (conclusion == "SAT" || conclusion == "NONE")
                         printstyled("SAT Not supported.."; color=:red)
                     end
-                elseif !(type in ["#","w","*","f","d","del","end","pseudo-Boolean"])#,"de","co","en","ps"])
+                elseif !(type in ["*trim","#","w","*","f","d","del","end","pseudo-Boolean"])#,"de","co","en","ps"])
                     printstyled("unknown2: ",ss; color=:red)
                 end
                 if length(eq.t)!=0 || eq.b!=0
