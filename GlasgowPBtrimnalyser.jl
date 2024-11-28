@@ -26,7 +26,7 @@ function parseargs(args)
         if arg == "cd" cd() end # hack to add cd in paths
         if arg in ["noveripb","nv"] veripb = false end
         if arg in ["nosort","ns"] sort = false end
-        if arg in ["adj","adjm","adjmat"] adjm = false end
+        if arg in ["adj","adjm","adjmat"] adjm = true end
         if arg in ["varorder","order","vo"] order = true end
         if arg in ["cshow","show","cs","ciaran_show","ciaranshow"] cshow = true end
         if arg in ["--trace","-trace","trace","-tr","tr"] trace = true end
