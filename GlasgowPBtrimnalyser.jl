@@ -1,5 +1,17 @@
-# This file has the following sections
-# Main, Trimmer, Printer, and Parser
+#= This file has the following sections
+    Main, Trimmer, Printer, and Parser
+Command to run trim allinstances in the current directory is:
+    julia GlasgowPBtrimnalyser.jl
+You can specify an instance and a path and have the following options.
+    show        to have the html colored prettyprint
+    adj         to ha the adjacency matrix print in html
+    noveripb    to not make the veripb comparison on the instance and the small one
+Example with options:
+    julia GlasgowPBtrimnalyser.jl noveripb path instance show adj
+=#
+
+
+
 
 # ================ Main ================
 
@@ -12,19 +24,24 @@ struct Options
     cshow::Bool     # prettyprint of the proof in html
     adjm::Bool      # adj matrix representation of the cone
     order::Bool     # var order
+    LPsimplif::Bool # simplificaiton of pol and red by LP
 end
 function parseargs(args)
     ins = ""
     proofs = pwd()*"/"
+    # proofs = "/home/arthur_gla/veriPB/proofs/small/"
+    # ins = "circuit_prune_root_test"
     sort = true
     veripb = true
     trace = false
     cshow = false
     adjm = false
     order = false
+    LPsimplif = false
     for (i, arg) in enumerate(args)
         if arg == "cd" cd() end # hack to add cd in paths
         if arg in ["noveripb","nv"] veripb = false end
+        if arg in ["LPsimplif","lp"] LPsimplif = true end
         if arg in ["nosort","ns"] sort = false end
         if arg in ["adj","adjm","adjmat"] adjm = true end
         if arg in ["varorder","order","vo"] order = true end
@@ -53,7 +70,7 @@ function parseargs(args)
     if split(ins,'.')[end] in ["opb","pbp"] ins = ins[1:end-4] end
     if proofs!="" print("Dir:$proofs ") end
     if ins!="" print("Ins:$ins ") end
-    return Options(ins,proofs,sort,veripb,trace,cshow,adjm,order)
+    return Options(ins,proofs,sort,veripb,trace,cshow,adjm,order,LPsimplif)
 end
 const CONFIG = parseargs(ARGS)
 const proofs = CONFIG.proofs
@@ -259,6 +276,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness)
         end
     end
     fixredsystemlink(systemlink,cone,prism,nbopb)
+    # printeqlink(935,system,systemlink)
     return cone
 end
 function rup(system,invsys,antecedants,init,assi,front,cone,prism,subrange)# I am putting back cone and front together because they will both end up in the cone at the end.
@@ -443,8 +461,116 @@ function availableranges(redwitness)                   # build the prism, a rang
     prism = [a.range for (_,a) in redwitness if a.range!=0:0]
     return prism
 end
+module LP
+    using JuMP,HiGHS
+    export LPpol
+    function LPpol(a,b,asol,bsol)
+    # TODO retier de l'objectif les equations qui sont dans le opb ? (on peux garder comme ca si on veux une preuve le plus petite possible ? en esperant que ca passe mieux oiu on peux utiliser l'ordre et le mettre dans l'obj)
+        nbctr = size(a,1)
+        nbvar = size(a,2)
+        bigM = max(maximum(abs.(a)),maximum(abs.(b)),maximum(abs.(asol)),abs(bsol))+1 # 2^20
+        # pour highs on a un bug a partir de big m = 2^27 
+        # pour glpk  on a un big a partir de big m = 2^18 
+        m = Model(HiGHS.Optimizer)
+        set_optimizer_attribute(m,"output_flag",false)
 
+        @variable(m,lambda[i = 1:nbctr] >=0,Int)            # I dont specify int here to make it faster. maybe we can use deletions in a smart manner here 
+        @variable(m,lambdaBin[i = 1:nbctr], Bin)
+        
+        @constraint(m, ctr_milp1[j in 1:nbvar], sum(a[i,j]*lambda[i] for i in 1:nbctr) <= asol[j]) # on peut remplir la colone avec des axiomes
+        @constraint(m, ctr_milp2, sum(lambda[i] * b[i] for i in 1:nbctr) == bsol)
+        @constraint(m, ctr_milp_flag[i in 1:nbctr], lambda[i] <= lambdaBin[i] * bigM)  
+        
+        @objective(m, Min, sum(lambdaBin[i] for i in 1:nbctr))
 
+        # print(m)
+        optimize!(m)
+        if termination_status(m) == MOI.OPTIMAL# && objective_value(m) < nbctr
+            simpler = false
+            for i in 1:nbctr
+                simpler |= round(Int,value(lambda[i]))==0
+            end
+            if simpler
+                println()
+                for i in 1:nbctr
+                    print(round(Int,value(lambda[i])),' ')
+                end
+                return true , [round(Int,value(lambda[i])) for i in 1:nbctr]
+            else
+                print('T')
+            end
+        else
+            print('F')
+        end
+        return false , Int[]
+    end
+end 
+if CONFIG.LPsimplif
+    using .LP
+end
+
+function simplepol(res,system,link)
+    varset = Vector{Int}()
+    ctrset = [link[i] for i in eachindex(link) if isid(link,i)]
+    nbctr = length(ctrset)
+    for i in ctrset
+        for l in system[i].t
+            if !(l.var in varset)
+                push!(varset,l.var)
+            end
+        end
+    end
+    sort!(varset)
+    nbvar = length(varset)
+
+    a = zeros(Int,nbctr,nbvar)
+    b = zeros(Int,nbctr)
+    eq0 = Eq([Lit(0,true,v) for v in varset],0)
+    for i in eachindex(ctrset)
+        id = ctrset[i]
+        eq = system[id]
+        eq = addeq(eq,eq0)
+        for l in eq.t
+            a[i,findfirst(x->x==l.var,varset)] = l.coef
+        end
+        b[i] = eq.b
+    end
+    aeq = addeq(res,eq0)
+    avars = [l.var for l in aeq.t]
+    asol = zeros(Int,nbvar)
+    for i in eachindex(varset)
+        v = varset[i]
+        j = findfirst(x->x==v,avars)
+        if !(j === nothing)
+            asol[i] = aeq.t[j].coef
+        end
+    end
+    bsol = aeq.b
+    # println(a)
+    # println(asol)
+    # println(b)
+    # println(bsol)
+    # a = [ 1 0 0 4; -2 3 0 -5; 1 0 0 4; 0 -1 0 1]
+    # b = [1,-2,1,2]
+    # asol = [0 0 0 3]
+    # bsol = 6
+    f,link2 = LPpol(a,b,asol,bsol)
+    if f
+        println()
+        for i in eachindex(link2)
+            # if link2[i]>0
+            print(ctrset[i],"  ")
+            printeq(system[ctrset[i]])     
+            # end
+        end
+        println(link2)
+        printeq(res)
+        println(link)
+        println()
+    else
+        return link
+    end
+end
 
 
 # ================ Printer ================
@@ -706,28 +832,35 @@ function isequal(e,f) # equality between eq
     end
 end
 function printlit(l)
-    printstyled(l.coef,' '; color = :blue)
-    if !l.sign printstyled('~'; color = :red) end
+
+    if l.coef!=1 printstyled(l.coef; color = :blue) end
+    if !l.sign printstyled('~'; color = :red) else print(" ") end
     printstyled(l.var; color = :green)
 end
 function printlit(l,varmap)
-    printstyled(l.coef,' '; color = :blue)
-    if !l.sign printstyled('~'; color = :red) end
+    printstyled(l.coef; color = :blue)
+    if !l.sign printstyled('~'; color = :red) else print(' ') end
     printstyled(varmap[l.var]; color = :green)
 end
 function printeq(e)
     for l in e.t
-        print("  ")
+        print(" ")
         printlit(l)
     end
-    println("  >= ",e.b)
+    println(" >= ",e.b)
 end
 function printeq(e,varmap)
     for l in e.t
-        print("  ")
+        print(" ")
         printlit(l,varmap)
     end
-    println("  >= ",e.b)
+    println(" >= ",e.b)
+end
+function printeqlink(i,system,systemlink)
+    nbopb = length(system)-length(systemlink)
+    print(i,"  ")
+    printeq(system[i])
+    println(systemlink[i-nbopb])
 end
 function showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
     M,D,n = computeMD(file,cone,index,systemlink,succ,nbopb)
@@ -1306,7 +1439,7 @@ function addeq(eq1,eq2)
         end
     end
     lits=removenulllits(lits)
-    # lits=sort(lits,lt=islexicolesslit)                          # optionnal sorting of literrals
+    sort!(lits,by=x->x.var)
     return Eq(lits,eq1.b+eq2.b-c)
 end
 function multiply(eq,d)
@@ -1355,7 +1488,6 @@ function solvepol(st,system,link,init,varmap)
     push!(stack,eq)
     push!(link,id)
     lastsaturate = false
-    noLP = true
     for j in 3:length(st)
         i=st[j]
         if i=="+"
@@ -1367,9 +1499,7 @@ function solvepol(st,system,link,init,varmap)
         elseif i=="d"
             push!(stack,divide(pop!(stack),link[end]))
             push!(link,-3)
-            noLP = true
         elseif i=="s"
-            noLP = true
             if j == length(st)
                 lastsaturate = true
             else
@@ -1378,7 +1508,6 @@ function solvepol(st,system,link,init,varmap)
             end
             push!(link,-4)
         elseif i=="w"
-            noLP = true
             push!(stack,weaken(pop!(stack),weakvar))
             push!(link,-5)
         elseif !isdigit(i[1])
@@ -1409,9 +1538,8 @@ function solvepol(st,system,link,init,varmap)
         link[1] = -3
     end
     res = Eq(lits2,eq.b)
-    if !noLP
-        printstyled("POL simplification is hard disabled "; collor = :red)
-        # p2 = simplepol(res,system,link)
+    if CONFIG.LPsimplif
+        p2 = simplepol(res,system,link)
     end
     if lastsaturate
         normcoefeq(res)
