@@ -940,7 +940,7 @@ function parseargs(args)
     if ins!="" print("Ins:$ins ") end
     return Options(ins,proofs,sort,veripb,trace,cshow,adjm)
 end
-# include("ladtograph.jl")
+include("ladtograph.jl")
 include("trimerPrints.jl")
 
 

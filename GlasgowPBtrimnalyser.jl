@@ -8,10 +8,17 @@ You can specify an instance and a path and have the following options.
     noveripb    to not make the veripb comparison on the instance and the small one
 Example with options:
     julia GlasgowPBtrimnalyser.jl noveripb path instance show adj
+
+
+433 bio035013  6.05  3.69  174.0
+35 & 13 & 11.93 MB & 960.0 KB &   8   & 6.05 & 1.36 &   22   & 174.0 & 1.48 & 3.69 \\\hline
+445 bio116066  6.65  3.5  232.0
+116 & 66 & 12.02 MB & 639.6 KB &   5   & 6.65 & 1.03 &   16   & 232.0 & 1.71 & 3.5 \\\hline
+bio062001
+p 3 7 + 13 + 15 + 25 + 39 + 1 + 5 + 48 + 53 + 56 + 57 + 62 + 63 + 68 + 69 +
+p 3 7 + 13 + 15 + 25 + 39 + 1 + 5 + 48 + 53 + 56 + 57 + 62 + 63 + 68 + 69 +
+cargo r -- /home/arthur_gla/veriPB/proofs/small/linear_equality_test.opb out.pbp --trace
 =#
-
-
-
 
 # ================ Main ================
 
@@ -29,7 +36,7 @@ end
 function parseargs(args)
     ins = ""
     proofs = pwd()*"/"
-    # proofs = "/home/arthur_gla/veriPB/proofs/small/"
+    proofs = "/home/arthur_gla/veriPB/proofs/small/"
     # ins = "circuit_prune_root_test"
     sort = true
     veripb = true
@@ -464,7 +471,8 @@ end
 module LP
     using JuMP,HiGHS
     export LPpol
-    function LPpol(a,b,asol,bsol)
+    function LPpol(a,b,asol,bsol,obj)
+        # TODO on a besoin du lazy pol generation sinon on retrouve avec des LP le fait que des tas de trucs sont inutiles.
     # TODO retier de l'objectif les equations qui sont dans le opb ? (on peux garder comme ca si on veux une preuve le plus petite possible ? en esperant que ca passe mieux oiu on peux utiliser l'ordre et le mettre dans l'obj)
         nbctr = size(a,1)
         nbvar = size(a,2)
@@ -481,7 +489,7 @@ module LP
         @constraint(m, ctr_milp2, sum(lambda[i] * b[i] for i in 1:nbctr) == bsol)
         @constraint(m, ctr_milp_flag[i in 1:nbctr], lambda[i] <= lambdaBin[i] * bigM)  
         
-        @objective(m, Min, sum(lambdaBin[i] for i in 1:nbctr))
+        @objective(m, Min, sum(obj[i]*lambdaBin[i] for i in 1:nbctr))
 
         # print(m)
         optimize!(m)
@@ -504,12 +512,12 @@ module LP
         end
         return false , Int[]
     end
+    # add litteral axioms for negative variables. add objective wheights for the order  and deactivate the lambdabin for the opb
 end 
 if CONFIG.LPsimplif
     using .LP
 end
-
-function simplepol(res,system,link)
+function simplepol(res,system,link,nbopb)
     varset = Vector{Int}()
     ctrset = [link[i] for i in eachindex(link) if isid(link,i)]
     nbctr = length(ctrset)
@@ -522,7 +530,8 @@ function simplepol(res,system,link)
     end
     sort!(varset)
     nbvar = length(varset)
-
+    obj = zeros(Int,nbctr)
+    cobj = 1
     a = zeros(Int,nbctr,nbvar)
     b = zeros(Int,nbctr)
     eq0 = Eq([Lit(0,true,v) for v in varset],0)
@@ -532,6 +541,9 @@ function simplepol(res,system,link)
         eq = addeq(eq,eq0)
         for l in eq.t
             a[i,findfirst(x->x==l.var,varset)] = l.coef
+        end
+        if id>nbopb
+            obj[i] = cobj += 1
         end
         b[i] = eq.b
     end
@@ -554,14 +566,12 @@ function simplepol(res,system,link)
     # b = [1,-2,1,2]
     # asol = [0 0 0 3]
     # bsol = 6
-    f,link2 = LPpol(a,b,asol,bsol)
+    f,link2 = LPpol(a,b,asol,bsol,obj)
     if f
         println()
         for i in eachindex(link2)
-            # if link2[i]>0
             print(ctrset[i],"  ")
             printeq(system[ctrset[i]])     
-            # end
         end
         println(link2)
         printeq(res)
@@ -571,6 +581,8 @@ function simplepol(res,system,link)
         return link
     end
 end
+
+
 
 
 # ================ Printer ================
@@ -1297,7 +1309,86 @@ function roundt(t,d)
     end
     return t
 end
-
+# Print meta comment information (additionnal comments dedicated to analysis)
+function printcom(file,system,invsys,cone,com)
+#print the type of the trimed constraints from the coms of the solver and the adjacency graphs.
+    names = [
+        "backtrack", "backtrackbin", "backtrackbincolor", "disconnected",
+        "degre", "hall", "nds", "nogood", "loops", "fail", "colorbound",
+        "adjacencyhack", "adjacencydist1", "adjacencydist2", "adjacencydist3",
+        "adjacency", "adjacency0", "adjacency1", "adjacency2", "adjacency3", "adjacency4"]
+    n = length(names)
+    og = zeros(Int,n)
+    sm = zeros(Int,n)
+    # ogg =  SimpleGraph()
+    # smg =  SimpleGraph()
+    ogd = Dict{Int,SimpleGraph{Int}}()
+    smd = Dict{Int,SimpleGraph{Int}}()
+    lastadj = 0
+    ti = sort!(collect(keys(com)))
+    for i in ti#eachindex(com)
+        s = com[i]
+        st = split(s,keepempty=false)
+        type = string(st[1])
+        removespaces(st)
+        j = findfirst(isequal(type),names)
+        if j === nothing
+            push!(names,type)
+            push!(og,1)
+            push!(sm,0)
+            if cone[i] sm[end]+=1 end
+        else
+            og[j]+=1
+            if cone[i] sm[j]+=1 end
+            # if cone[i] 
+            #     if type[1:3] == "hal" println("     ",s) end
+            #     if type[1:3] == "deg" println("     ",s) end
+            # else
+            #     if type[1:3] == "hal" println(s) end
+            #     if type[1:3] == "deg" println(s) end
+            # end
+            if type[1:3] == "adj"
+                lastadj = i
+                v1 = parse(Int,st[2])
+                println(v1," ")
+                v2 = parse(Int,st[3])
+                idg = parse(Int,st[4])
+                if !haskey(ogd,idg) ogd[idg] = SimpleGraph() end
+                if !haskey(smd,idg) smd[idg] = SimpleGraph() end
+                ogg = ogd[idg]
+                smg = smd[idg]
+                n = size(ogg, 1)
+                m = max(v1,v2)
+                if m > n 
+                    add_vertices!(ogg, m-n)
+                    add_vertices!(smg, m-n)
+                end
+                add_edge!(ogg, v1, v2)
+                if cone[i] add_edge!(smg, v1, v2) end
+            end
+        end
+    end
+    p = sortperm(names)
+    for i in p
+        if og[i]>0
+            col =  sm[i]==og[i] ? 3 : sm[i]==0 ? 1 : 2
+            printstyled(names[i]," ",sm[i],"/",og[i],"\n"; color = col)
+        end
+    end
+    # println(lastadj)
+    for i in eachindex(ogd)
+        ogg = ogd[i]
+        delindividualist(ogg)
+        draw(PNG(string(proofs,"/aimg/",file,"-g",i,".png"), 16cm, 16cm), gplot(ogg))
+    end
+    for i in eachindex(smd)
+        smg = smd[i]
+        delindividualist(smg)
+        if nv(smg)>1
+            draw(PNG(string(proofs,"/aimg/",file,"-g",i,".smol.png"), 16cm, 16cm), gplot(smg))
+        end
+    end
+end
 
 
 
@@ -1477,7 +1568,7 @@ end
 function copyeq(eq)
     return Eq([Lit(l.coef,l.sign,l.var) for l in eq.t], eq.b)
 end
-function solvepol(st,system,link,init,varmap)
+function solvepol(st,system,link,init,varmap,nbopb)
     id = parse(Int,st[2])
     if id<1
         id = init+id
@@ -1539,7 +1630,7 @@ function solvepol(st,system,link,init,varmap)
     end
     res = Eq(lits2,eq.b)
     if CONFIG.LPsimplif
-        p2 = simplepol(res,system,link)
+        p2 = simplepol(res,system,link,nbopb)
     end
     if lastsaturate
         normcoefeq(res)
@@ -1678,7 +1769,7 @@ function readsubproof(system,systemlink,eq,w,c,f,varmap)
                     push!(systemlink,[-5])
                 elseif type == "p" || type == "pol"
                     push!(systemlink,[-6])
-                    eq = solvepol(st,system,systemlink[end],c,varmap)
+                    eq = solvepol(st,system,systemlink[end],c,varmap,nbopb)
                 end
                 if length(eq.t)!=0 || eq.b!=0
                     normcoefeq(eq)
@@ -1728,7 +1819,7 @@ function readveripb(path,file,system,varmap,obj)
     prism = Vector{UnitRange{Int64}}() # the subproofs should not be available to all
     output = conclusion = ""
     c = length(system)+1
-    d = length(system)
+    nbopb = length(system)
     open(string(path,'/',file,extention),"r"; lock = false) do f
         for ss in eachline(f)
             st = split(ss,keepempty=false)
@@ -1740,7 +1831,7 @@ function readveripb(path,file,system,varmap,obj)
                     push!(systemlink,[-1])
                 elseif type == "p" || type == "pol"
                     push!(systemlink,[-2])
-                    eq = solvepol(st,system,systemlink[end],c,varmap)
+                    eq = solvepol(st,system,systemlink[end],c,varmap,nbopb)
                     if !(length(eq.t)!=0 || eq.b!=0) printstyled("POL empty"; color=:red) end
                 elseif type == "ia"
                     l = 0

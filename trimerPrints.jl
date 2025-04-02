@@ -555,7 +555,7 @@ function printcom(file,system,invsys,cone,com)
     ti = sort!(collect(keys(com)))
     for i in ti#eachindex(com)
         s = com[i]
-        st = split(ss,keepempty=false)
+        st = split(s,keepempty=false)
         type = string(st[1])
         removespaces(st)
         j = findfirst(isequal(type),names)
@@ -577,6 +577,7 @@ function printcom(file,system,invsys,cone,com)
             if type[1:3] == "adj"
                 lastadj = i
                 v1 = parse(Int,st[2])
+                println(v1," ")
                 v2 = parse(Int,st[3])
                 idg = parse(Int,st[4])
                 if !haskey(ogd,idg) ogd[idg] = SimpleGraph() end
@@ -814,7 +815,7 @@ function patterntargetcone(varcone,varmap)
     tarcone = Set{Int}()
     for i in findall(varcone)
         s = varmap[i]
-        st = split(ss,keepempty=false)
+        st = split(s,'_',keepempty=false)
         p = parse(Int,st[1][2:end])
         t = parse(Int,st[2])
         push!(patcone,p)
@@ -823,6 +824,8 @@ function patterntargetcone(varcone,varmap)
     return patcone,tarcone
 end
 function printbioconegraphs(ins,cone,patcone,tarcone)
+    benchs = "veriPB/newSIPbenchmarks"
+
     path = string(benchs,"/biochemicalReactions")
     cd()
     pattern = string(ins[4:6],".txt")
