@@ -36,7 +36,8 @@ end
 function parseargs(args)
     ins = ""
     proofs = pwd()*"/"
-    proofs = "/home/arthur_gla/veriPB/proofs/small/"
+    # proofs = "/home/arthur_gla/veriPB/proofs/small/"
+    proofs = "/home/arthur_gla/veriPB/proofs/"
     # ins = "circuit_prune_root_test"
     sort = true
     veripb = true
@@ -114,8 +115,13 @@ function main()
             print(i,' ')
             ins = list[p[i]]
             printstyled(ins,"  "; color = :yellow)
-            runtrimmer(ins)
+            # runtrimmer(ins)
         end
+        i = 29
+        # for i in 300:305
+            runtrimmer(list[p[i]])
+        # end
+        # runtrimmer(list[p[29]])
     end
 end
 function runtrimmer(file)
@@ -150,6 +156,7 @@ function runtrimmer(file)
     index = zeros(Int,length(system)) # map the old indexes to the new ones
     findallindexfirst(index,cone)
     if CONFIG.adjm
+        # showadjacencymatrixsimple(file,cone,index,systemlink,succ,nbopb)
         showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
     end
     if CONFIG.cshow
@@ -477,6 +484,7 @@ module LP
         nbctr = size(a,1)
         nbvar = size(a,2)
         bigM = max(maximum(abs.(a)),maximum(abs.(b)),maximum(abs.(asol)),abs(bsol))+1 # 2^20
+        # println("x moi",bigM)
         # pour highs on a un bug a partir de big m = 2^27 
         # pour glpk  on a un big a partir de big m = 2^18 
         m = Model(HiGHS.Optimizer)
@@ -503,6 +511,7 @@ module LP
                 for i in 1:nbctr
                     print(round(Int,value(lambda[i])),' ')
                 end
+                print('B')
                 return true , [round(Int,value(lambda[i])) for i in 1:nbctr]
             else
                 print('T')
@@ -571,7 +580,7 @@ function simplepol(res,system,link,nbopb)
         println()
         for i in eachindex(link2)
             print(ctrset[i],"  ")
-            printeq(system[ctrset[i]])     
+            printeq(system[ctrset[i]])
         end
         println(link2)
         printeq(res)
@@ -580,6 +589,9 @@ function simplepol(res,system,link,nbopb)
     else
         return link
     end
+end
+function remakelink()
+    # TODO
 end
 
 
@@ -874,6 +886,71 @@ function printeqlink(i,system,systemlink)
     printeq(system[i])
     println(systemlink[i-nbopb])
 end
+function showadjacencymatrixsimple(file,cone,index,systemlink,succ,nbopb)
+    M,D,n = computeMD(file,cone,index,systemlink,succ,nbopb)
+    dir = string(proofs,"/cone_mat/")
+    mkdir2(dir)
+    open(string(dir,file,".html"),"w") do f
+        write(f,"<!DOCTYPE html><head>
+  <meta charset=\"UTF-8\">
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+  <title>$file</title>
+  <style>
+    canvas {
+      border: 1px solid #ccc;
+    }
+    .cell {
+      stroke: #ccc;
+      shape-rendering: crispEdges;
+    }
+    .label {
+      font-size: 14px;
+      font-family: Arial, sans-serif;
+      text-anchor: middle;
+    }
+  </style>
+</head>
+<body>
+  <script>")
+
+    writematjs("matrix",M,n,f)
+
+    write(f,"const size = 20; // Cell size
+    const n = matrix.length;
+    
+    // Flatten the matrix
+    const flattenedMatrix = matrix.flat();
+
+    // Create Canvas
+    const canvas = document.createElement(\"canvas\");
+    canvas.width = n * size;
+    canvas.height = n * size;
+    document.body.appendChild(canvas);
+    const context = canvas.getContext(\"2d\");
+    // Function to draw the matrix
+    function drawMatrix() {
+      for (let i = 0; i < flattenedMatrix.length; i++) {
+        const value = flattenedMatrix[i];
+        // Calculate row and column from the index
+        const row = Math.floor(i / n);
+        const col = i % n;
+        // Determine the cell color
+        context.fillStyle = value ? \"steelblue\" : \"white\";
+        // Draw the cell
+        context.fillRect(col * size, row * size, size, size);
+        context.strokeStyle = \"#ccc\";
+        context.strokeRect(col * size, row * size, size, size);
+      }
+    }
+    // Initial draw
+    drawMatrix();
+  </script>
+</body>
+</html>
+")
+end
+end
+
 function showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
     M,D,n = computeMD(file,cone,index,systemlink,succ,nbopb)
     dir = string(proofs,"/cone_mat/")

@@ -1279,7 +1279,7 @@ lon sur le serv bio 89 32 (421_805_749 lignes)
 # scp -r /home/arthur_gla/veriPB/newSIPbenchmarks/ arthur@fataepyc-01.dcs.gla.ac.uk:/users/grad/arthur/
 # find . -name "*Zone.Identifier" -type f -delete 
 # find . -name ".*" -type f -delete 
-# ssh arthur@fataepyc-01.dcs.gla.ac.uk
+# ssh arthur@fataepyc-01.dcs.gla.ac.uk chekcsUm
 # scp arthur@fataepyc-01.dcs.gla.ac.uk:/cluster/proofs/smol.bio063002.veripb smol.bio063002.veripb
 # scp arthur@fataepyc-01.dcs.gla.ac.uk:/cluster/proofs/times times2
 # cd /home/arthur_gla/veriPB/trim/smol-proofs2/
