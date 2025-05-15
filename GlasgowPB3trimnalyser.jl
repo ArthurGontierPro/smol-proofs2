@@ -7,16 +7,8 @@ You can specify an instance and a path and have the following options.
     adj         to ha the adjacency matrix print in html
     noveripb    to not make the veripb comparison on the instance and the small one
 Example with options:
-    julia GlasgowPBtrimnalyser.jl noveripb path instance show adj
+    julia GlasgowPBtrimnalyser.jl noveripb path instance show adj tl 600
 
-
-433 bio035013  6.05  3.69  174.0
-35 & 13 & 11.93 MB & 960.0 KB &   8   & 6.05 & 1.36 &   22   & 174.0 & 1.48 & 3.69 \\\hline
-445 bio116066  6.65  3.5  232.0
-116 & 66 & 12.02 MB & 639.6 KB &   5   & 6.65 & 1.03 &   16   & 232.0 & 1.71 & 3.5 \\\hline
-bio062001
-p 3 7 + 13 + 15 + 25 + 39 + 1 + 5 + 48 + 53 + 56 + 57 + 62 + 63 + 68 + 69 +
-p 3 7 + 13 + 15 + 25 + 39 + 1 + 5 + 48 + 53 + 56 + 57 + 62 + 63 + 68 + 69 +
 cargo r -- /home/arthur_gla/veriPB/proofs/small/linear_equality_test.opb out.pbp --trace
 =#
 
@@ -24,21 +16,24 @@ cargo r -- /home/arthur_gla/veriPB/proofs/small/linear_equality_test.opb out.pbp
 
 struct Options
     ins::String     # one instance name (leave blank if you want all instances)
+    insid::Int      # instance id (for fast testing)
     proofs::String  # directory containing instances.
     sort::Bool      # sort the instances by size
-    veripb::Bool    # veripb comparison (need veripb installed)
+    veripb::Bool    # veripb comparison (need veripb3.0 installed)
     trace::Bool     # veripb trace
     cshow::Bool     # prettyprint of the proof in html
     adjm::Bool      # adj matrix representation of the cone
-    order::Bool     # var order
-    LPsimplif::Bool # simplificaiton of pol and red by LP
+    order::Bool     # output the variable usage rates in order
+    LPsimplif::Bool # simplificaiton of pol by LP (need more work)
+    timelimit::Int # time limit
 end
 function parseargs(args)
     ins = ""
     proofs = pwd()*"/"
-    # proofs = "/home/arthur_gla/veriPB/proofs/small/"
-    # proofs = "/home/arthur_gla/veriPB/proofs/"
     proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
+    pbopath = "/home/arthur_gla/veriPB/subgraphsolver/pboxide-dev"
+    insid = 0
+    tl = 2629800 # 1 month
     # ins = "circuit_prune_root_test"
     sort = true
     veripb = true
@@ -56,6 +51,8 @@ function parseargs(args)
         if arg in ["varorder","order","vo"] order = true end
         if arg in ["cshow","show","cs","ciaran_show","ciaranshow"] cshow = true end
         if arg in ["--trace","-trace","trace","-tr","tr"] trace = true end
+        if arg in ["timelimit","tl"] tl = parse(Int, args[i+1]) end
+        if arg in ["insid","ins"] insid = parse(Int, args[i+1]) end
         if ispath(arg)&&isdir(arg) 
             if arg[end]!='/' 
                 proofs = arg*'/'
