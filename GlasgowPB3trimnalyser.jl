@@ -18,6 +18,7 @@ struct Options
     ins::String     # one instance name (leave blank if you want all instances)
     insid::Int      # instance id (for fast testing)
     proofs::String  # directory containing instances.
+    pbopath::String # directory containing veripb rust 3.0
     sort::Bool      # sort the instances by size
     veripb::Bool    # veripb comparison (need veripb3.0 installed)
     trace::Bool     # veripb trace
@@ -25,7 +26,7 @@ struct Options
     adjm::Bool      # adj matrix representation of the cone
     order::Bool     # output the variable usage rates in order
     LPsimplif::Bool # simplificaiton of pol by LP (need more work)
-    timelimit::Int # time limit
+    timelimit::Int  # time limit (one month default)
 end
 function parseargs(args)
     ins = ""
@@ -76,12 +77,14 @@ function parseargs(args)
     if split(ins,'.')[end] in ["opb","pbp"] ins = ins[1:end-4] end
     if proofs!="" print("Dir:$proofs ") end
     if ins!="" print("Ins:$ins ") end
-    return Options(ins,proofs,sort,veripb,trace,cshow,adjm,order,LPsimplif)
+    return Options(ins,insid,proofs,pbopath,sort,veripb,trace,cshow,adjm,order,LPsimplif,tl)
 end
 const CONFIG = parseargs(ARGS)
 const proofs = CONFIG.proofs
+const pbopath = CONFIG.pbopath
+const tl = CONFIG.timelimit
 const extention = ".pbp"
-const version = "2.0"
+const version = "3.0"
 mutable struct Lit
     coef::Int
     sign::Bool
@@ -109,29 +112,31 @@ function main()
             p = sortperm(stats)
         else p = [i for i in eachindex(list)] end
         println(list[p])
-        for i in eachindex(list)
-            print(i,' ')
-            ins = list[p[i]]
-            printstyled(ins,"  "; color = :yellow)
+        if CONFIG.insid>0
+            ins = list[p[CONFIG.insid]]
+            print(CONFIG.insid,' ');printstyled(ins,"  "; color = :yellow)
             runtrimmer(ins)
+        else for i in eachindex(list)
+            ins = list[p[i]]
+            print(i,' ');printstyled(ins,"  "; color = :yellow)
+            runtrimmer(ins)
+        end end
+    end
+end
+function runchecker(formule,preuve)
+    cd();cd(CONFIG.pbopath)
+    if CONFIG.trace
+        v1 = run(`timeout $tl cargo r -- $formule $preuve `)
+    else
+        redirect_stdio(stdout = devnull,stderr = devnull) do
+            v1 = run(`timeout $tl cargo r -- $formule $preuve `)
         end
-        # i = 29
-        # for i in 300:305
-            # runtrimmer(list[p[i]])
-        # end
-        # runtrimmer(list[p[29]])
     end
 end
 function runtrimmer(file)
-    tvp = @elapsed begin
-        if CONFIG.veripb
-            if CONFIG.trace
-                v1 = run(`veripb --trace --useColor $proofs/$file.opb $proofs/$file$extention`)
-            else
-                v1 = read(`veripb $proofs/$file.opb $proofs/$file$extention`)
-            end
-        end
-    end
+    tvp = @elapsed begin if CONFIG.veripb
+        runchecker("$proofs/$file.opb","$proofs/$file$extention")
+    end end
     printstyled(prettytime(tvp),"  "; color = :cyan)
     tri = @elapsed begin
         system,systemlink,redwitness,nbopb,varmap,output,conclusion,version,obj = readinstance(proofs,file)
@@ -160,15 +165,9 @@ function runtrimmer(file)
     if CONFIG.cshow
         ciaranshow(proofs,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
     end
-    tvs = @elapsed begin
-        if CONFIG.veripb
-            if CONFIG.trace
-                v2 = run(`veripb --trace --useColor --traceFail $proofs/smol.$file.opb $proofs/smol.$file$extention`) 
-            else
-                v2 = read(`veripb $proofs/smol.$file.opb $proofs/smol.$file$extention`) 
-            end
-        end
-    end
+    tvs = @elapsed begin if CONFIG.veripb
+        runchecker("$proofs/smol.$file.opb","$proofs/smol.$file$extention")
+    end end
     so = stat(string(proofs,"/",file,".opb")).size + stat(string(proofs,"/",file,extention)).size
     st = stat(string(proofs,"/smol.",file,".opb")).size + stat(string(proofs,"/smol.",file,extention)).size
     if !CONFIG.veripb tvp = tvs = 0.1 end
@@ -1470,7 +1469,8 @@ end
 # ================ Parser ================
 
 function readinstance(path,file)
-    system,varmap,obj = readopb(path,file)
+    system,varmap,obj = @time readopb(path,file)
+    system,varmap,obj = @time readopb2(path,file)
     nbopb = length(system)
     system,systemlink,redwitness,output,conclusion,version = readveripb(path,file,system,varmap,obj)
     return system,systemlink,redwitness,nbopb,varmap,output,conclusion,version,obj
@@ -1540,6 +1540,40 @@ function readopb(path,file)
     open(string(path,'/',file,".opb"),"r"; lock = false) do f
         for ss in eachline(f)
             if ss[1] != '*'                                 # do not parse comments
+                st = split(ss,keepempty=false)              # structure of a line is: int var int var ... >= int ; 
+                if ss[1] == 'm'
+                    obj = readobj(st,varmap)
+                else
+                    eq = readeq(st,varmap)
+                    if length(eq.t)==0 && eq.b==1
+                        printstyled(" !opb"; color = :blue)
+                    end
+                    normcoefeq(eq)
+                    push!(system, eq)
+                end
+            end
+        end
+    end
+    return system,varmap,obj
+end
+function readopb2(path,file)
+    system = Eq[]
+    varmap = String[]
+    obj = ""
+    open(string(path,'/',file,".opb"),"r"; lock = false) do f
+        while !eof(f)
+            c = peek(f,Char)
+            while c == ' ' || c == '\t' || c == '\n'
+                if eof(f) break end
+                read(f,Char)
+                if eof(f) break end
+                c = peek(f,Char)
+            end
+            if eof(f) break end
+            if c == '*'
+                readuntil(f,'\n',keep=false)
+            else
+                ss = readuntil(f,';',keep=true)
                 st = split(ss,keepempty=false)              # structure of a line is: int var int var ... >= int ; 
                 if ss[1] == 'm'
                     obj = readobj(st,varmap)
