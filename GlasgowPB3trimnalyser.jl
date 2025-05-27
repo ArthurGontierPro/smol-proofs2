@@ -724,9 +724,8 @@ function printorder(file,cone,invsys,varmap)
     s = "map<string,int> order { "     
     varocc = [sum(cone[j] for j in i) for i in invsys] # order from var usage in cone
     p = sortperm(varocc,rev=true)
-    for i in eachindex(varmap)
+    for (var,i) in varmap
         j = p[i]
-        var = varmap[j]
         occ = varocc[j]
         s = string(s,"{\"",var,"\",",occ,"}, ")
     end
@@ -830,7 +829,7 @@ function writeeq(e,varmap)
     return string(s,">= ",e.b," ;\n")
 end
 function writelit(l,varmap)
-    return string(l.coef," ",if l.sign "" else "~" end, varmap[l.var])
+    return string(l.coef," ",if l.sign "" else "~" end, getkey(varmap,l.var,0))
 end
 function isid(link,k)                 # dont put mult and div coefficients as id and weakned variables too
     return link[k]>0 && (k==length(link)||(link[k+1] != -2 && link[k+1] != -3))
@@ -1675,7 +1674,7 @@ end
 function copyeq(eq)
     return Eq([Lit(l.coef,l.sign,l.var) for l in eq.t], eq.b)
 end
-function solvepol(st,system,link,init,varmap,nbopb)
+function solvepol(st,system,link,init,varmap,ctrmap,nbopb)
     id = parse(Int,st[2])
     if id<1
         id = init+id
@@ -1708,7 +1707,7 @@ function solvepol(st,system,link,init,varmap,nbopb)
         elseif i=="w"
             push!(stack,weaken(pop!(stack),weakvar))
             push!(link,-5)
-        elseif !isdigit(i[1])
+        elseif !isdigit(i[1]) && i[1]!='@' #if it is a variable do litteral axiom
             if length(st)>j && st[j+1] == "w"
                 weakvar = readvar(i,varmap)
                 push!(link,-100weakvar-99) # ATTENTION HARDCODING DE SHIFT
@@ -1719,7 +1718,7 @@ function solvepol(st,system,link,init,varmap,nbopb)
                 push!(link,-100var-99sign) # ATTENTION HARDCODING DE SHIFT
             end
         elseif i!="0"
-            id = parse(Int,i)
+            id = i[1]=='@' ? ctrmap[i[2:end]] : parse(Int,i)
             if id<1
                 id = init+id
             end
@@ -1844,7 +1843,7 @@ function applywitness(eq,w)
     end
     return Eq(t,b)
 end
-function readsubproof(system,systemlink,eq,w,c,f,varmap)
+function readsubproof(system,systemlink,eq,w,c,f,varmap,ctrmap)
     # notations : 
     # proofgoal i est la i eme contrainte de la formule F /\ ~C /\` ~`Ciw
     # proofgoal #1 est la contrainte dans la reduction
@@ -1876,7 +1875,7 @@ function readsubproof(system,systemlink,eq,w,c,f,varmap)
                     push!(systemlink,[-5])
                 elseif type == "p" || type == "pol"
                     push!(systemlink,[-6])
-                    eq = solvepol(st,system,systemlink[end],c,varmap,nbopb)
+                    eq = solvepol(st,system,systemlink[end],c,varmap,ctrmap,nbopb)
                 end
                 if length(eq.t)!=0 || eq.b!=0
                     normcoefeq(eq)
@@ -1891,7 +1890,7 @@ function readsubproof(system,systemlink,eq,w,c,f,varmap)
     end
     return redid:c-1,pgranges,c
 end
-function readred(system,systemlink,st,varmap,redwitness,redid,f,prism)
+function readred(system,systemlink,st,varmap,ctrmap,redwitness,redid,f,prism)
     i = findfirst(x->x==":",st)
     eq = readeq(st[2:i],varmap)
     j = findlast(x->x==":",st)
@@ -1908,7 +1907,7 @@ function readred(system,systemlink,st,varmap,redwitness,redid,f,prism)
         push!(system,rev)
         push!(systemlink,[-9])
         c+=1
-        range,pgranges,c = readsubproof(system,systemlink,eq,w,c,f,varmap)
+        range,pgranges,c = readsubproof(system,systemlink,eq,w,c,f,varmap,ctrmap)
         push!(prism,range)
         push!(systemlink,[-10])
     else
@@ -1923,6 +1922,7 @@ end
 function readveripb(path,file,system,varmap,obj)
     systemlink = Vector{Vector{Int}}()
     redwitness = Dict{Int, Red}()
+    ctrmap = Dict{String, Int}()
     prism = Vector{UnitRange{Int64}}() # the subproofs should not be available to all
     output = conclusion = ""
     c = length(system)+1
@@ -1930,6 +1930,10 @@ function readveripb(path,file,system,varmap,obj)
     open(string(path,'/',file,extention),"r"; lock = false) do f
         for ss in eachline(f)
             st = split(ss,keepempty=false)
+            if st[1][1]=='@'
+                ctrmap[st[1][2:end]] = c
+                st = st[2:end] # remove the @label
+            end
             if length(ss)>0
                 type = st[1]
                 eq = Eq([],0)
@@ -1938,7 +1942,7 @@ function readveripb(path,file,system,varmap,obj)
                     push!(systemlink,[-1])
                 elseif type == "p" || type == "pol"
                     push!(systemlink,[-2])
-                    eq = solvepol(st,system,systemlink[end],c,varmap,nbopb)
+                    eq = solvepol(st,system,systemlink[end],c,varmap,ctrmap,nbopb)
                     if !(length(eq.t)!=0 || eq.b!=0) printstyled("POL empty"; color=:red) end
                 elseif type == "ia"
                     if st[end-2] != ":" 
@@ -1953,7 +1957,7 @@ function readveripb(path,file,system,varmap,obj)
                     end
                     push!(systemlink,[-3,l])
                 elseif type == "red"  
-                    c = readred(system,systemlink,st,varmap,redwitness,c,f,prism)
+                    c = readred(system,systemlink,st,varmap,ctrmap,redwitness,c,f,prism)
                     eq = Eq([],0)
                 elseif type == "sol" 
                     printstyled("SAT Not supported."; color=:red)
