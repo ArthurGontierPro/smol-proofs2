@@ -1955,7 +1955,8 @@ function readveripb(path,file,system,varmap,obj)
                         printstyled("missing ia ID ";color = :red)
                     else
                         eq = readeq(st,varmap,2:2:length(st)-6)
-                        l = parse(Int,st[end-1])
+                        l = st[end-1]
+                        l = l[1]=='@' ? ctrmap[l[2:end]] : parse(Int,l)
                         if l<0
                             l = c+l
                         end
