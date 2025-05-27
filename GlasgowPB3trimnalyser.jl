@@ -621,7 +621,7 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,
     todel = Vector{Int}()
     open(string(path,"/smol.",file,extention),"w") do f
         write(f,string("pseudo-Boolean proof version ",version,"\n"))
-        write(f,string("f ",sum(cone[1:nbopb])," 0\n"))
+        write(f,string("f ",sum(cone[1:nbopb])," ;\n"))
         for i in nbopb+1:length(system)
             if cone[i]
                 lastindex += 1
@@ -684,11 +684,11 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,
         end
         write(f,string("output ",output,"\n"))
         if conclusion == "SAT"
-            write(f,string("conclusion ",conclusion,"\n"))
+            write(f,string("conclusion ",conclusion,";\n"))
         else
-            write(f,string("conclusion ",conclusion," : -1\n"))
+            write(f,string("conclusion ",conclusion," : -1;\n"))
         end
-        write(f,"end pseudo-Boolean proof\n")
+        write(f,"end pseudo-Boolean proof;")
     end
 end
 function invlink(systemlink,succ::Vector{Vector{Int}},cone,nbopb)
@@ -741,10 +741,10 @@ function printorder(file,cone,invsys,varmap)
     return varocc
 end
 function writeu(e,varmap)
-    return string("u ",writeeq(e,varmap))
+    return string("rup ",writeeq(e,varmap))
 end
 function writeia(e,link,index,varmap)
-    return string("ia ",writeeq(e,varmap)[1:end-1]," ",index[link],"\n")
+    return string("ia ",writeeq(e,varmap)[1:end-2],": ",index[link]," ;\n")
 end
 function writesol(e,varmap)
     s = "solx"
@@ -773,7 +773,7 @@ function writered(e,varmap,witness,beg)
     return string(s,beg,"\n")
 end
 function writepol(link,index,varmap)
-    s = string("p")
+    s = string("pol")
     for i in 2:length(link)
         t = link[i]
         if t==-1
@@ -797,7 +797,7 @@ function writepol(link,index,varmap)
             s = string(s,if sign " " else " ~" end,varmap[(-t) ÷ 100])
         end
     end
-    return string(s,"\n")
+    return string(s," ;\n")
 end
 function writedel(f,systemlink,i,succ,index,nbopb,dels)
     isdel = false
@@ -819,7 +819,7 @@ function writedel(f,systemlink,i,succ,index,nbopb,dels)
         end
     end
     if isdel
-        write(f,string("\n"))
+        write(f,string(" ;\n"))
     end
 end
 function writeeq(e,varmap)
@@ -1469,8 +1469,8 @@ end
 # ================ Parser ================
 
 function readinstance(path,file)
+    # system,varmap,obj = @time readopb2(path,file)
     system,varmap,obj = @time readopb(path,file)
-    system,varmap,obj = @time readopb2(path,file)
     nbopb = length(system)
     system,systemlink,redwitness,output,conclusion,version = readveripb(path,file,system,varmap,obj)
     return system,systemlink,redwitness,nbopb,varmap,output,conclusion,version,obj
@@ -1688,7 +1688,7 @@ function solvepol(st,system,link,init,varmap,nbopb)
     push!(stack,eq)
     push!(link,id)
     lastsaturate = false
-    for j in 3:length(st)
+    for j in 3:length(st)-1 #we dont take the last ';'
         i=st[j]
         if i=="+"
             push!(stack,addeq(pop!(stack),pop!(stack)))     
@@ -1735,7 +1735,7 @@ function solvepol(st,system,link,init,varmap,nbopb)
     lits = eq.t
     lits2 = removenulllits(lits)
     if length(link)==2
-        link[1] = -3
+        link[1] = -3 # transform pol to ia 
     end
     res = Eq(lits2,eq.b)
     if CONFIG.LPsimplif
@@ -1894,9 +1894,9 @@ function readsubproof(system,systemlink,eq,w,c,f,varmap)
     return redid:c-1,pgranges,c
 end
 function readred(system,systemlink,st,varmap,redwitness,redid,f,prism)
-    i = findfirst(x->x==";",st)
+    i = findfirst(x->x==":",st)
     eq = readeq(st[2:i],varmap)
-    j = findlast(x->x==";",st)
+    j = findlast(x->x==":",st)
     if i==j # detect the word begin
         j=length(st)
     end
@@ -1943,13 +1943,12 @@ function readveripb(path,file,system,varmap,obj)
                     eq = solvepol(st,system,systemlink[end],c,varmap,nbopb)
                     if !(length(eq.t)!=0 || eq.b!=0) printstyled("POL empty"; color=:red) end
                 elseif type == "ia"
-                    l = 0
-                    if st[end] == ";" 
-                        eq = readeq(st,varmap,2:2:length(st)-4)
+                    if st[end-2] != ":" 
+                        eq = readeq(st,varmap,2:2:length(st)-5)
                         printstyled("missing ia ID ";color = :red)
                     else
-                        eq = readeq(st,varmap,2:2:length(st)-5)
-                        l = parse(Int,st[end])
+                        eq = readeq(st,varmap,2:2:length(st)-6)
+                        l = parse(Int,st[end-1])
                         if l<0
                             l = c+l
                         end
@@ -1978,10 +1977,10 @@ function readveripb(path,file,system,varmap,obj)
                     elseif !isequal(system[end],Eq([],1)) && (conclusion == "SAT" || conclusion == "NONE")
                         printstyled("SAT Not supported.."; color=:red)
                     end
-                elseif !(type in ["*trim","#","w","*","f","d","del","end","pseudo-Boolean"])#,"de","co","en","ps"])
+                elseif !(type in ["%","wiplvl","setlvl","f","d","del","end","pseudo-Boolean"])#,"de","co","en","ps"])
                     printstyled("unknown2: ",ss; color=:red)
                 end
-                if length(eq.t)!=0 || eq.b!=0
+                if length(eq.t)!=0 || eq.b!=0 # the eq is not empty
                     normcoefeq(eq)
                     push!(system,eq)
                     c+=1
