@@ -1478,12 +1478,10 @@ end
 function readvar(s,varmap)
     tmp = s[1]=='~' ? s[2:end] : s
     # tmp = split(s,'~')[end]
-    for i in eachindex(varmap)
-        if varmap[i]==tmp
-            return i
-        end
+    if haskey(varmap,tmp)
+        return varmap[tmp]
     end
-    push!(varmap,tmp)
+    varmap[tmp] = length(varmap)+1
     return length(varmap)
 end
 function readeq(st,varmap)
@@ -1535,7 +1533,7 @@ function remove(s,st)
 end
 function readopb(path,file)
     system = Eq[]
-    varmap = String[]
+    varmap = Dict{String,Int}()
     obj = ""
     open(string(path,'/',file,".opb"),"r"; lock = false) do f
         for ss in eachline(f)
@@ -1558,7 +1556,7 @@ function readopb(path,file)
 end
 function readopb2(path,file)
     system = Eq[]
-    varmap = String[]
+    varmap = Dict{String,Int}()
     obj = ""
     open(string(path,'/',file,".opb"),"r"; lock = false) do f
         while !eof(f)
