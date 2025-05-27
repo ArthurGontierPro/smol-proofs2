@@ -125,19 +125,22 @@ function main()
 end
 function runchecker(formule,preuve)
     cd();cd(CONFIG.pbopath)
+    v1 = 0
     if CONFIG.trace
-        v1 = run(`timeout $tl cargo r -- $formule $preuve `)
+        v1 = read(`timeout $tl cargo r -- $formule $preuve `)
     else
         redirect_stdio(stdout = devnull,stderr = devnull) do
-            v1 = run(`timeout $tl cargo r -- $formule $preuve `)
+            v1 = read(`timeout $tl cargo r -- $formule $preuve `)
         end
     end
+    return v1
 end
 function runtrimmer(file)
+    v1 = v2 = 0
     tvp = @elapsed begin if CONFIG.veripb
-        runchecker("$proofs/$file.opb","$proofs/$file$extention")
+        v1 = runchecker("$proofs/$file.opb","$proofs/$file$extention")
     end end
-    printstyled(prettytime(tvp),"  "; color = :cyan)
+    printstyled(prettytime(tvp),"  "; color = :blue)
     tri = @elapsed begin
         system,systemlink,redwitness,nbopb,varmap,output,conclusion,version,obj = readinstance(proofs,file)
     end
@@ -149,10 +152,12 @@ function runtrimmer(file)
     tms = @elapsed begin
         cone = makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness)
     end
-    printstyled(prettytime(tms),'\n'; color = :cyan)
+    printstyled(prettytime(tms),"  "; color = :green)
     twc = @elapsed begin
+        varmap = Dict(varmap[k] => k for k in keys(varmap)) # reverse the varmap (may be inneficient)
         writeconedel(proofs,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion,obj,prism)
     end
+    printstyled(prettytime(twc),"  "; color = :cyan)
     varocc = printorder(file,cone,invsys,varmap)
     succ = Vector{Vector{Int}}(undef,length(system))
     invlink(systemlink,succ,cone,nbopb)
@@ -166,8 +171,9 @@ function runtrimmer(file)
         ciaranshow(proofs,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
     end
     tvs = @elapsed begin if CONFIG.veripb
-        runchecker("$proofs/smol.$file.opb","$proofs/smol.$file$extention")
+        v2 = runchecker("$proofs/smol.$file.opb","$proofs/smol.$file$extention")
     end end
+    printstyled(prettytime(tvs),'\n'; color = :blue)
     so = stat(string(proofs,"/",file,".opb")).size + stat(string(proofs,"/",file,extention)).size
     st = stat(string(proofs,"/smol.",file,".opb")).size + stat(string(proofs,"/smol.",file,extention)).size
     if !CONFIG.veripb tvp = tvs = 0.1 end
@@ -724,7 +730,7 @@ function printorder(file,cone,invsys,varmap)
     s = "map<string,int> order { "     
     varocc = [sum(cone[j] for j in i) for i in invsys] # order from var usage in cone
     p = sortperm(varocc,rev=true)
-    for (var,i) in varmap
+    for (i,var) in varmap
         j = p[i]
         occ = varocc[j]
         s = string(s,"{\"",var,"\",",occ,"}, ")
@@ -829,7 +835,7 @@ function writeeq(e,varmap)
     return string(s,">= ",e.b," ;\n")
 end
 function writelit(l,varmap)
-    return string(l.coef," ",if l.sign "" else "~" end, getkey(varmap,l.var,0))
+    return string(l.coef," ",if l.sign "" else "~" end, varmap[l.var])
 end
 function isid(link,k)                 # dont put mult and div coefficients as id and weakned variables too
     return link[k]>0 && (k==length(link)||(link[k+1] != -2 && link[k+1] != -3))
@@ -1468,8 +1474,7 @@ end
 # ================ Parser ================
 
 function readinstance(path,file)
-    # system,varmap,obj = @time readopb2(path,file)
-    system,varmap,obj = @time readopb(path,file)
+    system,varmap,obj = readopb(path,file)
     nbopb = length(system)
     system,systemlink,redwitness,output,conclusion,version = readveripb(path,file,system,varmap,obj)
     return system,systemlink,redwitness,nbopb,varmap,output,conclusion,version,obj
