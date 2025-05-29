@@ -142,7 +142,7 @@ function runtrimmer(file)
     end end
     printstyled(prettytime(tvp),"  "; color = :blue)
     tri = @elapsed begin
-        system,systemlink,redwitness,nbopb,varmap,output,conclusion,version,obj = readinstance(proofs,file)
+        system,systemlink,redwitness,nbopb,varmap,ctrmap,output,conclusion,version,obj = readinstance(proofs,file)
     end
     printstyled(prettytime(tri),"  "; color = :cyan)
     normcoefsystem(system)
@@ -195,7 +195,6 @@ function runtrimmer(file)
         end
     end
 end
-
 
 
 
@@ -1474,10 +1473,10 @@ end
 # ================ Parser ================
 
 function readinstance(path,file)
-    system,varmap,obj = readopb(path,file)
+    system,varmap,ctrmap,obj = readopb(path,file)
     nbopb = length(system)
-    system,systemlink,redwitness,output,conclusion,version = readveripb(path,file,system,varmap,obj)
-    return system,systemlink,redwitness,nbopb,varmap,output,conclusion,version,obj
+    system,systemlink,redwitness,output,conclusion,version = readveripb(path,file,system,varmap,ctrmap,obj)
+    return system,systemlink,redwitness,nbopb,varmap,ctrmap,output,conclusion,version,obj
 end
 function readvar(s,varmap)
     tmp = s[1]=='~' ? s[2:end] : s
@@ -1538,11 +1537,17 @@ end
 function readopb(path,file)
     system = Eq[]
     varmap = Dict{String,Int}()
+    ctrmap = Dict{String, Int}()
     obj = ""
     open(string(path,'/',file,".opb"),"r"; lock = false) do f
+        c = 1
         for ss in eachline(f)
             if ss[1] != '*'                                 # do not parse comments
-                st = split(ss,keepempty=false)              # structure of a line is: int var int var ... >= int ; 
+                st = split(ss,keepempty=false)              # structure of a line is: int var int var ... >= int ;                 
+                if st[1][1]=='@'
+                    ctrmap[st[1][2:end]] = c
+                    st = st[2:end] # remove the @label
+                end
                 if ss[1] == 'm'
                     obj = readobj(st,varmap)
                 else
@@ -1552,11 +1557,12 @@ function readopb(path,file)
                     end
                     normcoefeq(eq)
                     push!(system, eq)
+                    c+=1
                 end
             end
         end
     end
-    return system,varmap,obj
+    return system,varmap,ctrmap,obj
 end
 function readopb2(path,file)
     system = Eq[]
@@ -1680,7 +1686,8 @@ function copyeq(eq)
     return Eq([Lit(l.coef,l.sign,l.var) for l in eq.t], eq.b)
 end
 function solvepol(st,system,link,init,varmap,ctrmap,nbopb)
-    id = parse(Int,st[2])
+    i = st[2]
+    id = i[1]=='@' ? ctrmap[i[2:end]] : parse(Int,i)
     if id<1
         id = init+id
     end
@@ -1924,10 +1931,23 @@ function readred(system,systemlink,st,varmap,ctrmap,redwitness,redid,f,prism)
     redwitness[length(system)] = Red(w,range,pgranges)
     return c+1
 end
-function readveripb(path,file,system,varmap,obj)
+function readia(st,varmap,ctrmap,eq,c)
+    if st[end-2] != ":" 
+        eq = readeq(st,varmap,2:2:length(st)-5)
+        printstyled("missing ia ID ";color = :red)
+    else
+        eq = readeq(st,varmap,2:2:length(st)-6)
+        l = st[end-1]
+        l = l[1]=='@' ? ctrmap[l[2:end]] : parse(Int,l)
+        if l<0
+            l = c+l
+        end
+    end
+    return eq,l
+end
+function readveripb(path,file,system,varmap,ctrmap,obj)
     systemlink = Vector{Vector{Int}}()
     redwitness = Dict{Int, Red}()
-    ctrmap = Dict{String, Int}()
     prism = Vector{UnitRange{Int64}}() # the subproofs should not be available to all
     output = conclusion = ""
     c = length(system)+1
@@ -1950,17 +1970,7 @@ function readveripb(path,file,system,varmap,obj)
                     eq = solvepol(st,system,systemlink[end],c,varmap,ctrmap,nbopb)
                     if !(length(eq.t)!=0 || eq.b!=0) printstyled("POL empty"; color=:red) end
                 elseif type == "ia"
-                    if st[end-2] != ":" 
-                        eq = readeq(st,varmap,2:2:length(st)-5)
-                        printstyled("missing ia ID ";color = :red)
-                    else
-                        eq = readeq(st,varmap,2:2:length(st)-6)
-                        l = st[end-1]
-                        l = l[1]=='@' ? ctrmap[l[2:end]] : parse(Int,l)
-                        if l<0
-                            l = c+l
-                        end
-                    end
+                    eq,l = readia(st,varmap,ctrmap,eq,c)
                     push!(systemlink,[-3,l])
                 elseif type == "red"  
                     c = readred(system,systemlink,st,varmap,ctrmap,redwitness,c,f,prism)
@@ -1970,8 +1980,8 @@ function readveripb(path,file,system,varmap,obj)
                     eq = Eq([Lit(0,true,1)],15) # just to add something to not break the id count
                 elseif type == "soli" 
                     printstyled("BOUNDS Not supported(soli) "; color=:red)
-                    # push!(systemlink,[-6])
-                    # eq = findbound(system,st,c,varmap,obj)
+                    push!(systemlink,[-21])
+                    eq = findbound(system,st,c,varmap,obj)
                     eq = Eq([Lit(0,true,1)],15) # just to add something to not break the id count
                 elseif type == "solx"         # on ajoute la negation de la sol au probleme pour chercher d'autres solutions. jusqua contradiction finale. dans la preuve c.est juste des contraintes pour casser toutes les soloutions trouvees
                     push!(systemlink,[-20])
@@ -1985,7 +1995,7 @@ function readveripb(path,file,system,varmap,obj)
                     elseif !isequal(system[end],Eq([],1)) && (conclusion == "SAT" || conclusion == "NONE")
                         printstyled("SAT Not supported.."; color=:red)
                     end
-                elseif !(type in ["%","wiplvl","setlvl","f","d","del","end","pseudo-Boolean"])#,"de","co","en","ps"])
+                elseif !(type in ["%","*","wiplvl","w","setlvl","#","f","d","del","end","pseudo-Boolean"])#,"de","co","en","ps"])
                     printstyled("unknown2: ",ss; color=:red)
                 end
                 if length(eq.t)!=0 || eq.b!=0 # the eq is not empty
