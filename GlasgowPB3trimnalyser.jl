@@ -1791,6 +1791,10 @@ function findfullassi(system,st,init,varmap,prism)
             end
         end
     end
+    return assi
+end
+function solbreakingctr(system,st,init,varmap,prism)
+    assi = findfullassi(system,st,init,varmap,prism)
     lits = Vector{Lit}(undef,length(assi))
     for i in eachindex(assi)
         if assi[i]==0
@@ -1800,8 +1804,22 @@ function findfullassi(system,st,init,varmap,prism)
             lits[i] = Lit(1,assi[i]!=1,i) # we add the negation of the assignement
         end
     end
-    eq = Eq(lits,1)
-    return eq
+    return Eq(lits,1)
+end
+function findbound(system,st,c,varmap,prism,obj,solirecord)
+    assi = findfullassi(system,st,init,varmap,prism)
+    lits = Vector{Lit}(undef,length(assi))
+    for i in eachindex(assi)
+        lits[i] = Lit(1,assi[i],i) # we add the assignement
+    end
+    solirecord[c] = lits
+    b = 0
+    for l in obj        #compute the bound
+        if assi[l.var]
+            b+= l.coef
+        end
+    end
+    return Eq(obj,b)
 end
 function readwitnessvar(s,varmap)
     if s=="0"
@@ -1948,6 +1966,7 @@ end
 function readveripb(path,file,system,varmap,ctrmap,obj)
     systemlink = Vector{Vector{Int}}()
     redwitness = Dict{Int, Red}()
+    solirecord = Dict{Int, Eq}()
     prism = Vector{UnitRange{Int64}}() # the subproofs should not be available to all
     output = conclusion = ""
     c = length(system)+1
@@ -1982,10 +2001,9 @@ function readveripb(path,file,system,varmap,ctrmap,obj)
                     printstyled("BOUNDS Not supported(soli) "; color=:red)
                     push!(systemlink,[-21])
                     eq = findbound(system,st,c,varmap,obj)
-                    eq = Eq([Lit(0,true,1)],15) # just to add something to not break the id count
                 elseif type == "solx"         # on ajoute la negation de la sol au probleme pour chercher d'autres solutions. jusqua contradiction finale. dans la preuve c.est juste des contraintes pour casser toutes les soloutions trouvees
                     push!(systemlink,[-20])
-                    eq = findfullassi(system,st,c,varmap,prism)
+                    eq = solbreakingctr(system,st,c,varmap,prism)
                 elseif type == "output"
                     output = st[2]
                 elseif type == "conclusion"
