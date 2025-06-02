@@ -142,20 +142,20 @@ function runtrimmer(file)
     end end
     printstyled(prettytime(tvp),"  "; color = :blue)
     tri = @elapsed begin
-        system,systemlink,redwitness,nbopb,varmap,ctrmap,output,conclusion,version,obj = readinstance(proofs,file)
+        system,systemlink,redwitness,solirecord,nbopb,varmap,ctrmap,output,conclusion,version,obj = readinstance(proofs,file)
     end
     printstyled(prettytime(tri),"  "; color = :cyan)
     normcoefsystem(system)
     invsys = getinvsys(system,systemlink,varmap)
     prism = availableranges(redwitness)
-    if conclusion in ["BOUNDS"] || conclusion in ["SAT","NONE"] && !isequal(system[end],Eq([],1)) return println() end
+    if conclusion in ["SAT","NONE"] && !isequal(system[end],Eq([],1)) return println() end
     tms = @elapsed begin
-        cone = makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness)
+        cone = makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclusion,obj)
     end
     printstyled(prettytime(tms),"  "; color = :green)
     twc = @elapsed begin
         varmap = Dict(varmap[k] => k for k in keys(varmap)) # reverse the varmap (may be inneficient)
-        writeconedel(proofs,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion,obj,prism)
+        writeconedel(proofs,file,version,system,cone,systemlink,redwitness,solirecord,nbopb,varmap,output,conclusion,obj,prism)
     end
     printstyled(prettytime(twc),"  "; color = :cyan)
     varocc = printorder(file,cone,invsys,varmap)
@@ -200,7 +200,7 @@ end
 
 # ================ Trimmer ================
 
-function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness)
+function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclusion,obj)
     n = length(system)
     antecedants = zeros(Bool,n)
     assi = zeros(Int8,length(varmap))
@@ -214,11 +214,38 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness)
             firstcontradiction = contradiction
         end
     end
+    if firstcontradiction == 0
+        if conclusion == "UNSAT"
+            printstyled("UNSAT contradiction not found in the system\n"; color = :red)
+            return cone
+        else
+            st = split(conclusion,keepempty=false)
+            if st[2] == "BOUNDS"
+                conclusion = "BOUNDS"
+                lowerbound = parse(Int,st[3])
+                for i in eachindex(system)
+                    if isobjlb(system[i],obj,lowerbound)
+                        firstcontradiction = i
+                        break;
+                    end
+                end
+            end
+        end
+    end
     cone[firstcontradiction] = true
     if systemlink[firstcontradiction-nbopb][1] == -2         # pol case
         fixfront(front,systemlink[firstcontradiction-nbopb])
     else
-        upquebit(system,invsys,assi,front,prism)
+        if conclusion=="UNSAT" || conclusion=="NONE"
+            upquebit(system,invsys,assi,front,prism)
+        elseif conclusion == "BOUNDS"
+            @time begin
+            if !rup(system,invsys,front,firstcontradiction,assi,front,cone,prism,0:0)
+                println("\n",firstcontradiction," s=",slack(reverse(system[firstcontradiction]),assi))
+                printeq(system[firstcontradiction-nbopb])
+                printstyled(" initial rup to look for bound contradiction failed \n"; color = :red)
+            end end
+        end
         # println("  init : ",sum(front))#,findall(front)
         append!(systemlink[firstcontradiction-nbopb],findall(front))
     end
@@ -242,9 +269,8 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness)
                             fixfront(front,antecedants)
                         else
                             println("\n",i," s=",slack(reverse(system[i]),assi))
-                            println(writepol(systemlink[i-1-nbopb],[i for i in eachindex(system)],varmap))
-                            println(writeeq(system[i-1],varmap))
-                            println(writeeq(system[i],varmap))
+                            println(systemlink[i-nbopb])
+                            printeq(system[i])
                             printstyled(" rup failed \n"; color = :red)
                             return cone
                         end
@@ -351,6 +377,17 @@ function slack(eq::Eq,assi::Vector{Int8}) # slack is the difference between the 
         c-= eq.b
     end
     return c
+end
+function isobjlb(eq::Eq,obj::Vector{Lit},lowerbound::Int)
+    if eq.b!=lowerbound || length(eq.t) != length(obj)
+        return false
+    end
+    for i in eachindex(eq.t)
+        if eq.t[i].coef != obj[i].coef || eq.t[i].sign != obj[i].sign || eq.t[i].var != obj[i].var # I can do that because both are sorted
+            return false
+        end 
+    end
+    return true
 end
 function addinvsys(invsys,eq,id)
     for l in eq.t
@@ -601,11 +638,15 @@ end
 
 # ================ Printer ================
 
-function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,varmap,output,conclusion,obj,prism)
+function writeconedel(path,file,version,system,cone,systemlink,redwitness,solirecord,nbopb,varmap,output,conclusion,obj,prism)
     index = zeros(Int,length(system))
     lastindex = 0
     open(string(path,"/smol.",file,".opb"),"w") do f
-        write(f,obj)
+        if length(obj)>0
+            write(f,"min: ")
+            write(f,writelits(obj,varmap))
+            write(f," ;\n")
+        end
         for i in 1:nbopb
             if cone[i]
                 lastindex += 1
@@ -676,10 +717,10 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,
                         end
                     end
                 elseif tlink == -20           # solx
-                    write(f,writesol(eq,varmap))
+                    write(f,writesolx(eq,varmap))
                     dels[i] = true # do not delete sol
-                # elseif tlink == -6           # soli
-                    # write(f,writesol(eq,varmap)) #TODO
+                elseif tlink == -21           # soli
+                    write(f,writesoli(solirecord[i]),varmap)
                     # dels[i] = true # do not delete sol
                 else
                     println("ERROR tlink = ",tlink)
@@ -687,13 +728,15 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,nbopb,
                 end
             end
         end
-        write(f,string("output ",output,"\n"))
+        write(f,string("output ",output," ;\n"))
         if conclusion == "SAT"
-            write(f,string("conclusion ",conclusion,";\n"))
-        else
-            write(f,string("conclusion ",conclusion," : -1;\n"))
+            write(f,string("conclusion ",conclusion," ;\n"))
+        elseif conclusion == "UNSAT"
+            write(f,string("conclusion ",conclusion," : -1 ;\n"))
+        else # conclusion == "NONE" or "BOUNDS"
+            write(f,string(replace(conclusion,";"=>"")," ;\n"))
         end
-        write(f,"end pseudo-Boolean proof;")
+        write(f,"end pseudo-Boolean proof ;")
     end
 end
 function invlink(systemlink,succ::Vector{Vector{Int}},cone,nbopb)
@@ -750,12 +793,19 @@ end
 function writeia(e,link,index,varmap)
     return string("ia ",writeeq(e,varmap)[1:end-2],": ",index[link]," ;\n")
 end
-function writesol(e,varmap)
+function writesolx(e,varmap)
     s = "solx"
     for l in e.t
         s = string(s,if l.sign " ~" else " " end, varmap[l.var])
     end
-    return string(s,"\n")
+    return string(s," ;\n")
+end
+function writesoli(sol,varmap)
+    s = "soli"
+    for l in sol
+        s = string(s,if l.sign " " else " ~" end, varmap[l.var])
+    end
+    return string(s," ;\n")
 end
 function writewitness(s,witness,varmap)
     for l in witness.w
@@ -826,11 +876,15 @@ function writedel(f,systemlink,i,succ,index,nbopb,dels)
         write(f,string(" ;\n"))
     end
 end
-function writeeq(e,varmap)
+function writelits(lits,varmap)
     s = ""
-    for l in e.t
+    for l in lits
         s = string(s,writelit(l,varmap)," ")
     end
+    return s
+end
+function writeeq(e,varmap)
+    s = writelits(e.t,varmap)
     return string(s,">= ",e.b," ;\n")
 end
 function writelit(l,varmap)
@@ -1475,8 +1529,8 @@ end
 function readinstance(path,file)
     system,varmap,ctrmap,obj = readopb(path,file)
     nbopb = length(system)
-    system,systemlink,redwitness,output,conclusion,version = readveripb(path,file,system,varmap,ctrmap,obj)
-    return system,systemlink,redwitness,nbopb,varmap,ctrmap,output,conclusion,version,obj
+    system,systemlink,redwitness,solirecord,output,conclusion,version = readveripb(path,file,system,varmap,ctrmap,obj)
+    return system,systemlink,redwitness,solirecord,nbopb,varmap,ctrmap,output,conclusion,version,obj
 end
 function readvar(s,varmap)
     tmp = s[1]=='~' ? s[2:end] : s
@@ -1548,7 +1602,7 @@ function readopb(path,file)
                     ctrmap[st[1][2:end]] = c
                     st = st[2:end] # remove the @label
                 end
-                if ss[1] == 'm'
+                if ss[1] == 'm'                     # objective function (only minimization is supported)
                     obj = readobj(st,varmap)
                 else
                     eq = readeq(st,varmap)
@@ -1697,9 +1751,11 @@ function solvepol(st,system,link,init,varmap,ctrmap,nbopb)
     push!(stack,eq)
     push!(link,id)
     lastsaturate = false
-    for j in 3:length(st)-1 #we dont take the last ';'
+    for j in 3:length(st) 
         i=st[j]
-        if i=="+"
+        if i == ";" #we dont take the last ';'
+            continue
+        elseif i=="+"
             push!(stack,addeq(pop!(stack),pop!(stack)))     
             push!(link,-1)
         elseif i=="*"
@@ -1776,10 +1832,9 @@ function findfullassi(system,st,init,varmap,prism)
                     printstyled(" !sol"; color = :red)
                     print(" ",i," ")
                     println(st)
-                    println(writeeq(eq,varmap))
                     printeq(eq)
                     lits = [Lit(l.coef,!l.sign,l.var) for l in lits]
-                    return Eq(lits,1)
+                    return assi
                 else
                     for l in eq.t                    
                         if l.coef > s && assi[l.var]==0
@@ -1799,7 +1854,6 @@ function solbreakingctr(system,st,init,varmap,prism)
     for i in eachindex(assi)
         if assi[i]==0
             printstyled(" !FA"; color = :blue)
-            println(varmap[i]," not assigned ")
         else
             lits[i] = Lit(1,assi[i]!=1,i) # we add the negation of the assignement
         end
@@ -1807,19 +1861,24 @@ function solbreakingctr(system,st,init,varmap,prism)
     return Eq(lits,1)
 end
 function findbound(system,st,c,varmap,prism,obj,solirecord)
-    assi = findfullassi(system,st,init,varmap,prism)
+    assi = findfullassi(system,st,c,varmap,prism)
     lits = Vector{Lit}(undef,length(assi))
     for i in eachindex(assi)
-        lits[i] = Lit(1,assi[i],i) # we add the assignement
+        if assi[i]==0
+            printstyled(" !FA"; color = :blue)
+        else
+            lits[i] = Lit(1,assi[i]==1,i) # we add the assignement
+        end
     end
     solirecord[c] = lits
     b = 0
     for l in obj        #compute the bound
-        if assi[l.var]
+        if assi[l.var]==1 && l.sign || assi[l.var]==2 && !l.sign
             b+= l.coef
         end
     end
-    return Eq(obj,b)
+    negobj = [Lit(-l.coef,l.sign,l.var) for l in obj] # we negate the objective
+    return Eq(negobj,-b+1)  # -b+1 because we want the bound to be strictly lower
 end
 function readwitnessvar(s,varmap)
     if s=="0"
@@ -1966,7 +2025,7 @@ end
 function readveripb(path,file,system,varmap,ctrmap,obj)
     systemlink = Vector{Vector{Int}}()
     redwitness = Dict{Int, Red}()
-    solirecord = Dict{Int, Eq}()
+    solirecord = Dict{Int, Vector{Lit}}()
     prism = Vector{UnitRange{Int64}}() # the subproofs should not be available to all
     output = conclusion = ""
     c = length(system)+1
@@ -1998,18 +2057,18 @@ function readveripb(path,file,system,varmap,ctrmap,obj)
                     printstyled("SAT Not supported."; color=:red)
                     eq = Eq([Lit(0,true,1)],15) # just to add something to not break the id count
                 elseif type == "soli" 
-                    printstyled("BOUNDS Not supported(soli) "; color=:red)
                     push!(systemlink,[-21])
-                    eq = findbound(system,st,c,varmap,obj)
+                    eq = findbound(system,st,c,varmap,prism,obj,solirecord)
                 elseif type == "solx"         # on ajoute la negation de la sol au probleme pour chercher d'autres solutions. jusqua contradiction finale. dans la preuve c.est juste des contraintes pour casser toutes les soloutions trouvees
                     push!(systemlink,[-20])
                     eq = solbreakingctr(system,st,c,varmap,prism)
                 elseif type == "output"
-                    output = st[2]
+                    output = replace(st[2],";"=>"")
                 elseif type == "conclusion"
-                    conclusion = st[2]
+                    conclusion = replace(st[2],";"=>"")
                     if conclusion == "BOUNDS"
-                        printstyled("BOUNDS Not supported. "; color=:red)
+                        conclusion = ss
+                        # printstyled("BOUNDS Not supported. "; color=:red)
                     elseif !isequal(system[end],Eq([],1)) && (conclusion == "SAT" || conclusion == "NONE")
                         printstyled("SAT Not supported.."; color=:red)
                     end
@@ -2024,7 +2083,7 @@ function readveripb(path,file,system,varmap,ctrmap,obj)
             end
         end
     end
-    return system,systemlink,redwitness,output,conclusion,version
+    return system,systemlink,redwitness,solirecord,output,conclusion,version
 end
 
 
