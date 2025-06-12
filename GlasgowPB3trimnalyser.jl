@@ -27,11 +27,13 @@ struct Options
     order::Bool     # output the variable usage rates in order
     LPsimplif::Bool # simplificaiton of pol by LP (need more work)
     timelimit::Int  # time limit (one month default)
+    flamegraphprofile::Bool  # make a flamegraph profile in html
 end
 function parseargs(args)
     ins = ""
     proofs = pwd()*"/"
     proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
+    # proofs = "/home/arthur_gla/veriPB/trim/smol-proofs2/Instances"
     pbopath = "/home/arthur_gla/veriPB/subgraphsolver/pboxide-dev"
     insid = 0
     tl = 2629800 # 1 month
@@ -43,6 +45,7 @@ function parseargs(args)
     adjm = false
     order = false
     LPsimplif = false
+    flamegraphprofile = false
     for (i, arg) in enumerate(args)
         if arg == "cd" cd() end # hack to add cd in paths
         if arg in ["noveripb","nv"] veripb = false end
@@ -52,6 +55,7 @@ function parseargs(args)
         if arg in ["varorder","order","vo"] order = true end
         if arg in ["cshow","show","cs","ciaran_show","ciaranshow"] cshow = true end
         if arg in ["--trace","-trace","trace","-tr","tr"] trace = true end
+        if arg in ["flamegraphprofile","fgp","fg","prof","profile"] flamegraphprofile = true end
         if arg in ["timelimit","tl"] tl = parse(Int, args[i+1]) end
         if arg in ["insid","ins"] insid = parse(Int, args[i+1]) end
         if ispath(arg)&&isdir(arg) 
@@ -77,7 +81,7 @@ function parseargs(args)
     if split(ins,'.')[end] in ["opb","pbp"] ins = ins[1:end-4] end
     if proofs!="" print("Dir:$proofs ") end
     if ins!="" print("Ins:$ins ") end
-    return Options(ins,insid,proofs,pbopath,sort,veripb,trace,cshow,adjm,order,LPsimplif,tl)
+    return Options(ins,insid,proofs,pbopath,sort,veripb,trace,cshow,adjm,order,LPsimplif,tl,flamegraphprofile)
 end
 const CONFIG = parseargs(ARGS)
 const proofs = CONFIG.proofs
@@ -112,11 +116,13 @@ function main()
             p = sortperm(stats)
         else p = [i for i in eachindex(list)] end
         println(list[p])
+        printstyled("No  "; color = :white); printstyled("ins_name "; color = :yellow); printstyled("verif "; color = :blue); printstyled("parse "; color = :cyan); printstyled("trim "; color = :green); printstyled("write "; color = :cyan); printstyled("small_verif \n"; color = :blue)
         if CONFIG.insid>0
             ins = list[p[CONFIG.insid]]
             print(CONFIG.insid,' ');printstyled(ins,"  "; color = :yellow)
             runtrimmer(ins)
         else for i in eachindex(list)
+        # else for i in 1:30
             ins = list[p[i]]
             print(i,' ');printstyled(ins,"  "; color = :yellow)
             runtrimmer(ins)
@@ -149,6 +155,7 @@ function runtrimmer(file)
     invsys = getinvsys(system,systemlink,varmap)
     prism = availableranges(redwitness)
     if conclusion in ["SAT","NONE"] && !isequal(system[end],Eq([],1)) return println() end
+
     tms = @elapsed begin
         cone = makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclusion,obj)
     end
@@ -327,7 +334,7 @@ function rup(system,invsys,antecedants,init,assi,front,cone,prism,subrange)# I a
     prio = true
     r0 = i = 1
     r1 = init+1
-    while i<=init
+    @inbounds while i<=init
         if que[i] && (!prio || (prio&&(front[i]||cone[i]))) && (!inprism(i,prism) || (i in subrange))
             eq = i==init ? rev : system[i]
             s = slack(eq,assi)
@@ -366,10 +373,12 @@ function rup(system,invsys,antecedants,init,assi,front,cone,prism,subrange)# I a
 end
 function slack(eq::Eq,assi::Vector{Int8}) # slack is the difference between the space left to catch the bound and the space catchable by the unaffected variables.
     c=0
-    for l in eq.t
-        if assi[l.var] == 0 || 
-            (l.sign && assi[l.var] == 1) || 
-            (!l.sign && assi[l.var] == 2) 
+    val = zero(Int8)
+    @inbounds for l in eq.t
+        val = assi[l.var]
+        if val == 0 || 
+            (l.sign && val == 1) || 
+            (!l.sign && val == 2) 
             c+=l.coef
         end
     end
@@ -422,7 +431,7 @@ end
 function upquebit(system,invsys,assi,antecedants,prism)
     que = ones(Bool,length(system))
     i = 1
-    while i<=length(system)
+    @inbounds while i<=length(system)
         if que[i] && !inprism(i,prism)
             eq = system[i]
             s = slack(eq,assi)
@@ -440,7 +449,7 @@ function upquebit(system,invsys,assi,antecedants,prism)
     printstyled(" upQueBit empty "; color = :red)
 end
 function updateprioquebit(eq,cone,front,que,invsys,s,i,init,assi::Vector{Int8},antecedants,r0,r1)
-    for l in eq.t
+    @inbounds for l in eq.t
         if l.coef > s && assi[l.var]==0
             assi[l.var] = l.sign ? 1 : 2
             antecedants[i] = true
@@ -2086,7 +2095,9 @@ function readveripb(path,file,system,varmap,ctrmap,obj)
     return system,systemlink,redwitness,solirecord,output,conclusion,version
 end
 
-
-
-
-main()
+# using StatProfilerHTML;             # activate this line to unable profiling
+if CONFIG.flamegraphprofile
+    # @profilehtml main()             # activate this line to unable profiling
+else
+    main()
+end
