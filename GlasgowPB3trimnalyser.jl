@@ -1,13 +1,13 @@
 #= This file has the following sections
     Main, Trimmer, Printer, and Parser
 Command to run trim allinstances in the current directory is:
-    julia GlasgowPBtrimnalyser.jl
+    julia GlasgowPB3trimnalyser.jl
 You can specify an instance and a path and have the following options.
     show        to have the html colored prettyprint
     adj         to ha the adjacency matrix print in html
     noveripb    to not make the veripb comparison on the instance and the small one
 Example with options:
-    julia GlasgowPBtrimnalyser.jl noveripb path instance show adj tl 600
+    julia GlasgowPB3trimnalyser.jl noveripb path instance show adj tl 600
 
 cargo r -- /home/arthur_gla/veriPB/proofs/small/linear_equality_test.opb out.pbp --trace
 =#
@@ -731,6 +731,8 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,solire
                 elseif tlink == -21           # soli
                     write(f,writesoli(solirecord[i]),varmap)
                     # dels[i] = true # do not delete sol
+                elseif tlink == -30           # unchecked assumption
+                    write(f,string("a ",writeeq(eq,varmap)))
                 else
                     println("ERROR tlink = ",tlink)
                     lastindex -= 1
@@ -2056,6 +2058,9 @@ function readveripb(path,file,system,varmap,ctrmap,obj)
                     push!(systemlink,[-2])
                     eq = solvepol(st,system,systemlink[end],c,varmap,ctrmap,nbopb)
                     if !(length(eq.t)!=0 || eq.b!=0) printstyled("POL empty"; color=:red) end
+                elseif type == "a"  # unchecked assumption
+                    eq = readeq(st,varmap,2:2:length(st)-4)
+                    push!(systemlink,[-30])
                 elseif type == "ia"
                     eq,l = readia(st,varmap,ctrmap,eq,c)
                     push!(systemlink,[-3,l])
