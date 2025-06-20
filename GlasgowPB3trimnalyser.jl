@@ -33,8 +33,10 @@ function parseargs(args)
     ins = ""
     proofs = pwd()*"/"
     proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
+    # proofs = "/scratch/matthew/huub2/"
     # proofs = "/home/arthur_gla/veriPB/trim/smol-proofs2/Instances"
     pbopath = "/home/arthur_gla/veriPB/subgraphsolver/pboxide-dev"
+    # pbopath = "/home/arthur_gla/veriPB/subgraphsolver/ftrimer/pboxide-dev" # Berhan trimmer for testing.
     insid = 0
     tl = 2629800 # 1 month
     # ins = "circuit_prune_root_test"
@@ -105,26 +107,28 @@ mutable struct Red                      # w: witness. range: id range from beign
 end
 function main()
     if CONFIG.ins != ""
+        println()
+        print(" "^29);printstyled(CONFIG.ins,"  "; color = :yellow)
         runtrimmer(CONFIG.ins)
     else
         list = cd(readdir, proofs)
         list = [s for s in list if length(s)>5]
-        list = [s[1:end-4] for s in list if s[end-3:end]==".opb" && s[1:5]!="smol."]
-        list = [s for s in list if isfile(proofs*s*extention)]
+        list = [s[1:end-4] for s in list if s[end-3:end]==".pbp" && s[1:5]!="smol."]
+        # list = [s for s in list if isfile(proofs*s*extention)]
         if CONFIG.sort
-            stats = [stat(proofs*file*extention).size+stat(proofs*file*".opb").size for file in list]
+            stats = [stat(proofs*file*extention).size+ (if isfile(proofs*file*"opb") stat(proofs*file*".opb").size else 0 end) for file in list]
             p = sortperm(stats)
         else p = [i for i in eachindex(list)] end
         println(list[p])
-        printstyled("No  "; color = :white); printstyled("ins_name "; color = :yellow); printstyled("verif "; color = :blue); printstyled("parse "; color = :cyan); printstyled("trim "; color = :green); printstyled("write "; color = :cyan); printstyled("small_verif \n"; color = :blue)
+ printstyled("smolV "; color = :blue); printstyled("write "; color = :cyan); printstyled("trim "; color = :green); printstyled("parse "; color = :cyan); printstyled("Verif "; color = :blue); printstyled("No "; color = :white); printstyled("proof_name \n"; color = :yellow);
         if CONFIG.insid>0
             ins = list[p[CONFIG.insid]]
-            print(CONFIG.insid,' ');printstyled(ins,"  "; color = :yellow)
+            print(" "^29);print(CONFIG.insid,' ');printstyled(ins,"  "; color = :yellow)
             runtrimmer(ins)
         else for i in eachindex(list)
         # else for i in 1:30
             ins = list[p[i]]
-            print(i,' ');printstyled(ins,"  "; color = :yellow)
+            print(" "^29);print(i,' ');printstyled(ins,"  "; color = :yellow)
             runtrimmer(ins)
         end end
     end
@@ -133,7 +137,8 @@ function runchecker(formule,preuve)
     cd();cd(CONFIG.pbopath)
     v1 = 0
     if CONFIG.trace
-        v1 = read(`timeout $tl cargo r -- $formule $preuve `)
+        v1 = run(`timeout $tl cargo r -- --trace $formule $preuve `)
+        # v1 = run(`timeout $tl cargo r -- --trim $formule $preuve --elaborate out.tmp `)
     else
         redirect_stdio(stdout = devnull,stderr = devnull) do
             v1 = read(`timeout $tl cargo r -- $formule $preuve `)
@@ -146,11 +151,12 @@ function runtrimmer(file)
     tvp = @elapsed begin if CONFIG.veripb
         v1 = runchecker("$proofs/$file.opb","$proofs/$file$extention")
     end end
-    printstyled(prettytime(tvp),"  "; color = :blue)
+    printstyled("\r"," "^24,prettytime(tvp)," "; color = :blue)
     tri = @elapsed begin
-        system,systemlink,redwitness,solirecord,nbopb,varmap,ctrmap,output,conclusion,version,obj = readinstance(proofs,file)
+        system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,version,obj 
+        = readinstance(proofs,file)
     end
-    printstyled(prettytime(tri),"  "; color = :cyan)
+    printstyled("\r"," "^18,prettytime(tri),"  "; color = :cyan)
     normcoefsystem(system)
     invsys = getinvsys(system,systemlink,varmap)
     prism = availableranges(redwitness)
@@ -159,12 +165,13 @@ function runtrimmer(file)
     tms = @elapsed begin
         cone = makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclusion,obj)
     end
-    printstyled(prettytime(tms),"  "; color = :green)
+
+    printstyled("\r"," "^12,prettytime(tms),"  "; color = :green)
     twc = @elapsed begin
         varmap = Dict(varmap[k] => k for k in keys(varmap)) # reverse the varmap (may be inneficient)
-        writeconedel(proofs,file,version,system,cone,systemlink,redwitness,solirecord,nbopb,varmap,output,conclusion,obj,prism)
+        writeconedel(proofs,file,version,system,cone,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,output,conclusion,obj,prism)
     end
-    printstyled(prettytime(twc),"  "; color = :cyan)
+    printstyled("\r"," "^6,prettytime(twc),"  "; color = :cyan)
     varocc = printorder(file,cone,invsys,varmap)
     succ = Vector{Vector{Int}}(undef,length(system))
     invlink(systemlink,succ,cone,nbopb)
@@ -180,7 +187,7 @@ function runtrimmer(file)
     tvs = @elapsed begin if CONFIG.veripb
         v2 = runchecker("$proofs/smol.$file.opb","$proofs/smol.$file$extention")
     end end
-    printstyled(prettytime(tvs),'\n'; color = :blue)
+    printstyled("\r",prettytime(tvs),'\n'; color = :blue)
     so = stat(string(proofs,"/",file,".opb")).size + stat(string(proofs,"/",file,extention)).size
     st = stat(string(proofs,"/smol.",file,".opb")).size + stat(string(proofs,"/smol.",file,extention)).size
     if !CONFIG.veripb tvp = tvs = 0.1 end
@@ -196,7 +203,7 @@ function runtrimmer(file)
         write(f,string(t[1],",\n"))
     end
     if CONFIG.veripb && v1!=v2
-        printstyled("Traces are not identical\n"; color = :red)
+        printstyled("\nTraces are not identical\n"; color = :red)
         open(string(proofs,"/afailedtrims"), "a") do f
             write(f,string(file," \n"))
         end
@@ -219,11 +226,12 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
     for contradiction in contradictions
         if !inprism(contradiction,prism)
             firstcontradiction = contradiction
+            break
         end
     end
     if firstcontradiction == 0
         if conclusion == "UNSAT"
-            printstyled("UNSAT contradiction not found in the system\n"; color = :red)
+            printstyled("\nUNSAT contradiction not found in the system\n"; color = :red)
             return cone
         else
             st = split(conclusion,keepempty=false)
@@ -263,6 +271,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
         newpfgl = false
         while true in front
             i = findlast(front)
+            print("\r$i ")
             front[i] = false
             if !cone[i]
                 cone[i] = true
@@ -303,7 +312,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
                             antecedants[i] = false
                             append!(systemlink[i-nbopb],findall(antecedants))
                             fixfront(front,antecedants) 
-                        else printstyled(" subproof rup failed \n"; color = :red)
+                        else printstyled("\n subproof rup failed \n"; color = :red)
                         end
                     elseif tlink == -6 || tlink == -8   # subproof pol and proofgoal of a previous eq
                         antecedants .= false
@@ -324,6 +333,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
             end
         end
     end
+    # print("\033[K\033[A                   ")  # Efface la ligne et remonte d'une ligne
     fixredsystemlink(systemlink,cone,prism,nbopb)
     # printeqlink(935,system,systemlink)
     return cone
@@ -446,7 +456,7 @@ function upquebit(system,invsys,assi,antecedants,prism)
         end
         i+=1
     end
-    printstyled(" upQueBit empty "; color = :red)
+    printstyled(" upQueBit empty \n "; color = :red)
 end
 function updateprioquebit(eq,cone,front,que,invsys,s,i,init,assi::Vector{Int8},antecedants,r0,r1)
     @inbounds for l in eq.t
@@ -642,12 +652,18 @@ function remakelink()
     # TODO
 end
 
-
-
+# proofs = "/scratch/matthew/huub2/"
+# list = cd(readdir, proofs)
+# list = [s[1:end-4] for s in list if s[end-3:end]==".pbp" && s[end-7:end-3]!="smol."]
+# for l in list 
+#     open(string(proofs,l,".opb"),"w") do f
+#         write(f,"*dummy opb file\n")
+#     end
+# end
 
 # ================ Printer ================
 
-function writeconedel(path,file,version,system,cone,systemlink,redwitness,solirecord,nbopb,varmap,output,conclusion,obj,prism)
+function writeconedel(path,file,version,system,cone,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,output,conclusion,obj,prism)
     index = zeros(Int,length(system))
     lastindex = 0
     open(string(path,"/smol.",file,".opb"),"w") do f
@@ -1540,8 +1556,8 @@ end
 function readinstance(path,file)
     system,varmap,ctrmap,obj = readopb(path,file)
     nbopb = length(system)
-    system,systemlink,redwitness,solirecord,output,conclusion,version = readveripb(path,file,system,varmap,ctrmap,obj)
-    return system,systemlink,redwitness,solirecord,nbopb,varmap,ctrmap,output,conclusion,version,obj
+    system,systemlink,redwitness,solirecord,assertrecord,output,conclusion,version = readveripb(path,file,system,varmap,ctrmap,obj)
+    return system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,version,obj
 end
 function readvar(s,varmap)
     tmp = s[1]=='~' ? s[2:end] : s
@@ -2037,18 +2053,27 @@ function readveripb(path,file,system,varmap,ctrmap,obj)
     systemlink = Vector{Vector{Int}}()
     redwitness = Dict{Int, Red}()
     solirecord = Dict{Int, Vector{Lit}}()
+    assertrecord = Dict{Int, String}()
     prism = Vector{UnitRange{Int64}}() # the subproofs should not be available to all
     output = conclusion = ""
     c = length(system)+1
     nbopb = length(system)
     open(string(path,'/',file,extention),"r"; lock = false) do f
         for ss in eachline(f)
-            st = split(ss,keepempty=false)
-            if st[1][1]=='@'
-                ctrmap[st[1][2:end]] = c
-                st = st[2:end] # remove the @label
-            end
             if length(ss)>0
+                i = findfirst(x->x=='%',ss)
+                if !isnothing(i) # if the comment is at the beginning of the line
+                    if ss[1]=='a'
+                        # justifyable assertion
+                        assertrecord[c] = ss[i+1:end]
+                    end
+                    if i>1 ss = ss[1:i-1] end # remove the comment
+                end
+                st = split(ss,keepempty=false)
+                if st[1][1]=='@'
+                    ctrmap[st[1][2:end]] = c
+                    st = st[2:end] # remove the @label
+                end
                 type = st[1]
                 eq = Eq([],0)
                 if type == "u" || type == "rup"
@@ -2097,7 +2122,7 @@ function readveripb(path,file,system,varmap,ctrmap,obj)
             end
         end
     end
-    return system,systemlink,redwitness,solirecord,output,conclusion,version
+    return system,systemlink,redwitness,solirecord,assertrecord,output,conclusion,version
 end
 
 # using StatProfilerHTML;             # activate this line to unable profiling
@@ -2106,3 +2131,5 @@ if CONFIG.flamegraphprofile
 else
     main()
 end
+
+# scp arthur@fataepyc-01.dcs.gla.ac.uk:/scratch/matthew/huub2/word_equations_01_track_140-int-.smol.pbp word_equations_01_track_140-int-.smol.pbp

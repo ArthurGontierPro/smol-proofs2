@@ -211,6 +211,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness)
     for contradiction in contradictions
         if !inprism(contradiction,prism)
             firstcontradiction = contradiction
+            break
         end
     end
     cone[firstcontradiction] = true
