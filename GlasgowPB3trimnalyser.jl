@@ -1,5 +1,5 @@
 #= This file has the following sections
-    Main, Trimmer, Printer, and Parser
+    Main, Trimmer, Justifyer, Printer, and Parser
 Command to run trim allinstances in the current directory is:
     julia GlasgowPB3trimnalyser.jl
 You can specify an instance and a path and have the following options.
@@ -153,8 +153,8 @@ function runtrimmer(file)
     end end
     printstyled("\r"," "^24,prettytime(tvp)," "; color = :blue)
     tri = @elapsed begin
-        system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,version,obj 
-        = readinstance(proofs,file)
+        system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,version,
+        obj = readinstance(proofs,file)
     end
     printstyled("\r"," "^18,prettytime(tri),"  "; color = :cyan)
     normcoefsystem(system)
@@ -661,6 +661,31 @@ end
 #     end
 # end
 
+# =============== Justifyer ===============
+function justify(f,eq,i,asserthint,index,varmap)
+    st = split(asserthint,keepempty=false)
+    extrai = 0
+    if st[1] == "deg" # assert
+        extrai = justifydeg(f,eq,i,st[2:end],index,varmap)
+    end
+    return extrai
+end
+
+function justifydeg(f,eq,i,hints,index,varmap)
+    println(hints)
+    link = [2,parse(Int,hints[1])]
+    for i in 2:length(hints)-1
+        push!(link,parse(Int,hints[i]))
+        push!(link,-1)
+    end
+    push!(link,parse(Int,hints[end]))
+    push!(link,-4)
+    write(f,writepol(link,index,varmap))
+    write(f,writeia(eq,i,index,varmap))
+    write(f,string("del id ",i," ;\n"))
+    return 1 # number of extra lines
+end
+
 # ================ Printer ================
 
 function writeconedel(path,file,version,system,cone,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,output,conclusion,obj,prism)
@@ -748,7 +773,11 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,solire
                     write(f,writesoli(solirecord[i]),varmap)
                     # dels[i] = true # do not delete sol
                 elseif tlink == -30           # unchecked assumption
-                    write(f,string("a ",writeeq(eq,varmap)))
+                    if haskey(assertrecord,i)
+                        # lastindex += justify(f,eq,i,assertrecord[i],index,varmap)
+                    # else
+                        write(f,string("a ",writeeq(eq,varmap)))
+                    end
                 else
                     println("ERROR tlink = ",tlink)
                     lastindex -= 1
@@ -2124,6 +2153,9 @@ function readveripb(path,file,system,varmap,ctrmap,obj)
     end
     return system,systemlink,redwitness,solirecord,assertrecord,output,conclusion,version
 end
+
+
+
 
 # using StatProfilerHTML;             # activate this line to unable profiling
 if CONFIG.flamegraphprofile
