@@ -290,7 +290,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
                             printstyled(" rup failed \n"; color = :red)
                             return cone
                         end
-                    elseif tlink >= -3                  # pol and ia statements
+                    elseif tlink >= -3 || (tlink == -30 && length(systemlink[i-nbopb])>1)   # pol and ia statements and unchecked assertions without rup
                         antecedants .= false
                         fixante(systemlink,antecedants,i-nbopb)
                         fixfront(front,antecedants)
@@ -661,30 +661,34 @@ end
 #     end
 # end
 
+
+
 # =============== Justifyer ===============
+
 function justify(f,eq,i,asserthint,index,varmap)
     st = split(asserthint,keepempty=false)
     extrai = 0
-    if st[1] == "deg" # assert
+    if st[1] == "deg" # assert degree proof
         extrai = justifydeg(f,eq,i,st[2:end],index,varmap)
     end
     return extrai
 end
 
 function justifydeg(f,eq,i,hints,index,varmap)
-    println(hints)
-    link = [2,parse(Int,hints[1])]
+    link = [-2,parse(Int,hints[1])]
     for i in 2:length(hints)-1
         push!(link,parse(Int,hints[i]))
         push!(link,-1)
     end
     push!(link,parse(Int,hints[end]))
-    push!(link,-4)
+    push!(link,-1,-4)
     write(f,writepol(link,index,varmap))
-    write(f,writeia(eq,i,index,varmap))
-    write(f,string("del id ",i," ;\n"))
+    write(f, string("ia ",writeeq(eq,varmap)[1:end-2],": -1 ;\n"))
+    write(f,string("del id -2 ;\n"))
     return 1 # number of extra lines
 end
+
+
 
 # ================ Printer ================
 
@@ -774,8 +778,8 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,solire
                     # dels[i] = true # do not delete sol
                 elseif tlink == -30           # unchecked assumption
                     if haskey(assertrecord,i)
-                        # lastindex += justify(f,eq,i,assertrecord[i],index,varmap)
-                    # else
+                        lastindex += justify(f,eq,i,assertrecord[i],index,varmap)
+                    else
                         write(f,string("a ",writeeq(eq,varmap)))
                     end
                 else
@@ -2114,7 +2118,16 @@ function readveripb(path,file,system,varmap,ctrmap,obj)
                     if !(length(eq.t)!=0 || eq.b!=0) printstyled("POL empty"; color=:red) end
                 elseif type == "a"  # unchecked assumption
                     eq = readeq(st,varmap,2:2:length(st)-4)
-                    push!(systemlink,[-30])
+                    if haskey(assertrecord,c)
+                        hints = split(assertrecord[c],keepempty=false)[2:end]
+                        link = [-30]
+                        for i in eachindex(hints)
+                            push!(link,parse(Int,hints[i]))
+                        end
+                        push!(systemlink,link)
+                    else
+                        push!(systemlink,[-30])
+                    end
                 elseif type == "ia"
                     eq,l = readia(st,varmap,ctrmap,eq,c)
                     push!(systemlink,[-3,l])
