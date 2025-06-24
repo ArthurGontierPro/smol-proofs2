@@ -32,10 +32,11 @@ end
 function parseargs(args)
     ins = ""
     proofs = pwd()*"/"
-    proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
-    # proofs = "/scratch/matthew/huub2/"
+    # proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
+    proofs = "/scratch/matthew/huub3/"
     # proofs = "/home/arthur_gla/veriPB/trim/smol-proofs2/Instances"
-    pbopath = "/home/arthur_gla/veriPB/subgraphsolver/pboxide-dev"
+    # pbopath = "/home/arthur_gla/veriPB/subgraphsolver/pboxide-dev"
+    pbopath = "/pboxide-dev"
     # pbopath = "/home/arthur_gla/veriPB/subgraphsolver/ftrimer/pboxide-dev" # Berhan trimmer for testing.
     insid = 0
     tl = 2629800 # 1 month
