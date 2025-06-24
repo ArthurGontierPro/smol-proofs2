@@ -113,8 +113,8 @@ function main()
     else
         list = cd(readdir, proofs)
         list = [s for s in list if length(s)>5]
-        list = [s[1:end-4] for s in list if s[end-3:end]==".pbp" && s[1:5]!="smol."]
-        # list = [s for s in list if isfile(proofs*s*extention)]
+        list = [s[1:end-4] for s in list if s[end-3:end]==".opb" && s[1:5]!="smol."]
+        list = [s for s in list if isfile(proofs*s*extention)]
         if CONFIG.sort
             stats = [stat(proofs*file*extention).size+ (if isfile(proofs*file*"opb") stat(proofs*file*".opb").size else 0 end) for file in list]
             p = sortperm(stats)
