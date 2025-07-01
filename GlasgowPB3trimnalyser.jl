@@ -10,17 +10,29 @@ Example with options:
     julia GlasgowPB3trimnalyser.jl noveripb path instance show adj tl 600
 
 cargo r -- /home/arthur_gla/veriPB/proofs/small/linear_equality_test.opb out.pbp --trace
+
+julia GlasgowPB3trimnalyser.jl 
+verif brim path instance
+
+
+
 =#
+
+
 
 # ================ Main ================
 
+
 struct Options
     ins::String     # one instance name (leave blank if you want all instances)
-    insid::Int      # instance id (for fast testing)
-    proofs::String  # directory containing instances.
-    pbopath::String # directory containing veripb rust 3.0
+    insid::Int      # instance id (for fast testing from an instance list)
+    proofs::String  # directory containing instances
+    pbopath::String # directory containing veripb 3.0(rust)
+    brimpath::String # directory containing veripb 3.0(rust) trimmer
     sort::Bool      # sort the instances by size
-    veripb::Bool    # veripb comparison (need veripb3.0 installed)
+    veripb::Bool    # veripb comparison (need to give pboxide path pbopath in parseargs)
+    brim::Bool      # trimmer in pboxide by Berhan
+    grim::Bool      # trimmer in julia by Arthur
     trace::Bool     # veripb trace
     cshow::Bool     # prettyprint of the proof in html
     adjm::Bool      # adj matrix representation of the cone
@@ -32,17 +44,19 @@ end
 function parseargs(args)
     ins = ""
     proofs = pwd()*"/"
-    # proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
-    proofs = "/scratch/matthew/huub3/"
-    # proofs = "/home/arthur_gla/veriPB/trim/smol-proofs2/Instances"
-    # pbopath = "/home/arthur_gla/veriPB/subgraphsolver/pboxide-dev"
-    pbopath = "/users/grad/arthur/pboxide-dev"
-    # pbopath = "/home/arthur_gla/veriPB/subgraphsolver/ftrimer/pboxide-dev" # Berhan trimmer for testing.
+    proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
+    # proofs = "/scratch/matthew/huub3/"
+    # proofs = "/home/arthur_gla/veriPB/proofs/small/" # not 3.0 syntax yet
+    pbopath = "/home/arthur_gla/veriPB/subgraphsolver/pboxide-dev"
+    # pbopath = "/users/grad/arthur/pboxide-dev"
+    brimpath = "/home/arthur_gla/veriPB/subgraphsolver/ftrimer/pboxide-dev" # Berhan trimmer for testing.
     insid = 0
     tl = 2629800 # 1 month
     # ins = "circuit_prune_root_test"
     sort = true
-    veripb = true
+    veripb = false
+    brim = false # use brim trimmer
+    grim = true # use grim trimmer
     trace = false
     cshow = false
     adjm = false
@@ -51,7 +65,10 @@ function parseargs(args)
     flamegraphprofile = false
     for (i, arg) in enumerate(args)
         if arg == "cd" cd() end # hack to add cd in paths
-        if arg in ["noveripb","nv"] veripb = false end
+        if arg in ["verif"] veripb = true end
+        if arg in ["brim"] brim = true end
+        if arg in ["nogrim"] grim = false end
+        if arg in ["verif"] veripb = true end
         if arg in ["LPsimplif","lp"] LPsimplif = true end
         if arg in ["nosort","ns"] sort = false end
         if arg in ["adj","adjm","adjmat"] adjm = true end
@@ -84,7 +101,7 @@ function parseargs(args)
     if split(ins,'.')[end] in ["opb","pbp"] ins = ins[1:end-4] end
     if proofs!="" print("Dir:$proofs ") end
     if ins!="" print("Ins:$ins ") end
-    return Options(ins,insid,proofs,pbopath,sort,veripb,trace,cshow,adjm,order,LPsimplif,tl,flamegraphprofile)
+    return Options(ins,insid,proofs,pbopath,brimpath,sort,veripb,brim,grim,trace,cshow,adjm,order,LPsimplif,tl,flamegraphprofile)
 end
 const CONFIG = parseargs(ARGS)
 const proofs = CONFIG.proofs
@@ -106,73 +123,133 @@ mutable struct Red                      # w: witness. range: id range from beign
     range::UnitRange{Int64}
     pgranges::Vector{UnitRange{Int64}}
 end
-function main()
+function main() # detect files (can sort them by size) and call the trimmers
     if CONFIG.ins != ""
         println()
-        print(" "^29);printstyled(CONFIG.ins,"  "; color = :yellow)
-        runtrimmer(CONFIG.ins)
+        println("\\begin{tabular}{|c|ccc|ccc|}\\hline & sizes &  &  & times (s) &  & \\\\\\hline\nInstance & veriPB & btrim & gtrim & veriPB & btrim & gtrim (parse trim write verif)  \\\\\\hline")
+        # print(" "^29);printstyled(CONFIG.ins,"  "; color = :yellow)
+        runtrimmers(CONFIG.ins)
     else
         list = cd(readdir, proofs)
         list = [s for s in list if length(s)>5]
         list = [s[1:end-4] for s in list if s[end-3:end]==".opb" && s[1:5]!="smol."]
+        # a=[println(proofs*s*extention,isfile(proofs*s*extention)) for s in list]
         list = [s for s in list if isfile(proofs*s*extention)]
         if CONFIG.sort
             stats = [stat(proofs*file*extention).size+ (if isfile(proofs*file*"opb") stat(proofs*file*".opb").size else 0 end) for file in list]
             p = sortperm(stats)
         else p = [i for i in eachindex(list)] end
         println(list[p])
- printstyled("smolV "; color = :blue); printstyled("write "; color = :cyan); printstyled("trim "; color = :green); printstyled("parse "; color = :cyan); printstyled("Verif "; color = :blue); printstyled("No "; color = :white); printstyled("proof_name \n"; color = :yellow);
+        println("\\begin{tabular}{|c|ccc|ccc|}\\hline& sizes &  &  & times (s) &  & \\\\\\hline\nInstance & veriPB & btrim & gtrim & veriPB & btrim & gtrim (parse trim write verif)  \\\\\\hline")
         if CONFIG.insid>0
             ins = list[p[CONFIG.insid]]
-            print(" "^29);print(CONFIG.insid,' ');printstyled(ins,"  "; color = :yellow)
-            runtrimmer(ins)
+            # print(" "^29);print(CONFIG.insid,' ');printstyled(ins,"  "; color = :yellow)
+            runtrimmers(ins)
         else for i in eachindex(list)
         # else for i in 1:30
             ins = list[p[i]]
-            print(" "^29);print(i,' ');printstyled(ins,"  "; color = :yellow)
-            runtrimmer(ins)
+            # print(" "^29);print(i,' ');printstyled(ins,"  "; color = :yellow)
+            runtrimmers(ins)
         end end
     end
+    println("\\end{tabular}\\\\\n")
 end
-function runchecker(formule,preuve)
+function runtrimmers(ins)
+    v1 = v2 = 0
+    so = stat(string(proofs,"/",ins,".opb")).size + stat(string(proofs,"/",ins,extention)).size
+    printstyled(ins; color = :yellow)
+    d = length(ins)
+    #instance & sizes (initial brimmed grimmed) & times (initial brimmed trimmed(parse trim write verif)) ///hline
+    printstyled(" &          &          &          &      &      &      (                   ) \\\\\\hline"; color = :grey)
+    printstyled("\r\033[",d+4,"G",prettybytes(so))
+    tvp = @elapsed begin if CONFIG.veripb
+        v1 = verifier("$proofs/$ins.opb","$proofs/$ins$extention")
+    end end
+    printstyled("\r\033[",d+37,"G",prettytime(tvp); color = :blue)
+
+    tvb = @elapsed begin if CONFIG.brim 
+        v3 = runbrimmer("$proofs/$ins.opb","$proofs/$ins$extention") 
+    end end
+    sb = stat(string(proofs,"/",ins,".opb")).size + stat(string(CONFIG.brimpath,"/out.tmp")).size
+    printstyled("\r\033[",d+15,"G",if CONFIG.brim prettybytes(sb) else "" end)
+    printstyled("\r\033[",d+37+7,"G",prettytime(tvb); color = :blue)
+
+    tri,tms,twc = rungrimmer(ins)
+    st = stat(string(proofs,"/smol.",ins,".opb")).size + stat(string(proofs,"/smol.",ins,extention)).size
+    printstyled("\r\033[",d+15+11,"G",prettybytes(st))
+    printstyled("\r\033[",d+37+7+7+6,"G",prettytime(tri); color = :cyan)
+    printstyled("\r\033[",d+37+7+7+6+5,"G",prettytime(tms); color = :green)
+    printstyled("\r\033[",d+37+7+7+6+10,"G",prettytime(twc); color = :cyan)
+
+    tvs = @elapsed begin if CONFIG.veripb
+        v2 = verifier("$proofs/smol.$ins.opb","$proofs/smol.$ins$extention")
+    end end
+    printstyled("\r\033[",d+37+7+7,"G",prettytime(tvs+tri+tms+twc); color = :blue)
+    printstyled("\r\033[",d+37+7+7+7+14,"G",prettytime(tvs),"\n"; color = :blue)
+    # printstyled("\r",prettytime(tvs),'\n'; color = :blue)
+    if !CONFIG.veripb tvp = tvs = 0.1 end
+    if ins[1] == 'b'
+        t = [roundt([parse(Float64,ins[end-5:end-3]),parse(Float64,ins[end-2:end]),so,st,st/so,tvp,tvs,tvs/tvp,tms,twc,tri],3)]
+    elseif ins[1] == 'L'
+        t = [roundt([parse(Float64,split(ins,'g')[2]),parse(Float64,split(ins,'g')[3]),so,st,st/so,tvp,tvs,tvs/tvp,tms,twc,tri],3)]
+    else
+        t = [roundt([0.0,0.0,so,st,st/so,tvp,tvs,tvs/tvp,tms,twc,tri],3)]
+    end
+    # printtabular(t)
+    open(string(proofs,"/atable"), "a") do f
+        write(f,string(t[1],",\n"))
+    end
+    if CONFIG.veripb && v1!=v2
+        printstyled("\nTraces are not identical\n"; color = :red)
+        open(string(proofs,"/afailedtrims"), "a") do f
+            write(f,string(ins," \n"))
+        end
+    end
+end
+function verifier(formule,preuve)
     cd();cd(CONFIG.pbopath)
     v1 = 0
     if CONFIG.trace
+        println("timeout $tl cargo r -- --trace $formule $preuve ")
         v1 = run(`timeout $tl cargo r -- --trace $formule $preuve `)
-        # v1 = run(`timeout $tl cargo r -- --trim $formule $preuve --elaborate out.tmp `)
     else
         redirect_stdio(stdout = devnull,stderr = devnull) do
-            v1 = read(`timeout $tl cargo r -- $formule $preuve `)
+        v1 =read(`timeout $tl cargo r -- $formule $preuve `)
         end
     end
     return v1
 end
-function runtrimmer(file)
-    v1 = v2 = 0
-    tvp = @elapsed begin if CONFIG.veripb
-        v1 = runchecker("$proofs/$file.opb","$proofs/$file$extention")
-    end end
-    printstyled("\r"," "^24,prettytime(tvp)," "; color = :blue)
+function runbrimmer(formule,preuve)
+    cd();cd(CONFIG.brimpath)
+    v1 = 0
+    if CONFIG.trace
+        v1 = run(`timeout $tl cargo r -- --trace --trim $formule $preuve --elaborate out.tmp `)
+    else
+        redirect_stdio(stdout = devnull,stderr = devnull) do
+        v1 =read(`timeout $tl cargo r -- --trim $formule $preuve --elaborate out.tmp `)
+        end
+    end
+    return v1
+end
+function rungrimmer(file)
     tri = @elapsed begin
         system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,version,
         obj = readinstance(proofs,file)
     end
-    printstyled("\r"," "^18,prettytime(tri),"  "; color = :cyan)
+    # printstyled("\r"," "^18,prettytime(tri),"  "; color = :cyan)
     normcoefsystem(system)
     invsys = getinvsys(system,systemlink,varmap)
     prism = availableranges(redwitness)
     if conclusion in ["SAT","NONE"] && !isequal(system[end],Eq([],1)) return println() end
-
     tms = @elapsed begin
         cone = makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclusion,obj)
     end
-
-    printstyled("\r"," "^12,prettytime(tms),"  "; color = :green)
+    # printstyled("\r"," "^12,prettytime(tms),"  "; color = :green)
     twc = @elapsed begin
         varmap = Dict(varmap[k] => k for k in keys(varmap)) # reverse the varmap (may be inneficient)
         writeconedel(proofs,file,version,system,cone,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,output,conclusion,obj,prism)
     end
-    printstyled("\r"," "^6,prettytime(twc),"  "; color = :cyan)
+    # printstyled("\r"," "^6,prettytime(twc),"  "; color = :cyan)
     varocc = printorder(file,cone,invsys,varmap)
     succ = Vector{Vector{Int}}(undef,length(system))
     invlink(systemlink,succ,cone,nbopb)
@@ -185,35 +262,13 @@ function runtrimmer(file)
     if CONFIG.cshow
         ciaranshow(proofs,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
     end
-    tvs = @elapsed begin if CONFIG.veripb
-        v2 = runchecker("$proofs/smol.$file.opb","$proofs/smol.$file$extention")
-    end end
-    printstyled("\r",prettytime(tvs),'\n'; color = :blue)
-    so = stat(string(proofs,"/",file,".opb")).size + stat(string(proofs,"/",file,extention)).size
-    st = stat(string(proofs,"/smol.",file,".opb")).size + stat(string(proofs,"/smol.",file,extention)).size
-    if !CONFIG.veripb tvp = tvs = 0.1 end
-    if file[1] == 'b'
-        t = [roundt([parse(Float64,file[end-5:end-3]),parse(Float64,file[end-2:end]),so,st,st/so,tvp,tvs,tvs/tvp,tms,twc,tri],3)]
-    elseif file[1] == 'L'
-        t = [roundt([parse(Float64,split(file,'g')[2]),parse(Float64,split(file,'g')[3]),so,st,st/so,tvp,tvs,tvs/tvp,tms,twc,tri],3)]
-    else
-        t = [roundt([0.0,0.0,so,st,st/so,tvp,tvs,tvs/tvp,tms,twc,tri],3)]
-    end
-    printtabular(t)
-    open(string(proofs,"/atable"), "a") do f
-        write(f,string(t[1],",\n"))
-    end
-    if CONFIG.veripb && v1!=v2
-        printstyled("\nTraces are not identical\n"; color = :red)
-        open(string(proofs,"/afailedtrims"), "a") do f
-            write(f,string(file," \n"))
-        end
-    end
+    return tri,tms,twc
 end
 
 
 
 # ================ Trimmer ================
+
 
 function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclusion,obj)
     n = length(system)
@@ -268,11 +323,12 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
     red = Red([],0:0,[]);
     newpfgl = true
     pfgl = Vector{UnitRange{Int64}}()
+    d = 120 #decalage du chariot
     while newpfgl # restart if new frontless proofgoals are needed.
         newpfgl = false
         while true in front
             i = findlast(front)
-            print("\r$i ")
+            print("\r\033[$(d)G$i ")
             front[i] = false
             if !cone[i]
                 cone[i] = true
@@ -334,6 +390,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
             end
         end
     end
+    print("\r\033[$(d)G  ")
     # print("\033[K\033[A                   ")  # Efface la ligne et remonte d'une ligne
     fixredsystemlink(systemlink,cone,prism,nbopb)
     # printeqlink(935,system,systemlink)
@@ -653,18 +710,10 @@ function remakelink()
     # TODO
 end
 
-# proofs = "/scratch/matthew/huub2/"
-# list = cd(readdir, proofs)
-# list = [s[1:end-4] for s in list if s[end-3:end]==".pbp" && s[end-7:end-3]!="smol."]
-# for l in list 
-#     open(string(proofs,l,".opb"),"w") do f
-#         write(f,"*dummy opb file\n")
-#     end
-# end
-
 
 
 # =============== Justifyer ===============
+
 
 function justify(f,eq,i,asserthint,index,varmap)
     st = split(asserthint,keepempty=false)
@@ -692,6 +741,7 @@ end
 
 
 # ================ Printer ================
+
 
 function writeconedel(path,file,version,system,cone,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,output,conclusion,obj,prism)
     index = zeros(Int,length(system))
@@ -1066,7 +1116,6 @@ function showadjacencymatrixsimple(file,cone,index,systemlink,succ,nbopb)
 ")
 end
 end
-
 function showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
     M,D,n = computeMD(file,cone,index,systemlink,succ,nbopb)
     dir = string(proofs,"/cone_mat/")
@@ -1586,6 +1635,7 @@ end
 
 
 # ================ Parser ================
+
 
 function readinstance(path,file)
     system,varmap,ctrmap,obj = readopb(path,file)
