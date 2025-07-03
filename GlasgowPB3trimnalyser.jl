@@ -13,9 +13,6 @@ cargo r -- /home/arthur_gla/veriPB/proofs/small/linear_equality_test.opb out.pbp
 
 julia GlasgowPB3trimnalyser.jl 
 verif brim path instance
-
-
-
 =#
 
 
@@ -37,6 +34,7 @@ struct Options
     cshow::Bool     # prettyprint of the proof in html
     adjm::Bool      # adj matrix representation of the cone
     order::Bool     # output the variable usage rates in order
+    smartrup::Bool  # use smart rup (conflict analysis) in the trimmer
     LPsimplif::Bool # simplificaiton of pol by LP (need more work)
     timelimit::Int  # time limit (one month default)
     flamegraphprofile::Bool  # make a flamegraph profile in html
@@ -61,6 +59,7 @@ function parseargs(args)
     cshow = false
     adjm = false
     order = false
+    smartrup = false # use smart rup (conflict analysis)
     LPsimplif = false
     flamegraphprofile = false
     for (i, arg) in enumerate(args)
@@ -78,6 +77,7 @@ function parseargs(args)
         if arg in ["flamegraphprofile","fgp","fg","prof","profile"] flamegraphprofile = true end
         if arg in ["timelimit","tl"] tl = parse(Int, args[i+1]) end
         if arg in ["insid","ins"] insid = parse(Int, args[i+1]) end
+        if arg == "smart" smartrup = true end
         if ispath(arg)&&isdir(arg) 
             if arg[end]!='/' 
                 proofs = arg*'/'
@@ -101,7 +101,7 @@ function parseargs(args)
     if split(ins,'.')[end] in ["opb","pbp"] ins = ins[1:end-4] end
     if proofs!="" print("Dir:$proofs ") end
     if ins!="" print("Ins:$ins ") end
-    return Options(ins,insid,proofs,pbopath,brimpath,sort,veripb,brim,grim,trace,cshow,adjm,order,LPsimplif,tl,flamegraphprofile)
+    return Options(ins,insid,proofs,pbopath,brimpath,sort,veripb,brim,grim,trace,cshow,adjm,order,smartrup,LPsimplif,tl,flamegraphprofile)
 end
 const CONFIG = parseargs(ARGS)
 const proofs = CONFIG.proofs
@@ -308,9 +308,14 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
         fixfront(front,systemlink[firstcontradiction-nbopb])
     else
         if conclusion=="UNSAT" || conclusion=="NONE"
-            upquebit(system,invsys,assi,front,prism)
+            if CONFIG.smartrup
+                upquebit(system,invsys,assi,front,prism)
+            else
+                upquebitold(system,invsys,assi,front,prism)
+            end
+            print("\r\033[110G ",sum(front))
         elseif conclusion == "BOUNDS"
-            @time begin
+            begin
             if !rup(system,invsys,front,firstcontradiction,assi,front,cone,prism,0:0)
                 println("\n",firstcontradiction," s=",slack(reverse(system[firstcontradiction]),assi))
                 printeq(system[firstcontradiction-nbopb])
@@ -402,6 +407,7 @@ function rup(system,invsys,antecedants,init,assi,front,cone,prism,subrange)# I a
     prio = true
     r0 = i = 1
     r1 = init+1
+    # implgraph = Dict{Int,Int}() # for the implication graph of the rup process. maps a variable to the id of the eq that has been used to fix it.
     @inbounds while i<=init
         if que[i] && (!prio || (prio&&(front[i]||cone[i]))) && (!inprism(i,prism) || (i in subrange))
             eq = i==init ? rev : system[i]
@@ -482,7 +488,56 @@ function getinvsys(system,systemlink,varmap)
     end # arrays should be sorted at this point
     return invsys
 end
-function updatequebit(eq,que,invsys,s,i,assi::Vector{Int8},antecedants)
+function conflictanalysis(var,implgraph,antecedants)
+    suite = implgraph[var]
+    if suite == (0,) # we already explained this var
+        return
+    end
+    antecedants[suite[1]] = true
+    implgraph[var] = (0,) # we set the explanation to 0 because things are propagated only once and we dont like loops
+    for var in suite[2:end] # we get the variables that were assigned in the eq for this propagation.
+        conflictanalysis(var,implgraph,antecedants)
+    end
+end
+function updatequebit(eq,que,invsys,s,i,assi::Vector{Int8},antecedants,implgraph)
+    rewind = i+1
+    for l in eq.t
+        if l.coef > s && assi[l.var]==0
+            implgraph[l.var] = (i,[l.var for l in eq.t if assi[l.var]!=0]...) # we store the id of the eq that is used to fix the variable and then the variables that are assigned in the eq.
+            # println(l.var,"->",implgraph[l.var])
+            assi[l.var] = l.sign ? 1 : 2
+            # antecedants[i] = true
+            for id in invsys[l.var]
+                rewind = min(rewind,id)
+                que[id] = true
+            end
+        end
+    end
+    return rewind
+end
+function upquebit(system,invsys,assi::Vector{Int8},antecedants,prism)
+    que = ones(Bool,length(system))
+    i = 1
+    implgraph = Dict{Int,Tuple{Vararg{Int}}}() # for the implication graph of the rup process. maps a variable to the id of the eq that is used to fix it and the involved variables in the tuple (id,var,var,...)
+    @inbounds while i<=length(system)
+        if que[i] && !inprism(i,prism)
+            eq = system[i]
+            s = slack(eq,assi)
+            if s<0
+                implgraph[0] = (i,[l.var for l in eq.t if assi[l.var]!=0]...)
+                antecedants[i] = true
+                return conflictanalysis(0,implgraph,antecedants)
+            else
+                rewind = updatequebit(eq,que,invsys,s,i,assi,antecedants,implgraph)
+                que[i] = false
+                i = min(i,rewind-1)
+            end
+        end
+        i+=1
+    end
+    printstyled(" upQueBit empty \n "; color = :red)
+end
+function updatequebitold(eq,que,invsys,s,i,assi::Vector{Int8},antecedants)
     rewind = i+1
     for l in eq.t
         if l.coef > s && assi[l.var]==0
@@ -496,7 +551,7 @@ function updatequebit(eq,que,invsys,s,i,assi::Vector{Int8},antecedants)
     end
     return rewind
 end
-function upquebit(system,invsys,assi,antecedants,prism)
+function upquebitold(system,invsys,assi::Vector{Int8},antecedants,prism)
     que = ones(Bool,length(system))
     i = 1
     @inbounds while i<=length(system)
@@ -507,7 +562,7 @@ function upquebit(system,invsys,assi,antecedants,prism)
                 antecedants[i] = true
                 return 
             else
-                rewind = updatequebit(eq,que,invsys,s,i,assi,antecedants)
+                rewind = updatequebitold(eq,que,invsys,s,i,assi,antecedants)
                 que[i] = false
                 i = min(i,rewind-1)
             end
