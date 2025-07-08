@@ -310,6 +310,8 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
         if conclusion=="UNSAT" || conclusion=="NONE"
             if CONFIG.smartrup
                 upquebit(system,invsys,assi,front,prism)
+                # assi.=0; @time upquebit(system,invsys,assi,front,prism)
+                # @time upquebitrestrained(system,invsys,assi,front,prism)
             else
                 upquebitold(system,invsys,assi,front,prism)
             end
@@ -499,6 +501,15 @@ function conflictanalysis(var,implgraph,antecedants)
         conflictanalysis(var,implgraph,antecedants)
     end
 end
+function conflictanalysisnomem(var,implgraph,antecedants,assi,system)
+    antecedants[implgraph[var]] = true
+    for l in system[implgraph[var]].t        
+        if assi[l.var]!=0
+            assi[l.var] = 0
+            conflictanalysisnomem(l.var,implgraph,antecedants,assi,system)
+        end
+    end
+end
 function updatequebit(eq,que,invsys,s,i,assi::Vector{Int8},antecedants,implgraph)
     rewind = i+1
     for l in eq.t
@@ -519,14 +530,22 @@ function upquebit(system,invsys,assi::Vector{Int8},antecedants,prism)
     que = ones(Bool,length(system))
     i = 1
     implgraph = Dict{Int,Tuple{Vararg{Int}}}() # for the implication graph of the rup process. maps a variable to the id of the eq that is used to fix it and the involved variables in the tuple (id,var,var,...)
+    # implgraph = Dict{Int,Int}()
     @inbounds while i<=length(system)
         if que[i] && !inprism(i,prism)
             eq = system[i]
             s = slack(eq,assi)
             if s<0
-                implgraph[0] = (i,[l.var for l in eq.t if assi[l.var]!=0]...)
                 antecedants[i] = true
+                implgraph[0] = (i,[l.var for l in eq.t if assi[l.var]!=0]...)
                 return conflictanalysis(0,implgraph,antecedants)
+                # for l in eq.t        
+                #     if assi[l.var]!=0
+                #         assi[l.var] = 0
+                #         conflictanalysisnomem(l.var,implgraph,antecedants,assi,system)
+                #     end
+                # end
+                # return
             else
                 rewind = updatequebit(eq,que,invsys,s,i,assi,antecedants,implgraph)
                 que[i] = false
@@ -536,6 +555,29 @@ function upquebit(system,invsys,assi::Vector{Int8},antecedants,prism)
         i+=1
     end
     printstyled(" upQueBit empty \n "; color = :red)
+end
+function upquebitrestrained(system,invsys,assi::Vector{Int8},antecedants,prism)
+    que = ones(Bool,length(system))
+    i = 1
+    implgraph = Dict{Int,Tuple{Vararg{Int}}}() # for the implication graph of the rup process. maps a variable to the id of the eq that is used to fix it and the involved variables in the tuple (id,var,var,...)
+    @inbounds while i<=length(system)
+        if que[i] && !inprism(i,prism) && antecedants[i] # we only check the antecedants
+            eq = system[i]
+            s = slack(eq,assi)
+            if s<0
+                implgraph[0] = (i,[l.var for l in eq.t if assi[l.var]!=0]...)
+                # antecedants[i] = true
+                printstyled(" V "; color = :green)
+                return 
+            else
+                rewind = updatequebit(eq,que,invsys,s,i,assi,antecedants,implgraph)
+                que[i] = false
+                i = min(i,rewind-1)
+            end
+        end
+        i+=1
+    end
+    printstyled(" upQueBit conflict analysis test failed \n "; color = :red)
 end
 function updatequebitold(eq,que,invsys,s,i,assi::Vector{Int8},antecedants)
     rewind = i+1
