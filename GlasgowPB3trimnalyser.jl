@@ -512,36 +512,12 @@ function conflictanalysisordered(var,implgraph,antecedants,assi,system)
         end
     end
 end
-function conflictanalysis(var,implgraph,antecedants)
-    suite = implgraph[var]
-    if suite == (0,) # we already explained this var
-        return
-    end
-    antecedants[suite[1]] = true
-    implgraph[var] = (0,) # we set the explanation to 0 because things are propagated only once and we dont like loops
-    for var in suite[2:end] # we get the variables that were assigned in the eq for this propagation.
-        conflictanalysis(var,implgraph,antecedants)
-    end
-end
-function conflictanalysisnomem(var,implgraph,antecedants,assi,system)
-    antecedants[implgraph[var]] = true
-    for l in system[implgraph[var]].t        
-        # if assi[l.var]!=0 
-        if ((!l.sign && assi[l.var] == 1) || (l.sign && assi[l.var] == 2))
-            assi[l.var] = 0
-            conflictanalysisnomem(l.var,implgraph,antecedants,assi,system)
-        end
-    end
-end
 function updatequebit(eq,que,invsys,s,i,assi::Vector{Int8},antecedants,implgraph)
     rewind = i+1
     for l in eq.t
         if l.coef > s && assi[l.var]==0
             implgraph[l.var] = i # we store the id of the eq that is used to fix the variable
-            # implgraph[l.var] = (i,[l.var for l in eq.t if assi[l.var]!=0]...) # we store the id of the eq that is used to fix the variable and then the variables that are assigned in the eq.
-            # println(l.var,"->",implgraph[l.var])
             assi[l.var] = l.sign ? 1 : 2
-            # antecedants[i] = true
             for id in invsys[l.var]
                 rewind = min(rewind,id)
                 que[id] = true
@@ -553,19 +529,14 @@ end
 function upquebit(system,invsys,assi::Vector{Int8},antecedants,prism)
     que = ones(Bool,length(system))
     i = 1
-    # implgraph = Dict{Int,Tuple{Vararg{Int}}}() # for the implication graph of the rup process. maps a variable to the id of the eq that is used to fix it and the involved variables in the tuple (id,var,var,...)
     implgraph = Dict{Int,Int}()
     @inbounds while i<=length(system)
         if que[i] && !inprism(i,prism)
             eq = system[i]
             s = slack(eq,assi)
             if s<0
-                # antecedants[i] = true
-                # implgraph[0] = (i,[l.var for l in eq.t if assi[l.var]!=0]...)
-                # return conflictanalysis(0,implgraph,antecedants)
                 implgraph[0] = i
                 return conflictanalysisordered(0,implgraph,antecedants,assi,system) # this is the best one
-                # return conflictanalysisnomem(0,implgraph,antecedants,assi,system)
             else
                 rewind = updatequebit(eq,que,invsys,s,i,assi,antecedants,implgraph)
                 que[i] = false
@@ -601,46 +572,11 @@ function upquebitrestrained(system,invsys,assi::Vector{Int8},antecedants,prism)
     end
     printstyled(" upQueBit conflict analysis test failed \n "; color = :red)
 end
-function updatequebitold(eq,que,invsys,s,i,assi::Vector{Int8},antecedants)
-    rewind = i+1
-    for l in eq.t
-        if l.coef > s && assi[l.var]==0
-            assi[l.var] = l.sign ? 1 : 2
-            antecedants[i] = true
-            for id in invsys[l.var]
-                rewind = min(rewind,id)
-                que[id] = true
-            end
-        end
-    end
-    return rewind
-end
-function upquebitold(system,invsys,assi::Vector{Int8},antecedants,prism)
-    que = ones(Bool,length(system))
-    i = 1
-    @inbounds while i<=length(system)
-        if que[i] && !inprism(i,prism)
-            eq = system[i]
-            s = slack(eq,assi)
-            if s<0
-                antecedants[i] = true
-                return 
-            else
-                rewind = updatequebitold(eq,que,invsys,s,i,assi,antecedants)
-                que[i] = false
-                i = min(i,rewind-1)
-            end
-        end
-        i+=1
-    end
-    printstyled(" upQueBit empty \n "; color = :red)
-end
 function updateprioquebit(eq,cone,front,que,invsys,s,i,init,assi::Vector{Int8},antecedants,implgraph,r0,r1)
     @inbounds for l in eq.t
         if l.coef > s && assi[l.var]==0
             assi[l.var] = l.sign ? 1 : 2
             implgraph[l.var] = i # we store the id of the eq that is used to fix the variable to use conflict analysis and find the antecedants later.
-            # antecedants[i] = true
             for id in invsys[l.var]
                 if id<=init && id!=i
                     que[id] = true
