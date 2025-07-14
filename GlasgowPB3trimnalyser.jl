@@ -14,7 +14,7 @@ cargo r -- /home/arthur_gla/veriPB/proofs/small/linear_equality_test.opb out.pbp
 julia GlasgowPB3trimnalyser.jl 
 verif brim path instance
 =#
-
+using Random 
 
 
 # ================ Main ================
@@ -138,7 +138,11 @@ function main() # detect files (can sort them by size) and call the trimmers
         if CONFIG.sort
             stats = [stat(proofs*file*extention).size+ (if isfile(proofs*file*"opb") stat(proofs*file*".opb").size else 0 end) for file in list]
             p = sortperm(stats)
-        else p = [i for i in eachindex(list)] end
+        else 
+            # p = [i for i in eachindex(list)]
+            rng = MersenneTwister(1234)
+            p = randperm(rng,length(list)) # randomize the order of the instances
+        end
         println(list[p])
         println("\\begin{tabular}{|c|ccc|ccc|}\\hline& sizes &  &  & times (s) &  & \\\\\\hline\nInstance & veriPB & btrim & gtrim & veriPB & btrim & gtrim (parse trim write verif)  \\\\\\hline")
         if CONFIG.insid>0
@@ -308,14 +312,11 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
         fixfront(front,systemlink[firstcontradiction-nbopb])
     else
         if conclusion=="UNSAT" || conclusion=="NONE"
-            if CONFIG.smartrup
-                upquebit(system,invsys,assi,front,prism)
-                # assi.=0; @time upquebit(system,invsys,assi,front,prism)
-                # @time upquebitrestrained(system,invsys,assi,front,prism)
-            else
-                upquebitold(system,invsys,assi,front,prism)
-            end
-            print("\r\033[110G ",sum(front))
+            upquebit(system,invsys,assi,front,prism)
+            assi.=0
+            upquebitrestrained(system,invsys,assi,front,prism)
+             # print("\r\033[110G ",sum(front))
+            #  println(findall(front))
         elseif conclusion == "BOUNDS"
             begin
             if !rup(system,invsys,front,firstcontradiction,assi,front,cone,prism,0:0)
@@ -409,16 +410,18 @@ function rup(system,invsys,antecedants,init,assi,front,cone,prism,subrange)# I a
     prio = true
     r0 = i = 1
     r1 = init+1
-    # implgraph = Dict{Int,Int}() # for the implication graph of the rup process. maps a variable to the id of the eq that has been used to fix it.
+    implgraph = Dict{Int,Int}()
     @inbounds while i<=init
         if que[i] && (!prio || (prio&&(front[i]||cone[i]))) && (!inprism(i,prism) || (i in subrange))
             eq = i==init ? rev : system[i]
             s = slack(eq,assi)
             if s<0
-                antecedants[i] = true
+                implgraph[0] = i
+                conflictanalysisordered(0,implgraph,antecedants,assi,system)
+                # antecedants[i] = true
                 return true
             else
-                r0,r1 = updateprioquebit(eq,cone,front,que,invsys,s,i,init,assi,antecedants,r0,r1)
+                r0,r1 = updateprioquebit(eq,cone,front,que,invsys,s,i,init,assi,antecedants,implgraph,r0,r1)
             end
             que[i] = false
             i+=1
@@ -490,6 +493,25 @@ function getinvsys(system,systemlink,varmap)
     end # arrays should be sorted at this point
     return invsys
 end
+function conflictanalysisordered(var,implgraph,antecedants,assi,system)
+    id = implgraph[var]
+    if id > 0 
+        if var>0 assi[var] = 0  end                             # we set the variable to 0 because it is propagated and does cannot contribute to any other sum
+        implgraph[var] = 0                                      # we set the explanation to 0 because things are propagated only once and we dont like loops
+        antecedants[id] = true                                  # we add the variable to the antecedants set and we explain it
+        lits = [l for l in system[id].t if (!l.sign && assi[l.var] == 1) || (l.sign && assi[l.var] == 2)] # we get the variables that were assigned and contributed negativelly in the sum in the eq for this propagation.
+        sort!(lits,by = x -> implgraph[x.var])                  # we sort the variables by the id of the eq that is used to fix them to keep that order heuristic.
+        b = system[id].b                                        # the bound of the eq
+        somme = sum(l.coef for l in system[id].t if l.var != var; init = 0) # we get the sum of the coefficients of the variables
+        for l in lits
+            somme -= l.coef # the variable does not contribute to the sum anymore
+            conflictanalysisordered(l.var,implgraph,antecedants,assi,system)
+            if somme<b
+                return # we reached the point where we need to propagate var to keep the eq sat
+            end
+        end
+    end
+end
 function conflictanalysis(var,implgraph,antecedants)
     suite = implgraph[var]
     if suite == (0,) # we already explained this var
@@ -504,7 +526,8 @@ end
 function conflictanalysisnomem(var,implgraph,antecedants,assi,system)
     antecedants[implgraph[var]] = true
     for l in system[implgraph[var]].t        
-        if assi[l.var]!=0
+        # if assi[l.var]!=0 
+        if ((!l.sign && assi[l.var] == 1) || (l.sign && assi[l.var] == 2))
             assi[l.var] = 0
             conflictanalysisnomem(l.var,implgraph,antecedants,assi,system)
         end
@@ -514,7 +537,8 @@ function updatequebit(eq,que,invsys,s,i,assi::Vector{Int8},antecedants,implgraph
     rewind = i+1
     for l in eq.t
         if l.coef > s && assi[l.var]==0
-            implgraph[l.var] = (i,[l.var for l in eq.t if assi[l.var]!=0]...) # we store the id of the eq that is used to fix the variable and then the variables that are assigned in the eq.
+            implgraph[l.var] = i # we store the id of the eq that is used to fix the variable
+            # implgraph[l.var] = (i,[l.var for l in eq.t if assi[l.var]!=0]...) # we store the id of the eq that is used to fix the variable and then the variables that are assigned in the eq.
             # println(l.var,"->",implgraph[l.var])
             assi[l.var] = l.sign ? 1 : 2
             # antecedants[i] = true
@@ -529,23 +553,19 @@ end
 function upquebit(system,invsys,assi::Vector{Int8},antecedants,prism)
     que = ones(Bool,length(system))
     i = 1
-    implgraph = Dict{Int,Tuple{Vararg{Int}}}() # for the implication graph of the rup process. maps a variable to the id of the eq that is used to fix it and the involved variables in the tuple (id,var,var,...)
-    # implgraph = Dict{Int,Int}()
+    # implgraph = Dict{Int,Tuple{Vararg{Int}}}() # for the implication graph of the rup process. maps a variable to the id of the eq that is used to fix it and the involved variables in the tuple (id,var,var,...)
+    implgraph = Dict{Int,Int}()
     @inbounds while i<=length(system)
         if que[i] && !inprism(i,prism)
             eq = system[i]
             s = slack(eq,assi)
             if s<0
-                antecedants[i] = true
-                implgraph[0] = (i,[l.var for l in eq.t if assi[l.var]!=0]...)
-                return conflictanalysis(0,implgraph,antecedants)
-                # for l in eq.t        
-                #     if assi[l.var]!=0
-                #         assi[l.var] = 0
-                #         conflictanalysisnomem(l.var,implgraph,antecedants,assi,system)
-                #     end
-                # end
-                # return
+                # antecedants[i] = true
+                # implgraph[0] = (i,[l.var for l in eq.t if assi[l.var]!=0]...)
+                # return conflictanalysis(0,implgraph,antecedants)
+                implgraph[0] = i
+                return conflictanalysisordered(0,implgraph,antecedants,assi,system) # this is the best one
+                # return conflictanalysisnomem(0,implgraph,antecedants,assi,system)
             else
                 rewind = updatequebit(eq,que,invsys,s,i,assi,antecedants,implgraph)
                 que[i] = false
@@ -559,13 +579,15 @@ end
 function upquebitrestrained(system,invsys,assi::Vector{Int8},antecedants,prism)
     que = ones(Bool,length(system))
     i = 1
-    implgraph = Dict{Int,Tuple{Vararg{Int}}}() # for the implication graph of the rup process. maps a variable to the id of the eq that is used to fix it and the involved variables in the tuple (id,var,var,...)
+    # implgraph = Dict{Int,Tuple{Vararg{Int}}}() # for the implication graph of the rup process. maps a variable to the id of the eq that is used to fix it and the involved variables in the tuple (id,var,var,...)
+    implgraph = Dict{Int,Int}() # for the implication graph of the rup process. maps a variable to the id of the eq that is used to fix it and the involved variables in the tuple (id,var,var,...)
     @inbounds while i<=length(system)
         if que[i] && !inprism(i,prism) && antecedants[i] # we only check the antecedants
             eq = system[i]
             s = slack(eq,assi)
             if s<0
-                implgraph[0] = (i,[l.var for l in eq.t if assi[l.var]!=0]...)
+                # implgraph[0] = i
+                # implgraph[0] = (i,[l.var for l in eq.t if assi[l.var]!=0]...)
                 # antecedants[i] = true
                 printstyled(" V "; color = :green)
                 return 
@@ -613,11 +635,12 @@ function upquebitold(system,invsys,assi::Vector{Int8},antecedants,prism)
     end
     printstyled(" upQueBit empty \n "; color = :red)
 end
-function updateprioquebit(eq,cone,front,que,invsys,s,i,init,assi::Vector{Int8},antecedants,r0,r1)
+function updateprioquebit(eq,cone,front,que,invsys,s,i,init,assi::Vector{Int8},antecedants,implgraph,r0,r1)
     @inbounds for l in eq.t
         if l.coef > s && assi[l.var]==0
             assi[l.var] = l.sign ? 1 : 2
-            antecedants[i] = true
+            implgraph[l.var] = i # we store the id of the eq that is used to fix the variable to use conflict analysis and find the antecedants later.
+            # antecedants[i] = true
             for id in invsys[l.var]
                 if id<=init && id!=i
                     que[id] = true
@@ -807,6 +830,8 @@ function remakelink()
     # TODO
 end
 
+# [15, 17, 19, 62, 63, 70, 232, 617, 705, 707, 711, 738, 756, 790, 838, 843, 847, 855, 863, 867, 871, 874, 1010, 1015, 1019, 1027, 1035, 1039, 1043, 1046, 1182, 1187, 1191, 1199, 1207, 1211, 1215, 1218, 2641, 2851, 3071, 3711, 4146, 4356, 4791, 8982, 9160, 9308, 9322, 9454, 11384, 11466, 11554, 11644, 11792, 11806, 11938, 12214, 12294, 12380, 12468, 12590, 12718, 13868, 13922, 13950, 14038, 14096, 14128, 14246, 14276, 14290, 14388, 14422, 18810, 18976, 19064, 19214, 19356, 19640, 19692, 19718, 19802, 19862, 19952, 19982, 20012, 20072, 20204, 21294, 21460, 21548, 21594, 21668, 21698, 21742, 21840, 22176, 22230, 22258, 22346, 22436, 22556, 22688, 24064, 24078, 24152, 24226, 24358, 25474, 25556, 25644, 25854, 26288, 26458, 26516, 26548, 26562, 26636, 26696, 26710, 26808, 26842, 27118, 27198, 27226, 27284, 27494, 28606, 28802, 28834, 28926, 29030, 29130, 29198, 29338, 30334, 30366, 30458, 30562, 30662, 30730, 30870, 31088, 31352, 31490, 31832, 31866, 31898, 31990, 32094, 32194, 32228, 32262, 32366, 32402, 33176, 33202, 33270, 33282, 33294, 33306, 33318, 33330, 33364, 33398, 33430, 33522, 33626, 33726, 33760, 33794, 33898, 33934, 34708, 34734, 34802, 34814, 34826, 34838, 34850, 34862, 34962, 35054, 35158, 35258, 35718, 35982, 36122, 36240, 36266, 36334, 36346, 36358, 36370, 36382, 36394, 36428, 36462, 36494, 36586, 36690, 36790, 36824, 36858, 36962, 36998, 37826, 37862, 37930, 37998, 38070, 38140, 38210, 38282, 38356, 38430, 38504, 39494, 39562, 39630, 39702, 39772, 39842, 39914, 39988, 40062, 40136]
+# [15, 17, 19, 62, 63, 70, 232, 711, 738, 756, 790, 838, 843, 847, 855, 863, 867, 871, 874, 1010, 1015, 1019, 1027, 1035, 1039, 1043, 1046, 1182, 1187, 1191, 1199, 1207, 1211, 1215, 1218, 3071, 3711, 4791, 8982, 9160, 9308, 9322, 9454, 11384, 11466, 11554, 11644, 11792, 11806, 11938, 12214, 12294, 12380, 12468, 12590, 12718, 13868, 13922, 13950, 14038, 14096, 14128, 14246, 14276, 14290, 14422, 18810, 18976, 19064, 19214, 19356, 19640, 19692, 19718, 19802, 19862, 19952, 19982, 20012, 20072, 20204, 21294, 21460, 21548, 21594, 21668, 21698, 21742, 21840, 22176, 22230, 22258, 22346, 22436, 22556, 22688, 24064, 24078, 24152, 24226, 24358, 25474, 25556, 25644, 25854, 26288, 26458, 26516, 26548, 26562, 26636, 26696, 26710, 26808, 26842, 27118, 27198, 27226, 27284, 27494, 28606, 28802, 28834, 28926, 29030, 29130, 29198, 29338, 30334, 30366, 30458, 30562, 30662, 30730, 30870, 31088, 31352, 31490, 31832, 31866, 31898, 31990, 32094, 32194, 32228, 32262, 32402, 33176, 33202, 33270, 33282, 33294, 33306, 33318, 33330, 33364, 33398, 33430, 33522, 33626, 33726, 33760, 33794, 33898, 33934, 34708, 34734, 34802, 34814, 34826, 34838, 34850, 34862, 34962, 35054, 35158, 35258, 35718, 35982, 36122, 36240, 36266, 36334, 36346, 36358, 36370, 36382, 36394, 36428, 36462, 36494, 36586, 36690, 36790, 36824, 36858, 36962, 36998, 37826, 37862, 37930, 37998, 38070, 38140, 38210, 38282, 38356, 38430, 38504, 39494, 39562, 39630, 39702, 39772, 39842, 39914, 39988, 40062, 40136]
 
 
 # =============== Justifyer ===============
