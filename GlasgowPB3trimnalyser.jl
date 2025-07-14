@@ -264,7 +264,8 @@ function rungrimmer(file)
         showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
     end
     if CONFIG.cshow
-        ciaranshow(proofs,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
+        compareopb(system,nbopb,cone,varmap,ctrmap)
+        # ciaranshow(proofs,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
     end
     return tri,tms,twc
 end
@@ -313,9 +314,9 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
     else
         if conclusion=="UNSAT" || conclusion=="NONE"
             upquebit(system,invsys,assi,front,prism)
-            assi.=0
-            upquebitrestrained(system,invsys,assi,front,prism)
-             # print("\r\033[110G ",sum(front))
+            # assi.=0
+            # upquebitrestrained(system,invsys,assi,front,prism)
+            # print("\r\033[110G ",sum(front))
             #  println(findall(front))
         elseif conclusion == "BOUNDS"
             begin
@@ -766,8 +767,6 @@ function remakelink()
     # TODO
 end
 
-# [15, 17, 19, 62, 63, 70, 232, 617, 705, 707, 711, 738, 756, 790, 838, 843, 847, 855, 863, 867, 871, 874, 1010, 1015, 1019, 1027, 1035, 1039, 1043, 1046, 1182, 1187, 1191, 1199, 1207, 1211, 1215, 1218, 2641, 2851, 3071, 3711, 4146, 4356, 4791, 8982, 9160, 9308, 9322, 9454, 11384, 11466, 11554, 11644, 11792, 11806, 11938, 12214, 12294, 12380, 12468, 12590, 12718, 13868, 13922, 13950, 14038, 14096, 14128, 14246, 14276, 14290, 14388, 14422, 18810, 18976, 19064, 19214, 19356, 19640, 19692, 19718, 19802, 19862, 19952, 19982, 20012, 20072, 20204, 21294, 21460, 21548, 21594, 21668, 21698, 21742, 21840, 22176, 22230, 22258, 22346, 22436, 22556, 22688, 24064, 24078, 24152, 24226, 24358, 25474, 25556, 25644, 25854, 26288, 26458, 26516, 26548, 26562, 26636, 26696, 26710, 26808, 26842, 27118, 27198, 27226, 27284, 27494, 28606, 28802, 28834, 28926, 29030, 29130, 29198, 29338, 30334, 30366, 30458, 30562, 30662, 30730, 30870, 31088, 31352, 31490, 31832, 31866, 31898, 31990, 32094, 32194, 32228, 32262, 32366, 32402, 33176, 33202, 33270, 33282, 33294, 33306, 33318, 33330, 33364, 33398, 33430, 33522, 33626, 33726, 33760, 33794, 33898, 33934, 34708, 34734, 34802, 34814, 34826, 34838, 34850, 34862, 34962, 35054, 35158, 35258, 35718, 35982, 36122, 36240, 36266, 36334, 36346, 36358, 36370, 36382, 36394, 36428, 36462, 36494, 36586, 36690, 36790, 36824, 36858, 36962, 36998, 37826, 37862, 37930, 37998, 38070, 38140, 38210, 38282, 38356, 38430, 38504, 39494, 39562, 39630, 39702, 39772, 39842, 39914, 39988, 40062, 40136]
-# [15, 17, 19, 62, 63, 70, 232, 711, 738, 756, 790, 838, 843, 847, 855, 863, 867, 871, 874, 1010, 1015, 1019, 1027, 1035, 1039, 1043, 1046, 1182, 1187, 1191, 1199, 1207, 1211, 1215, 1218, 3071, 3711, 4791, 8982, 9160, 9308, 9322, 9454, 11384, 11466, 11554, 11644, 11792, 11806, 11938, 12214, 12294, 12380, 12468, 12590, 12718, 13868, 13922, 13950, 14038, 14096, 14128, 14246, 14276, 14290, 14422, 18810, 18976, 19064, 19214, 19356, 19640, 19692, 19718, 19802, 19862, 19952, 19982, 20012, 20072, 20204, 21294, 21460, 21548, 21594, 21668, 21698, 21742, 21840, 22176, 22230, 22258, 22346, 22436, 22556, 22688, 24064, 24078, 24152, 24226, 24358, 25474, 25556, 25644, 25854, 26288, 26458, 26516, 26548, 26562, 26636, 26696, 26710, 26808, 26842, 27118, 27198, 27226, 27284, 27494, 28606, 28802, 28834, 28926, 29030, 29130, 29198, 29338, 30334, 30366, 30458, 30562, 30662, 30730, 30870, 31088, 31352, 31490, 31832, 31866, 31898, 31990, 32094, 32194, 32228, 32262, 32402, 33176, 33202, 33270, 33282, 33294, 33306, 33318, 33330, 33364, 33398, 33430, 33522, 33626, 33726, 33760, 33794, 33898, 33934, 34708, 34734, 34802, 34814, 34826, 34838, 34850, 34862, 34962, 35054, 35158, 35258, 35718, 35982, 36122, 36240, 36266, 36334, 36346, 36358, 36370, 36382, 36394, 36428, 36462, 36494, 36586, 36690, 36790, 36824, 36858, 36962, 36998, 37826, 37862, 37930, 37998, 38070, 38140, 38210, 38282, 38356, 38430, 38504, 39494, 39562, 39630, 39702, 39772, 39842, 39914, 39988, 40062, 40136]
 
 
 # =============== Justifyer ===============
@@ -1688,6 +1687,62 @@ function printcom(file,system,invsys,cone,com)
             draw(PNG(string(proofs,"/aimg/",file,"-g",i,".smol.png"), 16cm, 16cm), gplot(smg))
         end
     end
+end
+function weneedbyid(prefix,map,cone,r,cordvertex=0,vertexdomains=Set{String}())
+    cond = x->length(x)>length(prefix) && x[1:length(prefix)]==prefix
+    println("\nFor ",prefix," WE NEED:")
+    for id in r
+        if haskey(map,id)
+            if cond(map[id])
+                if cone[id]
+                    printstyled(map[id],"  "; color = :green)
+                end end end end
+    println("\n    "," "^length(prefix)," WE DONT NEED:",if cordvertex>0 "  (restrained to D)" else "" end)
+    for id in r
+        if haskey(map,id)
+            if cond(map[id])
+                if !cone[id]
+                    name = map[id]
+                    if cordvertex==0 || name[cordvertex:findfirst('=',name)-1] in vertexdomains
+                        if !(findlast('>',name)===nothing) && name[findlast('>',name)+1:end] in vertexdomains
+                        printstyled(map[id],"  "; color = :red)
+                end end end end end end
+end
+function compareopb(system,nbopb,cone,varmap,ctrmap)
+    invvarmap = Dict(varmap[k] => k for k in keys(varmap)) # reverse the varmap (may be inneficient)
+    invctrmap = Dict(ctrmap[k] => k for k in keys(ctrmap)) # reverse the ctrmap (may be inneficient)
+    lastid = length(system)
+    for id in 1:lastid
+        if cone[id]
+            eq = system[id]
+            if haskey(invctrmap,id)
+                printstyled(invctrmap[id],"  "; color = :cyan)
+            else
+                printstyled("ID",id,"  "; color = :blue)
+            end
+        end
+    end
+    d = Set{String}()
+    weneedbyid("D",invctrmap,cone,1:nbopb)
+    for id in 1:nbopb
+        if cone[id] && haskey(invctrmap,id)
+            if invctrmap[id][1]=='D'
+                m = if invctrmap[id][end]=='m' 1 else 0 end
+                push!(d,invctrmap[id][2:end-m])
+            end
+        end
+    end
+
+    weneedbyid("a",invctrmap,cone,1:nbopb,2,d)
+    weneedbyid("G1x2ap",invctrmap,cone,1:lastid,7,d)
+    weneedbyid("G2x2ap",invctrmap,cone,nbopb+1:lastid,7,d)
+    weneedbyid("G3x2ap",invctrmap,cone,nbopb+1:lastid,7,d)
+    weneedbyid("G4x2ap",invctrmap,cone,nbopb+1:lastid,7,d)
+    weneedbyid("D",invctrmap,cone,1:nbopb)
+    weneedbyid("inj",invctrmap,cone,1:nbopb)
+
+    
+    println()
 end
 
 
