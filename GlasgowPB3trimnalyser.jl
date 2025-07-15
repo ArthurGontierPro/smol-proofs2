@@ -264,7 +264,7 @@ function rungrimmer(file)
         showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
     end
     if CONFIG.cshow
-        compareopb(system,nbopb,cone,varmap,ctrmap)
+        comparegraphs(system,nbopb,cone,varmap,ctrmap)
         # ciaranshow(proofs,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
     end
     return tri,tms,twc
@@ -1688,6 +1688,7 @@ function printcom(file,system,invsys,cone,com)
         end
     end
 end
+# graph and analysis section
 function weneedbyid(prefix,map,cone,r,cordvertex=0,vertexdomains=Set{String}())
     cond = x->length(x)>length(prefix) && x[1:length(prefix)]==prefix
     println("\nFor ",prefix," WE NEED:")
@@ -1704,11 +1705,12 @@ function weneedbyid(prefix,map,cone,r,cordvertex=0,vertexdomains=Set{String}())
                 if !cone[id]
                     name = map[id]
                     if cordvertex==0 || name[cordvertex:findfirst('=',name)-1] in vertexdomains
-                        if !(findlast('>',name)===nothing) && name[findlast('>',name)+1:end] in vertexdomains
+                        if (findlast('>',name)===nothing) || name[findlast('>',name)+1:end] in vertexdomains
                         printstyled(map[id],"  "; color = :red)
                 end end end end end end
 end
-function compareopb(system,nbopb,cone,varmap,ctrmap)
+using Graphs,GraphPlot,Compose,Cairo # we may not need all that
+function comparegraphs(system,nbopb,cone,varmap,ctrmap)
     invvarmap = Dict(varmap[k] => k for k in keys(varmap)) # reverse the varmap (may be inneficient)
     invctrmap = Dict(ctrmap[k] => k for k in keys(ctrmap)) # reverse the ctrmap (may be inneficient)
     lastid = length(system)
@@ -1741,8 +1743,39 @@ function compareopb(system,nbopb,cone,varmap,ctrmap)
     weneedbyid("D",invctrmap,cone,1:nbopb)
     weneedbyid("inj",invctrmap,cone,1:nbopb)
 
-    
+    g = ladtograph("/home/arthur_gla/veriPB/newSIPbenchmarks/biochemicalReactions","075.txt")
+
+
+    saveplot(gplot(g; layout = circular_layout, nodelabel = [i for i in 1:nv(g)], plot_size = (16cm, 16cm)), "karatec.svg")
+
+
     println()
+end
+function removespaces(st)
+    r = findall(x->x=="",st)
+    deleteat!(st,r)
+end
+function ladtograph(path,file)
+    cd()
+    g = SimpleGraph()
+    open(string(path,'/',file),"r"; lock = false) do f
+        s = readline(f)
+        n = parse(Int,s)
+        add_vertices!(g,n)
+        l = 0
+        for ss in eachline(f)
+            l+=1
+            st = split(ss,' ')[2:end] # le premier chiffre est le degret du noeud
+            removespaces(st)
+            for sn in st
+                n = parse(Int,sn)
+                if n>0
+                    add_edge!(g, l, n)
+                end
+            end
+        end
+    end
+    return g
 end
 
 
