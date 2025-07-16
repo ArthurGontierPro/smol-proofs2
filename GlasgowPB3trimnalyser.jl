@@ -264,7 +264,7 @@ function rungrimmer(file)
         showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
     end
     if CONFIG.cshow
-        comparegraphs(system,nbopb,cone,varmap,ctrmap)
+        comparegraphs(file,system,nbopb,cone,varmap,ctrmap)
         # ciaranshow(proofs,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
     end
     return tri,tms,twc
@@ -1709,8 +1709,27 @@ function weneedbyid(prefix,map,cone,r,cordvertex=0,vertexdomains=Set{String}())
                         printstyled(map[id],"  "; color = :red)
                 end end end end end end
 end
-using Graphs,GraphPlot,Compose,Cairo # we may not need all that
-function comparegraphs(system,nbopb,cone,varmap,ctrmap)
+function coneverteces(cone,invctrmap,nbopb) # build the subsets of cone vertices in pattern and target graphs.
+    p = Set{String}()
+    t = Set{String}()
+    weneedbyid("D",invctrmap,cone,1:nbopb)
+    for id in 1:nbopb
+        if cone[id] && haskey(invctrmap,id)
+            if invctrmap[id][1]=='D'
+                m = if invctrmap[id][end]=='m' 1 else 0 end
+                push!(p,invctrmap[id][2:end-m])
+            elseif length(invctrmap[id])>3 && invctrmap[id][1:3]=="inj" 
+                push!(t,invctrmap[id][4:end])
+            end
+        end
+    end
+    return p,t,[parse(Int,e)+1 for e in p],[parse(Int,e)+1 for e in t]
+end
+using Graphs,GraphPlot,Compose,Cairo,Colors # we may not need all that
+function comparegraphs(file,system,nbopb,cone,varmap,ctrmap)
+    if file[1:3]!= "bio" println("This function is only for biochemical reactions.")    end
+    pattern = file[4:6]
+    target = file[7:9]
     invvarmap = Dict(varmap[k] => k for k in keys(varmap)) # reverse the varmap (may be inneficient)
     invctrmap = Dict(ctrmap[k] => k for k in keys(ctrmap)) # reverse the ctrmap (may be inneficient)
     lastid = length(system)
@@ -1724,30 +1743,41 @@ function comparegraphs(system,nbopb,cone,varmap,ctrmap)
             end
         end
     end
-    d = Set{String}()
-    weneedbyid("D",invctrmap,cone,1:nbopb)
-    for id in 1:nbopb
-        if cone[id] && haskey(invctrmap,id)
-            if invctrmap[id][1]=='D'
-                m = if invctrmap[id][end]=='m' 1 else 0 end
-                push!(d,invctrmap[id][2:end-m])
-            end
-        end
-    end
+    p,t,pint,tint = coneverteces(cone,invctrmap,nbopb)
 
-    weneedbyid("a",invctrmap,cone,1:nbopb,2,d)
-    weneedbyid("G1x2ap",invctrmap,cone,1:lastid,7,d)
-    weneedbyid("G2x2ap",invctrmap,cone,nbopb+1:lastid,7,d)
-    weneedbyid("G3x2ap",invctrmap,cone,nbopb+1:lastid,7,d)
-    weneedbyid("G4x2ap",invctrmap,cone,nbopb+1:lastid,7,d)
+    weneedbyid("a",invctrmap,cone,1:nbopb,2,p)
+    weneedbyid("G1x2ap",invctrmap,cone,1:lastid,7,p)
+    weneedbyid("G2x2ap",invctrmap,cone,nbopb+1:lastid,7,p)
+    weneedbyid("G3x2ap",invctrmap,cone,nbopb+1:lastid,7,p)
+    weneedbyid("G4x2ap",invctrmap,cone,nbopb+1:lastid,7,p)
     weneedbyid("D",invctrmap,cone,1:nbopb)
     weneedbyid("inj",invctrmap,cone,1:nbopb)
 
-    g = ladtograph("/home/arthur_gla/veriPB/newSIPbenchmarks/biochemicalReactions","075.txt")
+    gp = ladtograph("/home/arthur_gla/veriPB/newSIPbenchmarks/biochemicalReactions",pattern*".txt")
+    gt = ladtograph("/home/arthur_gla/veriPB/newSIPbenchmarks/biochemicalReactions",target*".txt")
 
 
-    saveplot(gplot(g; layout = circular_layout, nodelabel = [i for i in 1:nv(g)], plot_size = (16cm, 16cm)), "karatec.svg")
+    np = [i for i in 1:nv(gp)]
+    nprgb = [if i in pint RGBA(0.0,0.8,0,0.8) else RGBA(0.8,0.0,0.0,0.8) end for i in 1:nv(gp)]
+    # ewp = [if src(e) in pint && dst(e) in pint 4 else 1 end for e in edges(gp)]
+    ewp = [if src(e) in pint && dst(e) in pint RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gp)]
+    saveplot(gplot(gp;layout = circular_layout, nodelabel = np, nodefillc = nprgb, edgestrokec  = ewp, plot_size = (16cm, 16cm)), "gp.svg")
 
+    nt = [i for i in 1:nv(gt)]
+    ntrgb = [if i in tint RGBA(0.0,0.8,0,0.8) else RGBA(0.8,0.0,0.0,0.8) end for i in 1:nv(gt)]
+    ewt = [if src(e) in tint && dst(e) in tint RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gt)]
+    saveplot(gplot(gt;layout = circular_layout, nodelabel = nt, nodefillc = ntrgb, edgestrokec  = ewt, plot_size = (16cm, 16cm)), "gt.svg")
+
+    gg = makegkwin(gp,4)
+    for (k0,g0) in enumerate(gg)
+        ec = [if src(e) in pint && dst(e) in pint RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(g0)]
+        saveplot(gplot(g0;layout = circular_layout, nodelabel = np, nodefillc = nprgb, edgestrokec  = ec, plot_size = (16cm, 16cm)), string("gp",k0,".svg"))
+    end
+    gg = makegkwin(gt,4)
+    for (k0,g0) in enumerate(gg)
+        ec = [if src(e) in tint && dst(e) in tint RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(g0)]
+        saveplot(gplot(g0;layout = circular_layout, nodelabel = nt, nodefillc = ntrgb, edgestrokec  = ec, plot_size = (16cm, 16cm)), string("gt",k0,".svg"))
+    end
 
     println()
 end
@@ -1777,7 +1807,33 @@ function ladtograph(path,file)
     end
     return g
 end
-
+function add_nei(deb,cur,l,g,A)
+    if l == 0 if deb!=cur A[deb,cur] +=1 end
+    else
+        for nei in neighbors(g, cur)
+            add_nei(deb,nei,l-1,g,A)
+        end
+    end
+end
+function makegkwin(g,k) return makegkwin(g,2,k) end
+function makegkwin(g,l,k) # l length of path (default 2); k number of paths
+    n = nv(g)
+    A = zeros(Int,n,n)
+    gg = [SimpleGraph(n,0) for _ in 1:k]
+    for i in vertices(g)
+        add_nei(i,i,l,g,A)
+    end
+    for occ in 1:k
+        for i in 1:n
+            for j in i:n
+                if A[i,j]>=occ
+                    add_edge!(gg[occ],i,j)
+                end
+            end
+        end
+    end
+    return gg
+end 
 
 
 # ================ Parser ================
