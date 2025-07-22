@@ -249,9 +249,11 @@ function rungrimmer(file)
         cone = makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclusion,obj)
     end
     # printstyled("\r"," "^12,prettytime(tms),"  "; color = :green)
+    invctrmap = Dict(ctrmap[k] => k for k in keys(ctrmap)) # reverse the ctrmap (may be inneficient)
     twc = @elapsed begin
         varmap = Dict(varmap[k] => k for k in keys(varmap)) # reverse the varmap (may be inneficient)
-        writeconedel(proofs,file,version,system,cone,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,output,conclusion,obj,prism)
+        writeconedel(proofs,file,version,system,cone,systemlink,redwitness,solirecord,assertrecord,nbopb,
+                    varmap,ctrmap,invctrmap,output,conclusion,obj,prism)
     end
     # printstyled("\r"," "^6,prettytime(twc),"  "; color = :cyan)
     varocc = printorder(file,cone,invsys,varmap)
@@ -264,7 +266,7 @@ function rungrimmer(file)
         showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
     end
     if CONFIG.cshow
-        comparegraphs(file,system,nbopb,cone,varmap,ctrmap)
+        comparegraphs(file,system,nbopb,cone,varmap,ctrmap,invctrmap)
         # ciaranshow(proofs,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
     end
     return tri,tms,twc
@@ -800,7 +802,8 @@ end
 # ================ Printer ================
 
 
-function writeconedel(path,file,version,system,cone,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,output,conclusion,obj,prism)
+function writeconedel(path,file,version,system,cone,systemlink,redwitness,solirecord,assertrecord,nbopb,
+                        varmap,ctrmap,invctrmap,output,conclusion,obj,prism)
     index = zeros(Int,length(system))
     lastindex = 0
     open(string(path,"/smol.",file,".opb"),"w") do f
@@ -811,6 +814,7 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,solire
         end
         for i in 1:nbopb
             if cone[i]
+                if haskey(invctrmap,i) write(f,invctrmap[i]*" ") end # write label if it exists
                 lastindex += 1
                 index[i] = lastindex
                 eq = system[i]
@@ -832,6 +836,7 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,solire
         write(f,string("f ",sum(cone[1:nbopb])," ;\n"))
         for i in nbopb+1:length(system)
             if cone[i]
+                if haskey(invctrmap,i) write(f,invctrmap[i]*" ") end # write label if it exists
                 lastindex += 1
                 index[i] = lastindex
                 eq = system[i]
@@ -1726,12 +1731,23 @@ function coneverteces(cone,invctrmap,nbopb) # build the subsets of cone vertices
     return p,t,[parse(Int,e)+1 for e in p],[parse(Int,e)+1 for e in t]
 end
 using Graphs,GraphPlot,Compose,Cairo,Colors # we may not need all that
-function comparegraphs(file,system,nbopb,cone,varmap,ctrmap)
-    if file[1:3]!= "bio" println("This function is only for biochemical reactions.")    end
-    pattern = file[4:6]
-    target = file[7:9]
-    invvarmap = Dict(varmap[k] => k for k in keys(varmap)) # reverse the varmap (may be inneficient)
-    invctrmap = Dict(ctrmap[k] => k for k in keys(ctrmap)) # reverse the ctrmap (may be inneficient)
+function comparegraphs(file,system,nbopb,cone,varmap,ctrmap,invctrmap)    
+    pattern = target = ""
+    gp = gt = nothing
+    if file[1:3] == "bio"
+        pattern = file[4:6]
+        target = file[7:9]
+        gp = ladtograph("/home/arthur_gla/veriPB/newSIPbenchmarks/biochemicalReactions",pattern*".txt")
+        gt = ladtograph("/home/arthur_gla/veriPB/newSIPbenchmarks/biochemicalReactions",target*".txt")
+    elseif file[1:2] == "LV"
+        i = findlast(x->x=='g',file)
+        pattern = file[3:i-1]
+        target = file[i:end]
+        gp = ladtograph("/home/arthur_gla/veriPB/newSIPbenchmarks/LV",pattern)
+        gt = ladtograph("/home/arthur_gla/veriPB/newSIPbenchmarks/LV",target)
+    end
+    # invvarmap = Dict(varmap[k] => k for k in keys(varmap)) # reverse the varmap (may be inneficient)
+    # invctrmap = Dict(ctrmap[k] => k for k in keys(ctrmap)) # reverse the ctrmap (may be inneficient)
     lastid = length(system)
     for id in 1:lastid
         if cone[id]
@@ -1753,8 +1769,6 @@ function comparegraphs(file,system,nbopb,cone,varmap,ctrmap)
     weneedbyid("D",invctrmap,cone,1:nbopb)
     weneedbyid("inj",invctrmap,cone,1:nbopb)
 
-    gp = ladtograph("/home/arthur_gla/veriPB/newSIPbenchmarks/biochemicalReactions",pattern*".txt")
-    gt = ladtograph("/home/arthur_gla/veriPB/newSIPbenchmarks/biochemicalReactions",target*".txt")
 
 
     np = [i for i in 1:nv(gp)]
