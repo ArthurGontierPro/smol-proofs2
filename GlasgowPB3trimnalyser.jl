@@ -167,6 +167,7 @@ function runtrimmers(ins)
     printstyled(" &          &          &          &      &      &      (                   ) \\\\\\hline"; color = :grey)
     printstyled("\r\033[",d+4,"G",prettybytes(so))
     tvp = @elapsed begin if CONFIG.veripb
+        # v1 = ""
         v1 = verifier("$proofs/$ins.opb","$proofs/$ins$extention")
     end end
     printstyled("\r\033[",d+37,"G",prettytime(tvp); color = :blue)
@@ -246,13 +247,13 @@ function rungrimmer(file)
     prism = availableranges(redwitness)
     if conclusion in ["SAT","NONE"] && !isequal(system[end],Eq([],1)) return println() end
     tms = @elapsed begin
-        cone = makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclusion,obj)
+        cone,conelits = makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclusion,obj)
     end
     # printstyled("\r"," "^12,prettytime(tms),"  "; color = :green)
     invctrmap = Dict(ctrmap[k] => k for k in keys(ctrmap)) # reverse the ctrmap (may be inneficient)
     twc = @elapsed begin
         varmap = Dict(varmap[k] => k for k in keys(varmap)) # reverse the varmap (may be inneficient)
-        writeconedel(proofs,file,version,system,cone,systemlink,redwitness,solirecord,assertrecord,nbopb,
+        writeconedel(proofs,file,version,system,cone,conelits,systemlink,redwitness,solirecord,assertrecord,nbopb,
                     varmap,ctrmap,invctrmap,output,conclusion,obj,prism)
     end
     # printstyled("\r"," "^6,prettytime(twc),"  "; color = :cyan)
@@ -266,7 +267,7 @@ function rungrimmer(file)
         showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
     end
     if CONFIG.cshow
-        comparegraphs(file,system,nbopb,cone,varmap,ctrmap,invctrmap)
+        comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)
         # ciaranshow(proofs,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
     end
     return tri,tms,twc
@@ -282,8 +283,13 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
     antecedants = zeros(Bool,n)
     assi = zeros(Int8,length(varmap))
     cone = zeros(Bool,n)
+    conelits = Dict{Int,Set{Lit}}() # for the lits that we want to keep (works with conflict analysis)
     cone[end] = true
     front = zeros(Bool,n)
+    for eq in system 
+        println(eq)
+        printeq(eq,varmap)
+    end
     contradictions = findall(x->length(x.t)==0,system)
     firstcontradiction = 0
     for contradiction in contradictions
@@ -315,7 +321,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
         fixfront(front,systemlink[firstcontradiction-nbopb])
     else
         if conclusion=="UNSAT" || conclusion=="NONE"
-            upquebit(system,invsys,assi,front,prism)
+            upquebit(system,invsys,assi,front,prism,conelits)
             # assi.=0
             # upquebitrestrained(system,invsys,assi,front,prism)
             # print("\r\033[110G ",sum(front))
@@ -339,15 +345,15 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
         newpfgl = false
         while true in front
             i = findlast(front)
-            print("\r\033[$(d)G$i ")
             front[i] = false
             if !cone[i]
+                # print("\r\033[$(d)G$i ")
                 cone[i] = true
                 if i>nbopb
                     tlink = systemlink[i-nbopb][1]
                     if tlink == -1                      # u statement 
                         antecedants .=false ; assi.=0
-                        if rup(system,invsys,antecedants,i,assi,front,cone,prism,0:0)
+                        if rup(system,invsys,antecedants,i,assi,front,cone,conelits,prism,0:0)
                             antecedants[i] = false
                             append!(systemlink[i-nbopb],findall(antecedants))
                             fixfront(front,antecedants)
@@ -405,9 +411,16 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
     # print("\033[K\033[A                   ")  # Efface la ligne et remonte d'une ligne
     fixredsystemlink(systemlink,cone,prism,nbopb)
     # printeqlink(935,system,systemlink)
-    return cone
+    # ids = keys(conelits)
+    # p = sortperm(ids)
+    # sort!(conelits)
+    # for (id,conelit) in conelits
+        # print(id,"   ")
+        # printeqconelit(system[id],conelit)
+    # end
+    return cone,conelits
 end
-function rup(system,invsys,antecedants,init,assi,front,cone,prism,subrange)# I am putting back cone and front together because they will both end up in the cone at the end.
+function rup(system,invsys,antecedants,init,assi,front,cone,conelits,prism,subrange)# I am putting back cone and front together because they will both end up in the cone at the end.
     que = ones(Bool,init)
     rev = reverse(system[init])
     prio = true
@@ -420,7 +433,7 @@ function rup(system,invsys,antecedants,init,assi,front,cone,prism,subrange)# I a
             s = slack(eq,assi)
             if s<0
                 implgraph[0] = i
-                conflictanalysisordered(0,implgraph,antecedants,assi,system)
+                conflictanalysisordered(0,implgraph,antecedants,assi,system,conelits)
                 # antecedants[i] = true
                 return true
             else
@@ -496,10 +509,18 @@ function getinvsys(system,systemlink,varmap)
     end # arrays should be sorted at this point
     return invsys
 end
-function conflictanalysisordered(var,implgraph,antecedants,assi,system)
+function conflictanalysisordered(var,implgraph,antecedants,assi,system,conelits)
     id = implgraph[var]
     if id > 0 
-        if var>0 assi[var] = 0  end                             # we set the variable to 0 because it is propagated and does cannot contribute to any other sum
+        if var>0 
+            l = system[id].t[findfirst(x->x.var==var,system[id].t)] # we find the lit in the eq
+            if haskey(conelits,id) # we check if the lit is in the conelits
+                push!(conelits[id],l)
+            else
+                conelits[id] = Set([l])
+            end
+            assi[var] = 0
+        end                             # we set the variable to 0 because it is propagated and does cannot contribute to any other sum
         implgraph[var] = 0                                      # we set the explanation to 0 because things are propagated only once and we dont like loops
         antecedants[id] = true                                  # we add the variable to the antecedants set and we explain it
         lits = [l for l in system[id].t if (!l.sign && assi[l.var] == 1) || (l.sign && assi[l.var] == 2)] # we get the variables that were assigned and contributed negativelly in the sum in the eq for this propagation.
@@ -507,8 +528,13 @@ function conflictanalysisordered(var,implgraph,antecedants,assi,system)
         b = system[id].b                                        # the bound of the eq
         somme = sum(l.coef for l in system[id].t if l.var != var; init = 0) # we get the sum of the coefficients of the variables
         for l in lits
+            if haskey(conelits,id) # we check if the lit is in the conelits
+                push!(conelits[id],l)
+            else
+                conelits[id] = Set([l])
+            end
             somme -= l.coef # the variable does not contribute to the sum anymore
-            conflictanalysisordered(l.var,implgraph,antecedants,assi,system)
+            conflictanalysisordered(l.var,implgraph,antecedants,assi,system,conelits)
             if somme<b
                 return # we reached the point where we need to propagate var to keep the eq sat
             end
@@ -529,7 +555,7 @@ function updatequebit(eq,que,invsys,s,i,assi::Vector{Int8},antecedants,implgraph
     end
     return rewind
 end
-function upquebit(system,invsys,assi::Vector{Int8},antecedants,prism)
+function upquebit(system,invsys,assi::Vector{Int8},antecedants,prism,conelits)
     que = ones(Bool,length(system))
     i = 1
     implgraph = Dict{Int,Int}()
@@ -539,7 +565,7 @@ function upquebit(system,invsys,assi::Vector{Int8},antecedants,prism)
             s = slack(eq,assi)
             if s<0
                 implgraph[0] = i
-                return conflictanalysisordered(0,implgraph,antecedants,assi,system) # this is the best one
+                return conflictanalysisordered(0,implgraph,antecedants,assi,system,conelits) # this is the best one
             else
                 rewind = updatequebit(eq,que,invsys,s,i,assi,antecedants,implgraph)
                 que[i] = false
@@ -802,7 +828,7 @@ end
 # ================ Printer ================
 
 
-function writeconedel(path,file,version,system,cone,systemlink,redwitness,solirecord,assertrecord,nbopb,
+function writeconedel(path,file,version,system,cone,conelits,systemlink,redwitness,solirecord,assertrecord,nbopb,
                         varmap,ctrmap,invctrmap,output,conclusion,obj,prism)
     index = zeros(Int,length(system))
     lastindex = 0
@@ -814,11 +840,15 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,solire
         end
         for i in 1:nbopb
             if cone[i]
-                if haskey(invctrmap,i) write(f,invctrmap[i]*" ") end # write label if it exists
+                if haskey(invctrmap,i) write(f,"@"*invctrmap[i]*" ") end # write label if it exists
                 lastindex += 1
                 index[i] = lastindex
                 eq = system[i]
-                write(f,writeeq(eq,varmap))
+                if haskey(conelits,i)
+                    write(f,writeeqconelits(eq,varmap,conelits[i]))
+                else
+                    write(f,writeeq(eq,varmap))
+                end
             end
         end
     end
@@ -836,13 +866,17 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,solire
         write(f,string("f ",sum(cone[1:nbopb])," ;\n"))
         for i in nbopb+1:length(system)
             if cone[i]
-                if haskey(invctrmap,i) write(f,invctrmap[i]*" ") end # write label if it exists
+                if haskey(invctrmap,i) write(f,"@"*invctrmap[i]*" ") end # write label if it exists
                 lastindex += 1
                 index[i] = lastindex
                 eq = system[i]
                 tlink = systemlink[i-nbopb][1]
                 if tlink == -1               # rup
-                    write(f,writeu(eq,varmap))
+                    if haskey(conelits,i)
+                        write(f,writeuconelits(eq,varmap,conelits[i]))
+                    else
+                        write(f,writeu(eq,varmap))
+                    end
                     if length(eq.t)>0 
                         writedel(f,systemlink,i,succ,index,nbopb,dels)
                     end
@@ -850,7 +884,11 @@ function writeconedel(path,file,version,system,cone,systemlink,redwitness,solire
                     write(f,writepol(systemlink[i-nbopb],index,varmap))
                     writedel(f,systemlink,i,succ,index,nbopb,dels)
                 elseif tlink == -3           # ia
-                    write(f,writeia(eq,systemlink[i-nbopb][2],index,varmap))
+                    if haskey(conelits,i)
+                        write(f,writeiaconelits(eq,systemlink[i-nbopb][2],index,varmap,conelits[i]))
+                    else
+                        write(f,writeia(eq,systemlink[i-nbopb][2],index,varmap))
+                    end
                     writedel(f,systemlink,i,succ,index,nbopb,dels)
                 elseif tlink == -4           # red alone
                     write(f,writered(eq,varmap,redwitness[i],"")) # since simple red have no antecedants, they cannot trigger deletions ie they cannot be the last successor of a previous eq
@@ -963,8 +1001,14 @@ end
 function writeu(e,varmap)
     return string("rup ",writeeq(e,varmap))
 end
+function writeuconelits(e,varmap,conelit)
+    return string("rup ",writeeqconelits(e,varmap,conelit))
+end
 function writeia(e,link,index,varmap)
     return string("ia ",writeeq(e,varmap)[1:end-2],": ",index[link]," ;\n")
+end
+function writeiaconelits(e,link,index,varmap,conelit)
+    return string("ia ",writeeqconelits(e,varmap,conelit)[1:end-2],": ",index[link]," ;\n")
 end
 function writesolx(e,varmap)
     s = "solx"
@@ -1056,9 +1100,26 @@ function writelits(lits,varmap)
     end
     return s
 end
+function writelitsconelits(lits,varmap,conelit)
+    b=0
+    s = ""
+    for l in lits
+        if l in conelit
+            s = string(s,writelit(l,varmap)," ")
+        else
+            b+=l.coef
+        end
+    end
+    return s,b
+end
 function writeeq(e,varmap)
     s = writelits(e.t,varmap)
     return string(s,">= ",e.b," ;\n")
+end
+function writeeqconelits(e,varmap,conelit)
+    printeqconelit(e,conelit)
+    s,b = writelitsconelits(e.t,varmap,conelit)
+    return string(s,">= ",max(0,e.b-b)," ;\n")
 end
 function writelit(l,varmap)
     return string(l.coef," ",if l.sign "" else "~" end, varmap[l.var])
@@ -1084,10 +1145,14 @@ function isequal(e,f) # equality between eq
     end
 end
 function printlit(l)
-
     if l.coef!=1 printstyled(l.coef; color = :blue) end
     if !l.sign printstyled('~'; color = :red) else print(" ") end
     printstyled(l.var; color = :green)
+end
+function printlityellow(l)
+    if l.coef!=1 printstyled(l.coef; color = :blue) end
+    if !l.sign printstyled('~'; color = :red) else print(" ") end
+    printstyled(l.var; color = :yellow)
 end
 function printlit(l,varmap)
     printstyled(l.coef; color = :blue)
@@ -1097,7 +1162,18 @@ end
 function printeq(e)
     for l in e.t
         print(" ")
-        printlit(l)
+        printlityellow(l)
+    end
+    println(" >= ",e.b)
+end
+function printeqconelit(e,conelit)
+    for l in e.t
+        print(" ")
+        if l in conelit
+            printlit(l)
+        else
+            printlityellow(l)
+        end
     end
     println(" >= ",e.b)
 end
@@ -1709,8 +1785,8 @@ function weneedbyid(prefix,map,cone,r,cordvertex=0,vertexdomains=Set{String}())
             if cond(map[id])
                 if !cone[id]
                     name = map[id]
-                    if cordvertex==0 || name[cordvertex:findfirst('=',name)-1] in vertexdomains
-                        if (findlast('>',name)===nothing) || name[findlast('>',name)+1:end] in vertexdomains
+                    if cordvertex==0 || name[cordvertex:findlast('e',name)-1] in vertexdomains
+                        if (findlast('i',name)===nothing) || name[findlast('i',name)+1:end] in vertexdomains
                         printstyled(map[id],"  "; color = :red)
                 end end end end end end
 end
@@ -1730,8 +1806,57 @@ function coneverteces(cone,invctrmap,nbopb) # build the subsets of cone vertices
     end
     return p,t,[parse(Int,e)+1 for e in p],[parse(Int,e)+1 for e in t]
 end
+function coneedges(cone,invctrmap)
+    P = Set{Int}()
+    T = Set{Int}()
+    E = Set{Tuple{Int,Int}}()
+    for i in eachindex(cone)
+        if cone[i]
+            if haskey(invctrmap,i)
+                s = invctrmap[i]
+                e = findlast('e',s) # form of the parsed string is either asdf1e2 or asdf1e2i3
+                if e === nothing
+                    printstyled(s,"  "; color = :orange)
+                else
+                    d = findlast(!isdigit,s[1:e-1])
+                    p = parse(Int,s[d+1:e-1])+1
+                    push!(P,p)
+                    f = findfirst(!isdigit,s[e+1:end])
+                    t = f===nothing ? parse(Int,s[e+1:end]) : parse(Int,s[e+1:e+f-1])
+                    push!(T,t+1)
+                    if f !== nothing
+                        ee = parse(Int,s[e+f+1:end])+1
+                        push!(P,ee)
+                        push!(E,(p,ee))
+                    end
+                    # printstyled(s,"  "; color = :yellow)
+                end
+            else
+                # printstyled("",i,"  "; color = :blue)
+            end
+        end
+    end
+    return P,T,E
+end
+function verticesfromnames(cone,conelits,system,varmap)
+    pp = Set{Int}()
+    tt = Set{Int}()
+    for i in eachindex(system)
+        if cone[i]
+            for l in system[i].t
+                # if l in conelits[i]
+                    name = varmap[l.var]
+                    u = findfirst('_',name)
+                    push!(pp,parse(Int,name[2:u-1])+1) # 2 becaust var looks like x1_2
+                    push!(tt,parse(Int,name[u+1:end])+1)
+                # end
+            end
+        end
+    end
+    return pp,tt
+end
 using Graphs,GraphPlot,Compose,Cairo,Colors # we may not need all that
-function comparegraphs(file,system,nbopb,cone,varmap,ctrmap,invctrmap)    
+function comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)    
     pattern = target = ""
     gp = gt = nothing
     if file[1:3] == "bio"
@@ -1760,36 +1885,47 @@ function comparegraphs(file,system,nbopb,cone,varmap,ctrmap,invctrmap)
         end
     end
     p,t,pint,tint = coneverteces(cone,invctrmap,nbopb)
+    P,T,E = coneedges(cone,invctrmap)
 
-    weneedbyid("a",invctrmap,cone,1:nbopb,2,p)
-    weneedbyid("G1x2ap",invctrmap,cone,1:lastid,7,p)
-    weneedbyid("G2x2ap",invctrmap,cone,nbopb+1:lastid,7,p)
-    weneedbyid("G3x2ap",invctrmap,cone,nbopb+1:lastid,7,p)
-    weneedbyid("G4x2ap",invctrmap,cone,nbopb+1:lastid,7,p)
-    weneedbyid("D",invctrmap,cone,1:nbopb)
-    weneedbyid("inj",invctrmap,cone,1:nbopb)
+    P,T = verticesfromnames(cone,conelits,system,varmap)
 
+    for i in P
+        if i in pint
+            printstyled("P",i,"  "; color = :green)
+        else
+            printstyled("P",i,"  "; color = :red)
+        end
+    end
+
+    # weneedbyid("a",invctrmap,cone,1:nbopb,2,p)
+    # weneedbyid("G1x2ap",invctrmap,cone,1:lastid,7,p)
+    # weneedbyid("G2x2ap",invctrmap,cone,nbopb+1:lastid,7,p)
+    # weneedbyid("G3x2ap",invctrmap,cone,nbopb+1:lastid,7,p)
+    # weneedbyid("G4x2ap",invctrmap,cone,nbopb+1:lastid,7,p)
+    # weneedbyid("D",invctrmap,cone,1:nbopb)
+    # weneedbyid("inj",invctrmap,cone,1:nbopb)
 
 
     np = [i for i in 1:nv(gp)]
-    nprgb = [if i in pint RGBA(0.0,0.8,0,0.8) else RGBA(0.8,0.0,0.0,0.8) end for i in 1:nv(gp)]
+    nprgb = [if i in P RGBA(0.0,0.8,0,0.8) else RGBA(0.8,0.0,0.0,0.8) end for i in 1:nv(gp)]
     # ewp = [if src(e) in pint && dst(e) in pint 4 else 1 end for e in edges(gp)]
-    ewp = [if src(e) in pint && dst(e) in pint RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gp)]
+    # ewp = [if src(e) in P && dst(e) in P RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gp)]
+    ewp = [if (src(e),dst(e)) in E || (dst(e),src(e)) in E RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gp)]
     saveplot(gplot(gp;layout = circular_layout, nodelabel = np, nodefillc = nprgb, edgestrokec  = ewp, plot_size = (16cm, 16cm)), "gp.svg")
 
     nt = [i for i in 1:nv(gt)]
-    ntrgb = [if i in tint RGBA(0.0,0.8,0,0.8) else RGBA(0.8,0.0,0.0,0.8) end for i in 1:nv(gt)]
-    ewt = [if src(e) in tint && dst(e) in tint RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gt)]
+    ntrgb = [if i in T RGBA(0.0,0.8,0,0.8) else RGBA(0.8,0.0,0.0,0.8) end for i in 1:nv(gt)]
+    ewt = [if src(e) in T && dst(e) in T RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gt)]
     saveplot(gplot(gt;layout = circular_layout, nodelabel = nt, nodefillc = ntrgb, edgestrokec  = ewt, plot_size = (16cm, 16cm)), "gt.svg")
 
     gg = makegkwin(gp,4)
     for (k0,g0) in enumerate(gg)
-        ec = [if src(e) in pint && dst(e) in pint RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(g0)]
+        ec = [if src(e) in P && dst(e) in P RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(g0)]
         saveplot(gplot(g0;layout = circular_layout, nodelabel = np, nodefillc = nprgb, edgestrokec  = ec, plot_size = (16cm, 16cm)), string("gp",k0,".svg"))
     end
     gg = makegkwin(gt,4)
     for (k0,g0) in enumerate(gg)
-        ec = [if src(e) in tint && dst(e) in tint RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(g0)]
+        ec = [if src(e) in T && dst(e) in T RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(g0)]
         saveplot(gplot(g0;layout = circular_layout, nodelabel = nt, nodefillc = ntrgb, edgestrokec  = ec, plot_size = (16cm, 16cm)), string("gt",k0,".svg"))
     end
 
@@ -1814,7 +1950,7 @@ function ladtograph(path,file)
             for sn in st
                 n = parse(Int,sn)
                 if n>0
-                    add_edge!(g, l, n)
+                    add_edge!(g, l, n+1) # +1 because the first node is 0
                 end
             end
         end
