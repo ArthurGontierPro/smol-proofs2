@@ -167,8 +167,8 @@ function runtrimmers(ins)
     printstyled(" &          &          &          &      &      &      (                   ) \\\\\\hline"; color = :grey)
     printstyled("\r\033[",d+4,"G",prettybytes(so))
     tvp = @elapsed begin if CONFIG.veripb
-        # v1 = ""
-        v1 = verifier("$proofs/$ins.opb","$proofs/$ins$extention")
+        v1 = ""
+        # v1 = verifier("$proofs/$ins.opb","$proofs/$ins$extention")
     end end
     printstyled("\r\033[",d+37,"G",prettytime(tvp); color = :blue)
 
@@ -251,6 +251,9 @@ function rungrimmer(file)
     end
     # printstyled("\r"," "^12,prettytime(tms),"  "; color = :green)
     invctrmap = Dict(ctrmap[k] => k for k in keys(ctrmap)) # reverse the ctrmap (may be inneficient)
+    # for (i,_) in conelits # nullify the conelits
+    #     conelits[i] = Set([l.var for l in system[i].t]) # we reverse the lits to use the varmap
+    # end
     twc = @elapsed begin
         varmap = Dict(varmap[k] => k for k in keys(varmap)) # reverse the varmap (may be inneficient)
         writeconedel(proofs,file,version,system,cone,conelits,systemlink,redwitness,solirecord,assertrecord,nbopb,
@@ -283,13 +286,8 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
     antecedants = zeros(Bool,n)
     assi = zeros(Int8,length(varmap))
     cone = zeros(Bool,n)
-    conelits = Dict{Int,Set{Lit}}() # for the lits that we want to keep (works with conflict analysis)
-    cone[end] = true
+    conelits = Dict{Int,Set{Int}}() # for the lits that we want to keep (works with conflict analysis)
     front = zeros(Bool,n)
-    for eq in system 
-        println(eq)
-        printeq(eq,varmap)
-    end
     contradictions = findall(x->length(x.t)==0,system)
     firstcontradiction = 0
     for contradiction in contradictions
@@ -335,7 +333,8 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
             end end
         end
         # println("  init : ",sum(front))#,findall(front)
-        append!(systemlink[firstcontradiction-nbopb],findall(front))
+        # append!(systemlink[firstcontradiction-nbopb],findall(front))
+        # printstyled(findall(front); color = :green)
     end
     red = Red([],0:0,[]);
     newpfgl = true
@@ -346,7 +345,16 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
         while true in front
             i = findlast(front)
             front[i] = false
-            if !cone[i]
+            if i==11207
+                println()
+                printeq(system[i])
+                if haskey(conelits,i)
+                    printeqconelit(system[i],conelits[i])
+                end
+                println(systemlink[i-nbopb])
+                printstyled(" i = 11207 \n",istrivial(system[i],conelits,i); color = :red)
+            end
+            if !cone[i] && !istrivial(system[i],conelits,i) # pol weakening backpropagation may have created trivial equations.
                 # print("\r\033[$(d)G$i ")
                 cone[i] = true
                 if i>nbopb
@@ -365,8 +373,17 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
                             return cone
                         end
                     elseif tlink >= -3 || (tlink == -30 && length(systemlink[i-nbopb])>1)   # pol and ia statements and unchecked assertions without rup
+                        if i == 11207
+                            println("alloooooooooooooooooooooooooooooooooo")
+                            printeq(system[i])
+                            if haskey(conelits,i)
+                                printeqconelit(system[i],conelits[i])
+                            end
+                        end
                         antecedants .= false
                         fixante(systemlink,antecedants,i-nbopb)
+                        fixconelits(conelits,system,antecedants)
+                        removetrivialantecedants(system,antecedants,conelits,systemlink[i-nbopb])                        # enlever les antecedants triviaux de la formules
                         fixfront(front,antecedants)
                     elseif tlink == -10                 # (end of subproof)
                         red = redwitness[i]
@@ -417,7 +434,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
     # for (id,conelit) in conelits
         # print(id,"   ")
         # printeqconelit(system[id],conelit)
-    # end
+    # end 
     return cone,conelits
 end
 function rup(system,invsys,antecedants,init,assi,front,cone,conelits,prism,subrange)# I am putting back cone and front together because they will both end up in the cone at the end.
@@ -482,6 +499,41 @@ function slack(eq::Eq,assi::Vector{Int8}) # slack is the difference between the 
     end
     return c
 end
+function istrivial(eq::Eq,conelits,id::Int)
+    a = 0
+    if haskey(conelits,id)
+        for l in eq.t
+            if !(l.var in conelits[id])
+                a+= l.coef
+            end
+        end
+    end
+    return eq.b-a<=0
+end
+function removetrivialantecedants(system,antecedants,conelits,link)
+    for i in findall(antecedants)
+        # if i in [42,11206,11207, 709, 708, 706, 705, 703, 702, 700, 699, 697, 696, 694, 693, 691, 690, 688, 687, 685, 684, 682, 681, 679, 678, 676, 675, 672, 670, 669, 667, 664, 642, 638, 636, 626, 622, 618, 614, 612, 610, 608, 606, 604, 602, 600, 598, 586, 522, 518, 403, 389, 382, 375, 368, 361, 354, 347, 241, 234, 227, 220, 213, 206, 199, 192, 185, 178, 171, 164, 157, 150, 143]
+            # printstyled(" $i should be removed "; color = :yellow)
+            # printeqconelit(system[i],conelits[i])
+        # end
+        if istrivial(system[i],conelits,i)
+            j = findfirst(x->x==i,link) # look for the antecedant in the link and remove it
+            if j===nothing
+                println("antecedant $i not found in link $link")
+                continue
+            end
+            k0 = findfirst(x->x==-1,link[j+1:end])
+            if k0 === nothing
+                println("antecedant $i's addition not found in link $link")
+                continue
+            end
+            k = k0+j #TODO make it so the removed id is indeed directly added to the pol ant htink of what to do otherwise
+            deleteat!(link,(j,k)) # remove the antecedant and its plus from the link
+            antecedants[i] = false
+            println("pol or ia link modified: ", link[j]," ",link)
+        end
+    end
+end
 function isobjlb(eq::Eq,obj::Vector{Lit},lowerbound::Int)
     if eq.b!=lowerbound || length(eq.t) != length(obj)
         return false
@@ -512,13 +564,14 @@ end
 function conflictanalysisordered(var,implgraph,antecedants,assi,system,conelits)
     id = implgraph[var]
     if id > 0 
+        tmp = 4
         if var>0 
-            l = system[id].t[findfirst(x->x.var==var,system[id].t)] # we find the lit in the eq
-            if haskey(conelits,id) # we check if the lit is in the conelits
-                push!(conelits[id],l)
-            else
-                conelits[id] = Set([l])
-            end
+            tmp = assi[var]
+            # if haskey(conelits,id) # we check if the lit is in the conelits
+            #     push!(conelits[id],var)
+            # else
+            #     conelits[id] = Set([var])
+            # end
             assi[var] = 0
         end                             # we set the variable to 0 because it is propagated and does cannot contribute to any other sum
         implgraph[var] = 0                                      # we set the explanation to 0 because things are propagated only once and we dont like loops
@@ -527,19 +580,38 @@ function conflictanalysisordered(var,implgraph,antecedants,assi,system,conelits)
         sort!(lits,by = x -> implgraph[x.var])                  # we sort the variables by the id of the eq that is used to fix them to keep that order heuristic.
         b = system[id].b                                        # the bound of the eq
         somme = sum(l.coef for l in system[id].t if l.var != var; init = 0) # we get the sum of the coefficients of the variables
+        # printeqcontributeslack(system[id],assi)
         for l in lits
-            if haskey(conelits,id) # we check if the lit is in the conelits
-                push!(conelits[id],l)
-            else
-                conelits[id] = Set([l])
-            end
-            somme -= l.coef # the variable does not contribute to the sum anymore
-            conflictanalysisordered(l.var,implgraph,antecedants,assi,system,conelits)
-            if somme<b
-                return # we reached the point where we need to propagate var to keep the eq sat
+            # sign = assi[l.var] == 1 ? -1 : 1  # we check the sign of the lit
+            if conflictanalysisordered(l.var,implgraph,antecedants,assi,system,conelits)
+                if haskey(conelits,id) # we check if the lit is in the conelits
+                    push!(conelits[id],l.var)
+                else
+                    conelits[id] = Set([l.var])
+                end
+                somme -= l.coef # the variable does not contribute to the sum anymore
+                if somme<b
+                    # implgraph[var] = id
+                    if var>0 assi[var] = tmp end # we restore the variable to its previous value
+                    # printstyled(" conflict analysis for $var reached conflict \n"; color = :green)
+                    return true # we reached the point where we need to propagate var to keep the eq sat
+                end
+            else 
+                printeqcontributeslack(system[id],assi)
+                printstyled("$var conflict analysis for $l.var could not reach conflict \n"; color = :red)
             end
         end
+        if (findfirst(l->l.var == var,system[id].t)===nothing) || slack(system[id],assi) < system[id].t[findfirst(l->l.var == var,system[id].t)].coef # we check if the eq is still sat
+            if var>0 assi[var] = tmp end # we restore the variable to its previous value
+            return true
+        else
+            if var>0 assi[var] = tmp end # we restore the variable to its previous value
+            implgraph[var] = id
+            printstyled(" conflict analysis for $var could not reach conflict \n"; color = :red)
+            return false # we did not reach the point where we need to propagate var to keep the eq sat
+        end
     end
+    return false
 end
 function updatequebit(eq,que,invsys,s,i,assi::Vector{Int8},antecedants,implgraph)
     rewind = i+1
@@ -629,6 +701,11 @@ function reverse(eq::Eq)
     end
     return Eq(lits,-eq.b+1+c)
 end
+function fixconelits(conelits,system,antecedants)
+    for j in findall(antecedants)
+        conelits[j] = Set([l.var for l in system[j].t])
+    end
+end
 function fixante(systemlink::Vector{Vector{Int}},antecedants::Vector{Bool},i)
     for j in eachindex(systemlink[i])
         t = systemlink[i][j]
@@ -681,7 +758,7 @@ module LP
     export LPpol
     function LPpol(a,b,asol,bsol,obj)
         # TODO on a besoin du lazy pol generation sinon on retrouve avec des LP le fait que des tas de trucs sont inutiles.
-    # TODO retier de l'objectif les equations qui sont dans le opb ? (on peux garder comme ca si on veux une preuve le plus petite possible ? en esperant que ca passe mieux oiu on peux utiliser l'ordre et le mettre dans l'obj)
+        # TODO retier de l'objectif les equations qui sont dans le opb ? (on peux garder comme ca si on veux une preuve le plus petite possible ? en esperant que ca passe mieux oiu on peux utiliser l'ordre et le mettre dans l'obj)
         nbctr = size(a,1)
         nbvar = size(a,2)
         bigM = max(maximum(abs.(a)),maximum(abs.(b)),maximum(abs.(asol)),abs(bsol))+1 # 2^20
@@ -1085,6 +1162,7 @@ function writedel(f,systemlink,i,succ,index,nbopb,dels)
                 dels[p] = true
                 write(f,string(index[p]," "))
                 if index[p] == 0
+                    println(p," in ",systemlink[p-nbopb])
                     printstyled(string(" index is 0 for ",p," => ",index[p],"\n"); color = :red)                end
             end
         end
@@ -1104,7 +1182,7 @@ function writelitsconelits(lits,varmap,conelit)
     b=0
     s = ""
     for l in lits
-        if l in conelit
+        if l.var in conelit || -l.var in conelit 
             s = string(s,writelit(l,varmap)," ")
         else
             b+=l.coef
@@ -1117,7 +1195,6 @@ function writeeq(e,varmap)
     return string(s,">= ",e.b," ;\n")
 end
 function writeeqconelits(e,varmap,conelit)
-    printeqconelit(e,conelit)
     s,b = writelitsconelits(e.t,varmap,conelit)
     return string(s,">= ",max(0,e.b-b)," ;\n")
 end
@@ -1162,20 +1239,32 @@ end
 function printeq(e)
     for l in e.t
         print(" ")
-        printlityellow(l)
+        printlit(l)
     end
     println(" >= ",e.b)
 end
 function printeqconelit(e,conelit)
     for l in e.t
         print(" ")
-        if l in conelit
+        if l.var in conelit || -l.var in conelit
             printlit(l)
         else
             printlityellow(l)
         end
     end
     println(" >= ",e.b)
+end
+function printeqcontributeslack(e,assi)
+    for l in e.t
+        if assi[l.var] == 0
+            printstyled(l.coef," ",l.var," + "; color = :yellow)
+        elseif assi[l.var] == 1 && l.sign || assi[l.var] == 2 && !l.sign
+            printstyled(l.coef," ",if assi[l.var]==1 "" else "~" end ,l.var," + "; color = :green)
+        else
+            printstyled(l.coef," ",l.var," + "; color = :red)
+        end
+    end
+    println(" >= ", e.b)
 end
 function printeq(e,varmap)
     for l in e.t
@@ -1844,12 +1933,12 @@ function verticesfromnames(cone,conelits,system,varmap)
     for i in eachindex(system)
         if cone[i]
             for l in system[i].t
-                # if l in conelits[i]
+                if !haskey(conelits,i) || l.var in conelits[i]
                     name = varmap[l.var]
                     u = findfirst('_',name)
                     push!(pp,parse(Int,name[2:u-1])+1) # 2 becaust var looks like x1_2
                     push!(tt,parse(Int,name[u+1:end])+1)
-                # end
+                end
             end
         end
     end
@@ -1870,6 +1959,9 @@ function comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)
         target = file[i:end]
         gp = ladtograph("/home/arthur_gla/veriPB/newSIPbenchmarks/LV",pattern)
         gt = ladtograph("/home/arthur_gla/veriPB/newSIPbenchmarks/LV",target)
+    else
+        println("ERROR: cannot compare graphs for file ",file,". The file name should start with bio or LV.")
+        return
     end
     # invvarmap = Dict(varmap[k] => k for k in keys(varmap)) # reverse the varmap (may be inneficient)
     # invctrmap = Dict(ctrmap[k] => k for k in keys(ctrmap)) # reverse the ctrmap (may be inneficient)
@@ -1928,7 +2020,6 @@ function comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)
         ec = [if src(e) in T && dst(e) in T RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(g0)]
         saveplot(gplot(g0;layout = circular_layout, nodelabel = nt, nodefillc = ntrgb, edgestrokec  = ec, plot_size = (16cm, 16cm)), string("gt",k0,".svg"))
     end
-
     println()
 end
 function removespaces(st)
@@ -2238,7 +2329,7 @@ function solvepol(st,system,link,init,varmap,ctrmap,nbopb)
         elseif i=="w"
             push!(stack,weaken(pop!(stack),weakvar))
             push!(link,-5)
-        elseif !isdigit(i[1]) && i[1]!='@' #if it is a variable do litteral axiom
+        elseif !isdigit(i[1]) && i[1]!='@' && i[1]!='-' #if it is a variable do litteral axiom
             if length(st)>j && st[j+1] == "w"
                 weakvar = readvar(i,varmap)
                 push!(link,-100weakvar-99) # ATTENTION HARDCODING DE SHIFT
@@ -2301,7 +2392,7 @@ function findfullassi(system,st,init,varmap,prism)
                 else
                     for l in eq.t                    
                         if l.coef > s && assi[l.var]==0
-                            assi[l.var] = l.sign ? 1 : 2
+                            assi[l.var] = l.sign ? 1 : 2 # assi == 1 if l is true, 2 if l is false 0 if l is not assigned
                             changes = true
                         end
                     end
