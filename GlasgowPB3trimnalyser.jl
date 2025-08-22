@@ -14,7 +14,7 @@ cargo r -- /home/arthur_gla/veriPB/proofs/small/linear_equality_test.opb out.pbp
 julia GlasgowPB3trimnalyser.jl 
 verif brim path instance
 =#
-using Random 
+using Random,DataStructures
 
 
 # ================ Main ================
@@ -277,7 +277,6 @@ function rungrimmer(file)
 end
 
 
-
 # ================ Trimmer ================
 
 
@@ -320,8 +319,8 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
     else
         if conclusion=="UNSAT" || conclusion=="NONE"
             upquebit(system,invsys,assi,front,prism,conelits)
-            # assi.=0
-            # upquebitrestrained(system,invsys,assi,front,prism)
+            assi.=0
+            upquebitrestrained(system,invsys,assi,front,prism)
             # print("\r\033[110G ",sum(front))
             #  println(findall(front))
         elseif conclusion == "BOUNDS"
@@ -345,15 +344,6 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
         while true in front
             i = findlast(front)
             front[i] = false
-            if i==11207
-                println()
-                printeq(system[i])
-                if haskey(conelits,i)
-                    printeqconelit(system[i],conelits[i])
-                end
-                println(systemlink[i-nbopb])
-                printstyled(" i = 11207 \n",istrivial(system[i],conelits,i); color = :red)
-            end
             if !cone[i] && !istrivial(system[i],conelits,i) # pol weakening backpropagation may have created trivial equations.
                 # print("\r\033[$(d)G$i ")
                 cone[i] = true
@@ -362,6 +352,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
                     if tlink == -1                      # u statement 
                         antecedants .=false ; assi.=0
                         if rup(system,invsys,antecedants,i,assi,front,cone,conelits,prism,0:0)
+                            assi.=false; ruprestrained(system,invsys,antecedants,i,assi,front,cone,conelits,prism,0:0)
                             antecedants[i] = false
                             append!(systemlink[i-nbopb],findall(antecedants))
                             fixfront(front,antecedants)
@@ -373,13 +364,6 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
                             return cone
                         end
                     elseif tlink >= -3 || (tlink == -30 && length(systemlink[i-nbopb])>1)   # pol and ia statements and unchecked assertions without rup
-                        if i == 11207
-                            println("alloooooooooooooooooooooooooooooooooo")
-                            printeq(system[i])
-                            if haskey(conelits,i)
-                                printeqconelit(system[i],conelits[i])
-                            end
-                        end
                         antecedants .= false
                         fixante(systemlink,antecedants,i-nbopb)
                         fixconelits(conelits,system,antecedants)
@@ -443,14 +427,14 @@ function rup(system,invsys,antecedants,init,assi,front,cone,conelits,prism,subra
     prio = true
     r0 = i = 1
     r1 = init+1
-    implgraph = Dict{Int,Int}()
+    implgraph = Dict{Int,Tuple{Int,Int}}()
     @inbounds while i<=init
         if que[i] && (!prio || (prio&&(front[i]||cone[i]))) && (!inprism(i,prism) || (i in subrange))
             eq = i==init ? rev : system[i]
             s = slack(eq,assi)
             if s<0
-                implgraph[0] = i
-                conflictanalysisordered(0,implgraph,antecedants,assi,system,conelits)
+                implgraph[0] = i,getlvl(implgraph,eq,assi)
+                conflictanalysisque(0,implgraph,antecedants,assi,system,conelits)
                 # antecedants[i] = true
                 return true
             else
@@ -561,23 +545,56 @@ function getinvsys(system,systemlink,varmap)
     end # arrays should be sorted at this point
     return invsys
 end
+function conflictanalysisque(var,implgraph,antecedants,assi,system,conelits)
+    pq = PriorityQueue{Int, Int}()
+    id,lvl = implgraph[var]
+    lastlvl = lvl+1
+    enqueue!(pq,var,lastlvl - implgraph[var][2])                                    # we add the variable to the queue with its level
+    while !isempty(pq)
+        var = dequeue!(pq)                                                      # we get the variable with the highest level
+        id,lvl = implgraph[var]
+        if var>0 assi[var] = 0 end                                                           # on desaffecte la var
+        implgraph[var] = 0,lvl                                      # we set the explanation to 0 because things are propagated only once and we dont like loops
+        antecedants[id] = true                                                      # we add the variable to the antecedants set and we explain it
+        eq = system[id]                                                        # we get the equation that is used to fix the variable
+        lits = getcontrib(eq,assi)                                                # we get the variables that were assigned
+        sort!(lits,by = x -> implgraph[x.var][2],rev=true)                     # we sort the variables by their level in the implgraph (the higher the level, the more recent the propagation)
+        b = eq.b                                                                # the bound of the eq
+        somme = sum(l.coef for l in eq.t if l.var != var; init = 0) # we get the sum of the coefficients of the variables
+        # print(id,"  ","   ");printeqcontributeslack(eq,assi)
+        for l in lits
+            v = l.var
+            if haskey(implgraph,v) && implgraph[v][1]>0 && !haskey(pq,v) # we check if the variable is not already explained
+                enqueue!(pq,v,lastlvl - implgraph[v][2]) # we add the variable to the queue with its level
+            elseif implgraph[v][1]>0 || haskey(pq,v)
+                # printstyled(" $v already explained or in pq \n"; color = :yellow)
+            else
+                printstyled(" $v not in implgraph or pq \n"; color = :red)
+            end
+            if haskey(conelits,id) # we check if the lit is in the conelits
+                push!(conelits[id],v)
+            else
+                conelits[id] = Set([v])
+            end
+            somme -= l.coef # the variable does not contribute to the sum anymore
+            if somme < b
+                break # we stop the loop if the sum is already less than the bound
+            end
+        end
+    end
+end
 function conflictanalysisordered(var,implgraph,antecedants,assi,system,conelits)
-    id = implgraph[var]
+    id,lvl = implgraph[var]
     if id > 0 
         tmp = 4
         if var>0 
             tmp = assi[var]
-            # if haskey(conelits,id) # we check if the lit is in the conelits
-            #     push!(conelits[id],var)
-            # else
-            #     conelits[id] = Set([var])
-            # end
             assi[var] = 0
         end                             # we set the variable to 0 because it is propagated and does cannot contribute to any other sum
-        implgraph[var] = 0                                      # we set the explanation to 0 because things are propagated only once and we dont like loops
+        implgraph[var] = 0,lvl                                      # we set the explanation to 0 because things are propagated only once and we dont like loops
         antecedants[id] = true                                  # we add the variable to the antecedants set and we explain it
-        lits = [l for l in system[id].t if (!l.sign && assi[l.var] == 1) || (l.sign && assi[l.var] == 2)] # we get the variables that were assigned and contributed negativelly in the sum in the eq for this propagation.
-        sort!(lits,by = x -> implgraph[x.var])                  # we sort the variables by the id of the eq that is used to fix them to keep that order heuristic.
+        lits = getcontrib(system[id],assi)                      # we get the variables that were assigned and contributed negativelly in the sum in the eq for this propagation.
+        sort!(lits,by = x -> implgraph[x.var][2],rev=true)               # we sort the variables by their level in the implgraph (the higher the level, the more recent the propagation)
         b = system[id].b                                        # the bound of the eq
         somme = sum(l.coef for l in system[id].t if l.var != var; init = 0) # we get the sum of the coefficients of the variables
         # printeqcontributeslack(system[id],assi)
@@ -597,6 +614,7 @@ function conflictanalysisordered(var,implgraph,antecedants,assi,system,conelits)
                     return true # we reached the point where we need to propagate var to keep the eq sat
                 end
             else 
+                # verifier que les var innexpliquees ne contribuent pas.
                 printeqcontributeslack(system[id],assi)
                 printstyled("$var conflict analysis for $l.var could not reach conflict \n"; color = :red)
             end
@@ -606,18 +624,38 @@ function conflictanalysisordered(var,implgraph,antecedants,assi,system,conelits)
             return true
         else
             if var>0 assi[var] = tmp end # we restore the variable to its previous value
-            implgraph[var] = id
+            implgraph[var] = id,lvl
             printstyled(" conflict analysis for $var could not reach conflict \n"; color = :red)
             return false # we did not reach the point where we need to propagate var to keep the eq sat
         end
     end
     return false
 end
+function contributenegatively(lit::Lit,assi::Vector{Int8})
+    return (!lit.sign && assi[lit.var] == 1) || (lit.sign && assi[lit.var] == 2)
+end
+function getcontrib(eq::Eq,assi::Vector{Int8}) # get the lits that contribute negatively to the slack. they may become reasons of propagations.
+    return [l for l in eq.t if contributenegatively(l,assi)]
+end
+function getlvl(implgraph,eq,assi::Vector{Int8})
+    m = 0
+    for l in eq.t
+        if contributenegatively(l,assi)
+            if haskey(implgraph,l.var)
+                m = max(m,implgraph[l.var][2])
+            end
+        end
+    end
+    if m==0 return 0 else
+        return m+1
+    end
+end
 function updatequebit(eq,que,invsys,s,i,assi::Vector{Int8},antecedants,implgraph)
     rewind = i+1
+    lvl = getlvl(implgraph,eq,assi) # we get the level of the eq in the implgraph
     for l in eq.t
         if l.coef > s && assi[l.var]==0
-            implgraph[l.var] = i # we store the id of the eq that is used to fix the variable
+            implgraph[l.var] = i,lvl # we store the id of the eq that is used to fix the variable and the lvl of propagation
             assi[l.var] = l.sign ? 1 : 2
             for id in invsys[l.var]
                 rewind = min(rewind,id)
@@ -630,14 +668,14 @@ end
 function upquebit(system,invsys,assi::Vector{Int8},antecedants,prism,conelits)
     que = ones(Bool,length(system))
     i = 1
-    implgraph = Dict{Int,Int}()
+    implgraph = Dict{Int,Tuple{Int,Int}}()
     @inbounds while i<=length(system)
         if que[i] && !inprism(i,prism)
             eq = system[i]
             s = slack(eq,assi)
             if s<0
-                implgraph[0] = i
-                return conflictanalysisordered(0,implgraph,antecedants,assi,system,conelits) # this is the best one
+                implgraph[0] = i,getlvl(implgraph,eq,assi)
+                return conflictanalysisque(0,implgraph,antecedants,assi,system,conelits) # this is the best one
             else
                 rewind = updatequebit(eq,que,invsys,s,i,assi,antecedants,implgraph)
                 que[i] = false
@@ -652,7 +690,7 @@ function upquebitrestrained(system,invsys,assi::Vector{Int8},antecedants,prism)
     que = ones(Bool,length(system))
     i = 1
     # implgraph = Dict{Int,Tuple{Vararg{Int}}}() # for the implication graph of the rup process. maps a variable to the id of the eq that is used to fix it and the involved variables in the tuple (id,var,var,...)
-    implgraph = Dict{Int,Int}() # for the implication graph of the rup process. maps a variable to the id of the eq that is used to fix it and the involved variables in the tuple (id,var,var,...)
+    implgraph = Dict{Int,Tuple{Int,Int}}() # for the implication graph of the rup process. maps a variable to the id of the eq that is used to fix it and the involved variables in the tuple (id,var,var,...)
     @inbounds while i<=length(system)
         if que[i] && !inprism(i,prism) && antecedants[i] # we only check the antecedants
             eq = system[i]
@@ -673,11 +711,60 @@ function upquebitrestrained(system,invsys,assi::Vector{Int8},antecedants,prism)
     end
     printstyled(" upQueBit conflict analysis test failed \n "; color = :red)
 end
+function ruprestrained(system,invsys,antecedants,init,assi,front,cone,conelits,prism,subrange)
+    que = ones(Bool,init)
+    rev = reverse(system[init])
+    prio = true
+    r0 = i = 1
+    r1 = init+1
+    implgraph = Dict{Int,Tuple{Int,Int}}()
+    @inbounds while i<=init
+        if que[i] &&  antecedants[i] && (!prio || (prio&&(front[i]||cone[i]))) && (!inprism(i,prism) || (i in subrange))
+            eq = i==init ? rev : system[i]
+            s = slack(eq,assi)
+            if s<0
+                # implgraph[0] = i,getlvl(implgraph,eq,assi)
+                # conflictanalysisque(0,implgraph,antecedants,assi,system,conelits)
+                # antecedants[i] = true
+                printstyled(" V "; color = :green)
+                return true
+            else
+                r0,r1 = updateprioquebit(eq,cone,front,que,invsys,s,i,init,assi,antecedants,implgraph,r0,r1)
+            end
+            que[i] = false
+            i+=1
+            if prio
+                i = min(i,r1)
+                r1 = init+1
+            else
+                if r1<init+1
+                    prio = true
+                    r0 = min(i,r0)
+                    i = r1
+                    r1 = init+1
+                else
+                    i = min(i,r0)
+                    r0 = init+1
+                end
+            end
+        else
+            i+=1
+        end
+        if prio && i==init+1
+            prio=false
+            i=r0
+            r0=init+1
+        end
+    end
+    printstyled(" rup conflict analysis test failed \n "; color = :red)
+    return false
+end
 function updateprioquebit(eq,cone,front,que,invsys,s,i,init,assi::Vector{Int8},antecedants,implgraph,r0,r1)
+    lvl = getlvl(implgraph,eq,assi) # we get the level of the eq in the implgraph
     @inbounds for l in eq.t
         if l.coef > s && assi[l.var]==0
             assi[l.var] = l.sign ? 1 : 2
-            implgraph[l.var] = i # we store the id of the eq that is used to fix the variable to use conflict analysis and find the antecedants later.
+            implgraph[l.var] = i,lvl # we store the id of the eq that is used to fix the variable to use conflict analysis and find the antecedants later.
             for id in invsys[l.var]
                 if id<=init && id!=i
                     que[id] = true
