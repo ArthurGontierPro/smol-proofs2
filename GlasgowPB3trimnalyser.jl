@@ -38,6 +38,7 @@ struct Options
     LPsimplif::Bool # simplificaiton of pol by LP (need more work)
     timelimit::Int  # time limit (one month default)
     flamegraphprofile::Bool  # make a flamegraph profile in html
+    keeplabels::Bool # keep the labels in the trimmed proof (if they exist)
 end
 function parseargs(args)
     ins = ""
@@ -62,6 +63,7 @@ function parseargs(args)
     smartrup = false # use smart rup (conflict analysis)
     LPsimplif = false
     flamegraphprofile = false
+    keeplabels = false
     for (i, arg) in enumerate(args)
         if arg == "cd" cd() end # hack to add cd in paths
         if arg in ["verif"] veripb = true end
@@ -101,7 +103,7 @@ function parseargs(args)
     if split(ins,'.')[end] in ["opb","pbp"] ins = ins[1:end-4] end
     if proofs!="" print("Dir:$proofs ") end
     if ins!="" print("Ins:$ins ") end
-    return Options(ins,insid,proofs,pbopath,brimpath,sort,veripb,brim,grim,trace,cshow,adjm,order,smartrup,LPsimplif,tl,flamegraphprofile)
+    return Options(ins,insid,proofs,pbopath,brimpath,sort,veripb,brim,grim,trace,cshow,adjm,order,smartrup,LPsimplif,tl,flamegraphprofile,keeplabels)
 end
 const CONFIG = parseargs(ARGS)
 const proofs = CONFIG.proofs
@@ -319,8 +321,9 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
     else
         if conclusion=="UNSAT" || conclusion=="NONE"
             upquebit(system,invsys,assi,front,prism,conelits)
-            assi.=0
-            upquebitrestrained(system,invsys,assi,front,prism)
+            # assi.=0
+            # upquebitrestrained(system,invsys,assi,front,prism)
+            # upquebitrestrainedconelits(system,invsys,assi,front,prism,conelits)
             # print("\r\033[110G ",sum(front))
             #  println(findall(front))
         elseif conclusion == "BOUNDS"
@@ -344,7 +347,11 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
         while true in front
             i = findlast(front)
             front[i] = false
-            if !cone[i] && !istrivial(system[i],conelits,i) # pol weakening backpropagation may have created trivial equations.
+            # if istrivial(system[i],conelits,i)
+            #     printstyled(" $i is trivial "; color = :green)
+            #     printeqconelit(system[i],conelits[i])
+            # end
+            if !cone[i] # && !istrivial(system[i],conelits,i) # pol weakening backpropagation may have created trivial equations.
                 # print("\r\033[$(d)G$i ")
                 cone[i] = true
                 if i>nbopb
@@ -352,7 +359,8 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
                     if tlink == -1                      # u statement 
                         antecedants .=false ; assi.=0
                         if rup(system,invsys,antecedants,i,assi,front,cone,conelits,prism,0:0)
-                            assi.=false; ruprestrained(system,invsys,antecedants,i,assi,front,cone,conelits,prism,0:0)
+                            # assi.=false; ruprestrained(system,invsys,antecedants,i,assi,front,cone,conelits,prism,0:0)
+                            # assi.=false; ruprestrainedconelits(system,invsys,antecedants,i,assi,front,cone,conelits,prism,0:0)
                             antecedants[i] = false
                             append!(systemlink[i-nbopb],findall(antecedants))
                             fixfront(front,antecedants)
@@ -434,7 +442,7 @@ function rup(system,invsys,antecedants,init,assi,front,cone,conelits,prism,subra
             s = slack(eq,assi)
             if s<0
                 implgraph[0] = i,getlvl(implgraph,eq,assi)
-                conflictanalysisque(0,implgraph,antecedants,assi,system,conelits)
+                conflictanalysisque(0,implgraph,antecedants,assi,system,conelits,init)
                 # antecedants[i] = true
                 return true
             else
@@ -483,6 +491,26 @@ function slack(eq::Eq,assi::Vector{Int8}) # slack is the difference between the 
     end
     return c
 end
+function slackconelits(eq::Eq,assi::Vector{Int8},conelit) # slack is the difference between the space left to catch the bound and the space catchable by the unaffected variables.
+    c=0
+    val = zero(Int8)
+    @inbounds for l in eq.t
+        if !(l.var in conelit) # non coonelit variables are weakened, so always count
+            c+=l.coef
+        else
+            val = assi[l.var]
+            if val == 0 || 
+                (l.sign && val == 1) || 
+                (!l.sign && val == 2) 
+                c+=l.coef
+            end
+        end
+    end
+    if length(eq.t) > 0
+        c-= eq.b
+    end
+    return c
+end
 function istrivial(eq::Eq,conelits,id::Int)
     a = 0
     if haskey(conelits,id)
@@ -500,6 +528,15 @@ function removetrivialantecedants(system,antecedants,conelits,link)
             # printstyled(" $i should be removed "; color = :yellow)
             # printeqconelit(system[i],conelits[i])
         # end
+        if i == 79684
+            printstyled(" $i should be removed ",istrivial(system[i],conelits,i); color = :yellow)
+            printeqconelit(system[i],conelits[i])
+        end
+        if istrivial(system[i],conelits,i)
+            printstyled(" $i is trivial "; color = :green)
+        end
+        # println("check if $i is trivial ",istrivial(system[i],conelits,i))
+        # printeqconelit(system[i],conelits[i])
         if istrivial(system[i],conelits,i)
             j = findfirst(x->x==i,link) # look for the antecedant in the link and remove it
             if j===nothing
@@ -545,44 +582,76 @@ function getinvsys(system,systemlink,varmap)
     end # arrays should be sorted at this point
     return invsys
 end
-function conflictanalysisque(var,implgraph,antecedants,assi,system,conelits)
-    pq = PriorityQueue{Int, Int}()
+function setconelits(conelits,v,id)
+    if haskey(conelits,id)
+        push!(conelits[id],v)
+    else
+        conelits[id] = Set([v])
+    end
+end
+function conflictanalysisque(var,implgraph,antecedants,assi,system,conelits,rev=-1)
+    pq = PriorityQueue{Int, Int}()                      # we use a priority queue to store the variables to be explained and their conflict level
     id,lvl = implgraph[var]
     lastlvl = lvl+1
-    enqueue!(pq,var,lastlvl - implgraph[var][2])                                    # we add the variable to the queue with its level
+    enqueue!(pq,var,lastlvl - lvl)                                    # we add the variable to the queue with its level
     while !isempty(pq)
-        var = dequeue!(pq)                                                      # we get the variable with the highest level
+        # println(pq)
+        var,prio = dequeue_pair!(pq)                                                      # we get the variable with the highest level
+        # println("dequeueing $var with prio $prio")
         id,lvl = implgraph[var]
         if var>0 assi[var] = 0 end                                                           # on desaffecte la var
-        implgraph[var] = 0,lvl                                      # we set the explanation to 0 because things are propagated only once and we dont like loops
+        implgraph[var] = -1,lvl                                      # we set the explanation to 0 because things are propagated only once and we dont like loops
         antecedants[id] = true                                                      # we add the variable to the antecedants set and we explain it
-        eq = system[id]                                                        # we get the equation that is used to fix the variable
+        eq = system[id]                                                        # we get the equation that is used to fix the variable        
         lits = getcontrib(eq,assi)                                                # we get the variables that were assigned
+        if id==rev
+            eq = reverse(eq)
+        end
         sort!(lits,by = x -> implgraph[x.var][2],rev=true)                     # we sort the variables by their level in the implgraph (the higher the level, the more recent the propagation)
         b = eq.b                                                                # the bound of the eq
         somme = sum(l.coef for l in eq.t if l.var != var; init = 0) # we get the sum of the coefficients of the variables
         # print(id,"  ","   ");printeqcontributeslack(eq,assi)
+        setconelits(conelits,var,id)
         for l in lits
-            v = l.var
-            if haskey(implgraph,v) && implgraph[v][1]>0 && !haskey(pq,v) # we check if the variable is not already explained
-                enqueue!(pq,v,lastlvl - implgraph[v][2]) # we add the variable to the queue with its level
-            elseif implgraph[v][1]>0 || haskey(pq,v)
-                # printstyled(" $v already explained or in pq \n"; color = :yellow)
-            else
-                printstyled(" $v not in implgraph or pq \n"; color = :red)
-            end
-            if haskey(conelits,id) # we check if the lit is in the conelits
-                push!(conelits[id],v)
-            else
-                conelits[id] = Set([v])
-            end
-            somme -= l.coef # the variable does not contribute to the sum anymore
             if somme < b
                 break # we stop the loop if the sum is already less than the bound
             end
+            v = l.var
+
+            if lastlvl - implgraph[v][2] < prio # the variable is in a lower layer of the graph so I unassign it to forget about it.
+                assi[v] = 0
+                plvl = lastlvl - prio
+                printstyled("skipping $v with prio $prio because implgraph level $plvl -> $(implgraph[v][2])\n"; color = :light_blue)
+                continue # ignore this litteral
+            end
+            # on a un cas ou l'analyse de conflict veux remonter aux variables des niveaux inferieurs pace que c'est mieux et que je ne maintiens pas l'assignement dans chaque noeud et que je ne le met pas a jour en fonction des niveaux.
+            if haskey(implgraph,v) && implgraph[v][1]>0 && !haskey(pq,v) # we check if the variable is not already explained
+                enqueue!(pq,v,lastlvl - implgraph[v][2]) # we add the variable to the queue with its level
+            elseif  haskey(pq,v)
+                # printstyled(" $v in pq \n"; color = :blue)
+            elseif implgraph[v][1]>=0
+                printstyled(" $v already explained \n"; color = :yellow)
+            else
+                printstyled(" $v not in implgraph or pq \n"; color = :red)
+            end
+            setconelits(conelits,v,id)
+            somme -= l.coef # the variable does not contribute to the sum anymore
+        end
+        if var in [-1]   
+            printstyled("\n explain var $var in eq $id at lvl $lvl \n"; color = :yellow)
+            printeqcontributeslack(eq,assi)
+            printeqconelit(eq,conelits[id])
+        end
+
+        if somme >= b
+            printstyled("Could not explain var $var in eq $id at lvl $lvl \n"; color = :red)
+            printeqcontributeslack(eq,assi)
+            printeqconelit(eq,conelits[id])
+            throw(ErrorException("Could not explain $var with eq $id at lvl $lvl")) 
         end
     end
 end
+# depreciated and wrong
 function conflictanalysisordered(var,implgraph,antecedants,assi,system,conelits)
     id,lvl = implgraph[var]
     if id > 0 
@@ -638,7 +707,7 @@ function getcontrib(eq::Eq,assi::Vector{Int8}) # get the lits that contribute ne
     return [l for l in eq.t if contributenegatively(l,assi)]
 end
 function getlvl(implgraph,eq,assi::Vector{Int8})
-    m = 0
+    m = -1
     for l in eq.t
         if contributenegatively(l,assi)
             if haskey(implgraph,l.var)
@@ -646,7 +715,7 @@ function getlvl(implgraph,eq,assi::Vector{Int8})
             end
         end
     end
-    if m==0 return 0 else
+    if m==-1 return 0 else
         return m+1
     end
 end
@@ -655,6 +724,10 @@ function updatequebit(eq,que,invsys,s,i,assi::Vector{Int8},antecedants,implgraph
     lvl = getlvl(implgraph,eq,assi) # we get the level of the eq in the implgraph
     for l in eq.t
         if l.coef > s && assi[l.var]==0
+            # if i == 10997 && l.var in [25,109,171]   
+            #     printstyled(" propagate $l in eq $i at lvl $lvl with s=$s \n"; color = :magenta)
+            #     printeqcontributeslack(eq,assi)
+            # end
             implgraph[l.var] = i,lvl # we store the id of the eq that is used to fix the variable and the lvl of propagation
             assi[l.var] = l.sign ? 1 : 2
             for id in invsys[l.var]
@@ -695,6 +768,36 @@ function upquebitrestrained(system,invsys,assi::Vector{Int8},antecedants,prism)
         if que[i] && !inprism(i,prism) && antecedants[i] # we only check the antecedants
             eq = system[i]
             s = slack(eq,assi)
+            if s<0
+                # implgraph[0] = i
+                # implgraph[0] = (i,[l.var for l in eq.t if assi[l.var]!=0]...)
+                # antecedants[i] = true
+                printstyled(" V "; color = :green)
+                return 
+            else
+                rewind = updatequebit(eq,que,invsys,s,i,assi,antecedants,implgraph)
+                que[i] = false
+                i = min(i,rewind-1)
+            end
+        end
+        i+=1
+    end
+    printstyled(" upQueBit conflict analysis test failed \n "; color = :red)
+end
+function upquebitrestrainedconelits(system,invsys,assi::Vector{Int8},antecedants,prism,conelits)
+    que = ones(Bool,length(system))
+    i = 1
+    # implgraph = Dict{Int,Tuple{Vararg{Int}}}() # for the implication graph of the rup process. maps a variable to the id of the eq that is used to fix it and the involved variables in the tuple (id,var,var,...)
+    implgraph = Dict{Int,Tuple{Int,Int}}() # for the implication graph of the rup process. maps a variable to the id of the eq that is used to fix it and the involved variables in the tuple (id,var,var,...)
+    @inbounds while i<=length(system)
+        if que[i] && !inprism(i,prism) && antecedants[i] # we only check the antecedants
+            eq = system[i]
+            s = 0
+            if haskey(conelits,i)
+                s = slackconelits(eq,assi,conelits[i])
+            else
+                s = slack(eq,assi)
+            end
             if s<0
                 # implgraph[0] = i
                 # implgraph[0] = (i,[l.var for l in eq.t if assi[l.var]!=0]...)
@@ -759,10 +862,66 @@ function ruprestrained(system,invsys,antecedants,init,assi,front,cone,conelits,p
     printstyled(" rup conflict analysis test failed \n "; color = :red)
     return false
 end
+function ruprestrainedconelits(system,invsys,antecedants,init,assi,front,cone,conelits,prism,subrange)
+    que = ones(Bool,init)
+    rev = reverse(system[init])
+    prio = true
+    r0 = i = 1
+    r1 = init+1
+    implgraph = Dict{Int,Tuple{Int,Int}}()
+    @inbounds while i<=init
+        if que[i] &&  antecedants[i] && (!prio || (prio&&(front[i]||cone[i]))) && (!inprism(i,prism) || (i in subrange))
+            eq = i==init ? rev : system[i]
+            if haskey(conelits,i)
+                s = slackconelits(eq,assi,conelits[i])
+            else
+                s = slack(eq,assi)
+            end
+            if s<0
+                # implgraph[0] = i,getlvl(implgraph,eq,assi)
+                # conflictanalysisque(0,implgraph,antecedants,assi,system,conelits)
+                # antecedants[i] = true
+                printstyled(" V "; color = :green)
+                return true
+            else
+                r0,r1 = updateprioquebit(eq,cone,front,que,invsys,s,i,init,assi,antecedants,implgraph,r0,r1)
+            end
+            que[i] = false
+            i+=1
+            if prio
+                i = min(i,r1)
+                r1 = init+1
+            else
+                if r1<init+1
+                    prio = true
+                    r0 = min(i,r0)
+                    i = r1
+                    r1 = init+1
+                else
+                    i = min(i,r0)
+                    r0 = init+1
+                end
+            end
+        else
+            i+=1
+        end
+        if prio && i==init+1
+            prio=false
+            i=r0
+            r0=init+1
+        end
+    end
+    printstyled(" rup conflict analysis test failed \n "; color = :red)
+    return false
+end
 function updateprioquebit(eq,cone,front,que,invsys,s,i,init,assi::Vector{Int8},antecedants,implgraph,r0,r1)
     lvl = getlvl(implgraph,eq,assi) # we get the level of the eq in the implgraph
     @inbounds for l in eq.t
         if l.coef > s && assi[l.var]==0
+            # if i == 10997 && l.var in [25,109,171]   
+            #     printstyled(" propagate $l in eq $i at lvl $lvl with s=$s \n"; color = :magenta)
+            #     printeqcontributeslack(eq,assi)
+            # end
             assi[l.var] = l.sign ? 1 : 2
             implgraph[l.var] = i,lvl # we store the id of the eq that is used to fix the variable to use conflict analysis and find the antecedants later.
             for id in invsys[l.var]
@@ -788,7 +947,7 @@ function reverse(eq::Eq)
     end
     return Eq(lits,-eq.b+1+c)
 end
-function fixconelits(conelits,system,antecedants)
+function fixconelits(conelits,system,antecedants) # TODO be more precise ?
     for j in findall(antecedants)
         conelits[j] = Set([l.var for l in system[j].t])
     end
@@ -1004,7 +1163,7 @@ function writeconedel(path,file,version,system,cone,conelits,systemlink,redwitne
         end
         for i in 1:nbopb
             if cone[i]
-                if haskey(invctrmap,i) write(f,"@"*invctrmap[i]*" ") end # write label if it exists
+                if CONFIG.keeplabels && haskey(invctrmap,i) write(f,"@"*invctrmap[i]*" ") end # write label if it exists
                 lastindex += 1
                 index[i] = lastindex
                 eq = system[i]
@@ -1018,6 +1177,7 @@ function writeconedel(path,file,version,system,cone,conelits,systemlink,redwitne
     end
     succ = Vector{Vector{Int}}(undef,length(system))
     dels = zeros(Bool,length(system))
+    dels = ones(Bool,length(system)) # uncomment to have no deletions
     dels[1:nbopb].=true #we dont delete in the opb
     for p in prism
         dels[p].=true # we dont delete red and supproofs because veripb is already doing it
@@ -1030,7 +1190,7 @@ function writeconedel(path,file,version,system,cone,conelits,systemlink,redwitne
         write(f,string("f ",sum(cone[1:nbopb])," ;\n"))
         for i in nbopb+1:length(system)
             if cone[i]
-                if haskey(invctrmap,i) write(f,"@"*invctrmap[i]*" ") end # write label if it exists
+                if CONFIG.keeplabels && haskey(invctrmap,i) write(f,"@"*invctrmap[i]*" ") end # write label if it exists
                 lastindex += 1
                 index[i] = lastindex
                 eq = system[i]
@@ -1247,10 +1407,12 @@ function writedel(f,systemlink,i,succ,index,nbopb,dels)
                     isdel = true
                 end
                 dels[p] = true
-                write(f,string(index[p]," "))
                 if index[p] == 0
                     println(p," in ",systemlink[p-nbopb])
-                    printstyled(string(" index is 0 for ",p," => ",index[p],"\n"); color = :red)                end
+                    printstyled(string("del index is 0 for ",p," => ",index[p],"\n"); color = :red)                
+                else
+                    write(f,string(index[p]," "))
+                end
             end
         end
     end
@@ -1313,10 +1475,10 @@ function printlit(l)
     if !l.sign printstyled('~'; color = :red) else print(" ") end
     printstyled(l.var; color = :green)
 end
-function printlityellow(l)
+function printlitcolor(l,color)
     if l.coef!=1 printstyled(l.coef; color = :blue) end
     if !l.sign printstyled('~'; color = :red) else print(" ") end
-    printstyled(l.var; color = :yellow)
+    printstyled(l.var; color = color)
 end
 function printlit(l,varmap)
     printstyled(l.coef; color = :blue)
@@ -1331,24 +1493,31 @@ function printeq(e)
     println(" >= ",e.b)
 end
 function printeqconelit(e,conelit)
+    s=0
     for l in e.t
         print(" ")
         if l.var in conelit || -l.var in conelit
-            printlit(l)
+            printlitcolor(l,:yellow)
         else
-            printlityellow(l)
+            printlitcolor(l,:magenta)
+            s+=l.coef
         end
     end
-    println(" >= ",e.b)
+    if s==0
+        println(" >= ",e.b)
+    else
+        println(" >= ",e.b," - ",s," >= ",e.b-s)
+    end
 end
 function printeqcontributeslack(e,assi)
     for l in e.t
+        print(" ")
         if assi[l.var] == 0
-            printstyled(l.coef," ",l.var," + "; color = :yellow)
+            printlitcolor(l,:yellow)
         elseif assi[l.var] == 1 && l.sign || assi[l.var] == 2 && !l.sign
-            printstyled(l.coef," ",if assi[l.var]==1 "" else "~" end ,l.var," + "; color = :green)
+            printlitcolor(l,:green)
         else
-            printstyled(l.coef," ",l.var," + "; color = :red)
+            printlitcolor(l,:red)
         end
     end
     println(" >= ", e.b)
