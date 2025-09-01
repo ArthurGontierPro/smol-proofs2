@@ -137,11 +137,11 @@ function main() # detect files (can sort them by size) and call the trimmers
         list = [s[1:end-4] for s in list if s[end-3:end]==".opb" && s[1:5]!="smol."]
         # a=[println(proofs*s*extention,isfile(proofs*s*extention)) for s in list]
         list = [s for s in list if isfile(proofs*s*extention)]
+        p = [i for i in eachindex(list)]
         if CONFIG.sort
-            stats = [stat(proofs*file*extention).size+ (if isfile(proofs*file*"opb") stat(proofs*file*".opb").size else 0 end) for file in list]
+            stats = [stat(proofs*file*extention).size+ (if isfile(proofs*file*".opb") stat(proofs*file*".opb").size else 0 end) for file in list]
             p = sortperm(stats)
         else 
-            # p = [i for i in eachindex(list)]
             rng = MersenneTwister(1234)
             p = randperm(rng,length(list)) # randomize the order of the instances
         end
@@ -207,7 +207,7 @@ function runtrimmers(ins)
         write(f,string(t[1],",\n"))
     end
     if CONFIG.veripb && v1!=v2
-        printstyled("\nTraces are not identical\n"; color = :red)
+        # printstyled("\nTraces are not identical\n"; color = :red)
         open(string(proofs,"/afailedtrims"), "a") do f
             write(f,string(ins," \n"))
         end
@@ -247,7 +247,7 @@ function rungrimmer(file)
     normcoefsystem(system)
     invsys = getinvsys(system,systemlink,varmap)
     prism = availableranges(redwitness)
-    if conclusion in ["SAT","NONE"] && !isequal(system[end],Eq([],1)) return println() end
+    if conclusion in ["SAT","NONE"] && !isequal(system[end],Eq([],1)) return 0,0,0 end
     tms = @elapsed begin
         cone,conelits = makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclusion,obj)
     end
@@ -262,7 +262,6 @@ function rungrimmer(file)
                     varmap,ctrmap,invctrmap,output,conclusion,obj,prism)
     end
     # printstyled("\r"," "^6,prettytime(twc),"  "; color = :cyan)
-    varocc = printorder(file,cone,invsys,varmap)
     succ = Vector{Vector{Int}}(undef,length(system))
     invlink(systemlink,succ,cone,nbopb)
     index = zeros(Int,length(system)) # map the old indexes to the new ones
@@ -270,6 +269,10 @@ function rungrimmer(file)
     if CONFIG.adjm
         # showadjacencymatrixsimple(file,cone,index,systemlink,succ,nbopb)
         showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
+    end
+    # conelits = Dict{Int,Set{Int}}() # we nullify the conelits to compare stuff
+    if CONFIG.order
+        printorder(file,cone,invsys,varmap)
     end
     if CONFIG.cshow
         comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)
@@ -374,7 +377,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
                     elseif tlink >= -3 || (tlink == -30 && length(systemlink[i-nbopb])>1)   # pol and ia statements and unchecked assertions without rup
                         antecedants .= false
                         fixante(systemlink,antecedants,i-nbopb)
-                        fixconelits(conelits,system,antecedants)
+                        fixconelits(conelits,system,i,antecedants)
                         removetrivialantecedants(system,antecedants,conelits,systemlink[i-nbopb])                        # enlever les antecedants triviaux de la formules
                         fixfront(front,antecedants)
                     elseif tlink == -10                 # (end of subproof)
@@ -524,14 +527,6 @@ function istrivial(eq::Eq,conelits,id::Int)
 end
 function removetrivialantecedants(system,antecedants,conelits,link)
     for i in findall(antecedants)
-        # if i in [42,11206,11207, 709, 708, 706, 705, 703, 702, 700, 699, 697, 696, 694, 693, 691, 690, 688, 687, 685, 684, 682, 681, 679, 678, 676, 675, 672, 670, 669, 667, 664, 642, 638, 636, 626, 622, 618, 614, 612, 610, 608, 606, 604, 602, 600, 598, 586, 522, 518, 403, 389, 382, 375, 368, 361, 354, 347, 241, 234, 227, 220, 213, 206, 199, 192, 185, 178, 171, 164, 157, 150, 143]
-            # printstyled(" $i should be removed "; color = :yellow)
-            # printeqconelit(system[i],conelits[i])
-        # end
-        if i == 79684
-            printstyled(" $i should be removed ",istrivial(system[i],conelits,i); color = :yellow)
-            printeqconelit(system[i],conelits[i])
-        end
         if istrivial(system[i],conelits,i)
             printstyled(" $i is trivial "; color = :green)
         end
@@ -620,8 +615,8 @@ function conflictanalysisque(var,implgraph,antecedants,assi,system,conelits,rev=
 
             if lastlvl - implgraph[v][2] < prio # the variable is in a lower layer of the graph so I unassign it to forget about it.
                 assi[v] = 0
-                plvl = lastlvl - prio
-                printstyled("skipping $v with prio $prio because implgraph level $plvl -> $(implgraph[v][2])\n"; color = :light_blue)
+                # plvl = lastlvl - prio
+                # printstyled("skipping $v with prio $prio because implgraph level $plvl -> $(implgraph[v][2])\n"; color = :light_blue)
                 continue # ignore this litteral
             end
             # on a un cas ou l'analyse de conflict veux remonter aux variables des niveaux inferieurs pace que c'est mieux et que je ne maintiens pas l'assignement dans chaque noeud et que je ne le met pas a jour en fonction des niveaux.
@@ -630,7 +625,7 @@ function conflictanalysisque(var,implgraph,antecedants,assi,system,conelits,rev=
             elseif  haskey(pq,v)
                 # printstyled(" $v in pq \n"; color = :blue)
             elseif implgraph[v][1]>=0
-                printstyled(" $v already explained \n"; color = :yellow)
+                # printstyled(" $v already explained \n"; color = :yellow)
             else
                 printstyled(" $v not in implgraph or pq \n"; color = :red)
             end
@@ -947,10 +942,19 @@ function reverse(eq::Eq)
     end
     return Eq(lits,-eq.b+1+c)
 end
-function fixconelits(conelits,system,antecedants) # TODO be more precise ?
+function fixconelits(conelits,system,i,antecedants) # TODO be more precise ?
+    # eq = system[i]
+    # myconelit = haskey(conelits,i) ? conelits[i] : Set([l.var for l in eq.t ])
+    # for j in findall(antecedants)
+    #     if haskey(conelits,j)
+    #         myconelit = conelits[j] ∪ myconelit 
+    #     end
+    # end
     for j in findall(antecedants)
+        # conelits[j] =  myconelit ∩ Set([l.var for l in system[j].t])
         conelits[j] = Set([l.var for l in system[j].t])
     end
+    # conelits[i] = myconelit ∩ Set([l.var for l in eq.t])
 end
 function fixante(systemlink::Vector{Vector{Int}},antecedants::Vector{Bool},i)
     for j in eachindex(systemlink[i])
@@ -1304,23 +1308,26 @@ function findallindexfirst(index,cone)
 end
 function mkdir2(p) if !isdir(p) mkdir(p) end end
 function printorder(file,cone,invsys,varmap)
-    s = "map<string,int> order { "     
-    varocc = [sum(cone[j] for j in i) for i in invsys] # order from var usage in cone
-    p = sortperm(varocc,rev=true)
-    for (i,var) in varmap
-        j = p[i]
-        occ = varocc[j]
-        s = string(s,"{\"",var,"\",",occ,"}, ")
-    end
-    s = s[1:end-2]*"};"
-    if CONFIG.order
-        dir = string(proofs,"/cone_var_order/")
-        mkdir2(dir)
-        open(string(dir,file,".cc"),"w") do f
-            write(f,s)
+    dir = string(proofs,"/cone_var_order/")
+    mkdir2(dir)
+    open(string(dir,file,".cc"),"w") do f
+        write(f,"map<string,int> order { "   )
+        varocc = [sum(cone[j] for j in i) for i in invsys] # order from var usage in cone
+        p = sortperm(varocc,rev=true)
+        occ = 0
+        maxocc = length(varmap)
+        for (i,var) in varmap
+            occ+=1
+            j = p[i]
+            occ = varocc[j]
+            if occ != maxocc
+                write(f,string("{\"",var,"\",",occ,"}, "))
+            else
+                write(f,string("{\"",var,"\",",occ,"}"))
+            end
         end
+        write(f,"};")
     end
-    return varocc
 end
 function writeu(e,varmap)
     return string("rup ",writeeq(e,varmap))
@@ -2200,7 +2207,7 @@ function verticesfromnames(cone,conelits,system,varmap)
     end
     return pp,tt
 end
-using Graphs,GraphPlot,Compose,Cairo,Colors # we may not need all that
+# using Graphs,GraphPlot,Compose,Cairo,Colors # we may not need all that
 function comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)    
     pattern = target = ""
     gp = gt = nothing
@@ -2623,8 +2630,11 @@ function solvepol(st,system,link,init,varmap,ctrmap,nbopb)
     return res
 end
 function findfullassi(system,st,init,varmap,prism)
-    assi = zeros(Int8,length(varmap))
     lits = Vector{Lit}(undef,length(st)-1)
+    for i in 2:length(st)
+        var = readvar(st[i],varmap)# add the new vars in the varmap
+    end
+    assi = zeros(Int8,length(varmap))
     for i in 2:length(st)
         sign = st[i][1]!='~'
         var = readvar(st[i],varmap)
@@ -2924,7 +2934,7 @@ end
 if CONFIG.flamegraphprofile
     # @profilehtml main()             # activate this line to unable profiling
 else
-    main()
+    @time main()
 end
 
 # scp arthur@fataepyc-01.dcs.gla.ac.uk:/scratch/matthew/huub2/word_equations_01_track_140-int-.smol.pbp word_equations_01_track_140-int-.smol.pbp
