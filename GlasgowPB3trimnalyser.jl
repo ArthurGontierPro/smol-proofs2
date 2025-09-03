@@ -169,8 +169,8 @@ function runtrimmers(ins)
     printstyled(" &          &          &          &      &      &      (                   ) \\\\\\hline"; color = :grey)
     printstyled("\r\033[",d+4,"G",prettybytes(so))
     tvp = @elapsed begin if CONFIG.veripb
-        v1 = ""
-        # v1 = verifier("$proofs/$ins.opb","$proofs/$ins$extention")
+        # v1 = ""
+        v1 = verifier("$proofs/$ins.opb","$proofs/$ins$extention")
     end end
     printstyled("\r\033[",d+37,"G",prettytime(tvp); color = :blue)
 
@@ -378,7 +378,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
                         antecedants .= false
                         fixante(systemlink,antecedants,i-nbopb)
                         fixconelits(conelits,system,i,antecedants)
-                        removetrivialantecedants(system,antecedants,conelits,systemlink[i-nbopb])                        # enlever les antecedants triviaux de la formules
+                        removetrivialantecedants(system,antecedants,conelits,systemlink[i-nbopb],i)                        # enlever les antecedants triviaux de la formules
                         fixfront(front,antecedants)
                     elseif tlink == -10                 # (end of subproof)
                         red = redwitness[i]
@@ -525,14 +525,15 @@ function istrivial(eq::Eq,conelits,id::Int)
     end
     return eq.b-a<=0
 end
-function removetrivialantecedants(system,antecedants,conelits,link)
+function removetrivialantecedants(system,antecedants,conelits,link,init)
+    # printeqconelit(system[init],conelits[init])
+    # printstyled("removing trivial antecedants from $init ",link,"\n"; color = :cyan)
     for i in findall(antecedants)
-        if istrivial(system[i],conelits,i)
-            printstyled(" $i is trivial "; color = :green)
-        end
         # println("check if $i is trivial ",istrivial(system[i],conelits,i))
         # printeqconelit(system[i],conelits[i])
         if istrivial(system[i],conelits,i)
+            printstyled(" $i is trivial "; color = :green)
+            printeqconelit(system[i],conelits[i])
             j = findfirst(x->x==i,link) # look for the antecedant in the link and remove it
             if j===nothing
                 println("antecedant $i not found in link $link")
@@ -541,14 +542,17 @@ function removetrivialantecedants(system,antecedants,conelits,link)
             k0 = findfirst(x->x==-1,link[j+1:end])
             if k0 === nothing
                 println("antecedant $i's addition not found in link $link")
+                deleteat!(link,j)
+                antecedants[i] = false
                 continue
             end
             k = k0+j #TODO make it so the removed id is indeed directly added to the pol ant htink of what to do otherwise
             deleteat!(link,(j,k)) # remove the antecedant and its plus from the link
             antecedants[i] = false
-            println("pol or ia link modified: ", link[j]," ",link)
+            # println("pol or ia link modified: ", link[j]," ",link)
         end
     end
+    # printeqconelit(system[init],conelits[init])
 end
 function isobjlb(eq::Eq,obj::Vector{Lit},lowerbound::Int)
     if eq.b!=lowerbound || length(eq.t) != length(obj)
@@ -943,18 +947,35 @@ function reverse(eq::Eq)
     return Eq(lits,-eq.b+1+c)
 end
 function fixconelits(conelits,system,i,antecedants) # TODO be more precise ?
-    # eq = system[i]
-    # myconelit = haskey(conelits,i) ? conelits[i] : Set([l.var for l in eq.t ])
-    # for j in findall(antecedants)
-    #     if haskey(conelits,j)
-    #         myconelit = conelits[j] ∪ myconelit 
-    #     end
-    # end
-    for j in findall(antecedants)
-        # conelits[j] =  myconelit ∩ Set([l.var for l in system[j].t])
-        conelits[j] = Set([l.var for l in system[j].t])
+    takeall = false
+    if !takeall
+        eq = system[i]
+        myconelit = haskey(conelits,i) ? conelits[i] : Set([l.var for l in eq.t ])
+        poslits = Set{Int}()
+        neglits = Set{Int}()
+        for j in findall(antecedants)
+            for l in system[j].t
+                if l.sign
+                    push!(poslits,l.var)
+                else
+                    push!(neglits,l.var)
+                end
+            end
+            if haskey(conelits,j)
+                myconelit = conelits[j] ∪ myconelit 
+            end
+        end
+        myconelit = myconelit ∪ (poslits ∩ neglits) # we add the cacelling lits in the mandatory conelit
+        for j in findall(antecedants)
+            conelits[j] =  myconelit ∩ Set([l.var for l in system[j].t])
+            # conelits[j] = Set([l.var for l in system[j].t])
+        end
+        conelits[i] = myconelit ∩ Set([l.var for l in eq.t])
+    else
+        for j in findall(antecedants)
+            conelits[j] = Set([l.var for l in system[j].t])
+        end
     end
-    # conelits[i] = myconelit ∩ Set([l.var for l in eq.t])
 end
 function fixante(systemlink::Vector{Vector{Int}},antecedants::Vector{Bool},i)
     for j in eachindex(systemlink[i])
