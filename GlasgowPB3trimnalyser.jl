@@ -43,7 +43,8 @@ end
 function parseargs(args)
     ins = ""
     proofs = pwd()*"/"
-    proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
+    # proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
+    proofs = "/home/arthur_gla/veriPB/subgraphsolver/nolabelsproofs/"
     # proofs = "/scratch/matthew/huub3/"
     # proofs = "/home/arthur_gla/veriPB/proofs/small/" # not 3.0 syntax yet
     pbopath = "/home/arthur_gla/veriPB/subgraphsolver/pboxide-dev"
@@ -51,6 +52,7 @@ function parseargs(args)
     brimpath = "/home/arthur_gla/veriPB/subgraphsolver/ftrimer/pboxide-dev" # Berhan trimmer for testing.
     insid = 0
     tl = 2629800 # 1 month
+    # tl = 2 # 1 month
     # ins = "circuit_prune_root_test"
     sort = true
     veripb = false
@@ -67,7 +69,7 @@ function parseargs(args)
     for (i, arg) in enumerate(args)
         if arg == "cd" cd() end # hack to add cd in paths
         if arg in ["verif"] veripb = true end
-        if arg in ["brim"] brim = true end
+        if arg in ["brim","btrim"] brim = true end
         if arg in ["nogrim"] grim = false end
         if arg in ["verif"] veripb = true end
         if arg in ["LPsimplif","lp"] LPsimplif = true end
@@ -169,8 +171,8 @@ function runtrimmers(ins)
     printstyled(" &          &          &          &      &      &      (                   ) \\\\\\hline"; color = :grey)
     printstyled("\r\033[",d+4,"G",prettybytes(so))
     tvp = @elapsed begin if CONFIG.veripb
-        # v1 = ""
-        v1 = verifier("$proofs/$ins.opb","$proofs/$ins$extention")
+        v1 = ""
+        # v1 = verifier("$proofs/$ins.opb","$proofs/$ins$extention")
     end end
     printstyled("\r\033[",d+37,"G",prettytime(tvp); color = :blue)
 
@@ -196,11 +198,17 @@ function runtrimmers(ins)
     # printstyled("\r",prettytime(tvs),'\n'; color = :blue)
     if !CONFIG.veripb tvp = tvs = 0.1 end
     if ins[1] == 'b'
-        t = [roundt([parse(Float64,ins[end-5:end-3]),parse(Float64,ins[end-2:end]),so,st,st/so,tvp,tvs,tvs/tvp,tms,twc,tri],3)]
+        t = [roundt([parse(Float64,ins[end-5:end-3]),parse(Float64,ins[end-2:end]),
+        so,sb,st,tvp,tvb,tvs+tri+tms+twc,tri,tms,twc,tvs],3)]
+        # so,st,st/so,tvp,tvs,tvs/tvp,tms,twc,tri],3)]
     elseif ins[1] == 'L'
-        t = [roundt([parse(Float64,split(ins,'g')[2]),parse(Float64,split(ins,'g')[3]),so,st,st/so,tvp,tvs,tvs/tvp,tms,twc,tri],3)]
+        t = [roundt([parse(Float64,split(ins,'g')[2]),parse(Float64,split(ins,'g')[3]),
+        so,sb,st,tvp,tvb,tvs+tri+tms+twc,tri,tms,twc,tvs],3)]
+        # so,st,st/so,tvp,tvs,tvs/tvp,tms,twc,tri],3)]
     else
-        t = [roundt([0.0,0.0,so,st,st/so,tvp,tvs,tvs/tvp,tms,twc,tri],3)]
+        t = [roundt([0.0,0.0,
+        so,sb,st,tvp,tvb,tvs+tri+tms+twc,tri,tms,twc,tvs],3)]
+        # so,st,st/so,tvp,tvs,tvs/tvp,tms,twc,tri],3)]
     end
     # printtabular(t)
     open(string(proofs,"/atable"), "a") do f
@@ -270,7 +278,7 @@ function rungrimmer(file)
         # showadjacencymatrixsimple(file,cone,index,systemlink,succ,nbopb)
         showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
     end
-    # conelits = Dict{Int,Set{Int}}() # we nullify the conelits to compare stuff
+    conelits = Dict{Int,Set{Int}}() # we nullify the conelits to compare stuff
     if CONFIG.order
         printorder(file,cone,invsys,varmap)
     end
@@ -326,7 +334,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
             upquebit(system,invsys,assi,front,prism,conelits)
             # assi.=0
             # upquebitrestrained(system,invsys,assi,front,prism)
-            # upquebitrestrainedconelits(system,invsys,assi,front,prism,conelits)
+            # assi.=0 ; upquebitrestrainedconelits(system,invsys,assi,front,prism,conelits)
             # print("\r\033[110G ",sum(front))
             #  println(findall(front))
         elseif conclusion == "BOUNDS"
@@ -338,7 +346,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
             end end
         end
         # println("  init : ",sum(front))#,findall(front)
-        # append!(systemlink[firstcontradiction-nbopb],findall(front))
+        append!(systemlink[firstcontradiction-nbopb],findall(front))
         # printstyled(findall(front); color = :green)
     end
     red = Red([],0:0,[]);
@@ -377,7 +385,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
                     elseif tlink >= -3 || (tlink == -30 && length(systemlink[i-nbopb])>1)   # pol and ia statements and unchecked assertions without rup
                         antecedants .= false
                         fixante(systemlink,antecedants,i-nbopb)
-                        fixconelits(conelits,system,i,antecedants)
+                        fixconelits(conelits,system,i,antecedants,systemlink[i-nbopb])
                         removetrivialantecedants(system,antecedants,conelits,systemlink[i-nbopb],i)                        # enlever les antecedants triviaux de la formules
                         fixfront(front,antecedants)
                     elseif tlink == -10                 # (end of subproof)
@@ -532,8 +540,8 @@ function removetrivialantecedants(system,antecedants,conelits,link,init)
         # println("check if $i is trivial ",istrivial(system[i],conelits,i))
         # printeqconelit(system[i],conelits[i])
         if istrivial(system[i],conelits,i)
-            printstyled(" $i is trivial "; color = :green)
-            printeqconelit(system[i],conelits[i])
+            # printstyled(" $i is trivial "; color = :green)
+            # printeqconelit(system[i],conelits[i])
             j = findfirst(x->x==i,link) # look for the antecedant in the link and remove it
             if j===nothing
                 println("antecedant $i not found in link $link")
@@ -608,6 +616,7 @@ function conflictanalysisque(var,implgraph,antecedants,assi,system,conelits,rev=
         end
         sort!(lits,by = x -> implgraph[x.var][2],rev=true)                     # we sort the variables by their level in the implgraph (the higher the level, the more recent the propagation)
         b = eq.b                                                                # the bound of the eq
+        #TODO remove from lits and add to the sum all the lits already in use
         somme = sum(l.coef for l in eq.t if l.var != var; init = 0) # we get the sum of the coefficients of the variables
         # print(id,"  ","   ");printeqcontributeslack(eq,assi)
         setconelits(conelits,var,id)
@@ -946,9 +955,9 @@ function reverse(eq::Eq)
     end
     return Eq(lits,-eq.b+1+c)
 end
-function fixconelits(conelits,system,i,antecedants) # TODO be more precise ?
+function fixconelits(conelits,system,i,antecedants,link) # TODO be more precise ?
     takeall = false
-    if !takeall
+    if !takeall && !(-3 in link[2:end])# && !(-4 in link) # we prevent deletions pol to be conelits propag
         eq = system[i]
         myconelit = haskey(conelits,i) ? conelits[i] : Set([l.var for l in eq.t ])
         poslits = Set{Int}()
@@ -1202,12 +1211,11 @@ function writeconedel(path,file,version,system,cone,conelits,systemlink,redwitne
     end
     succ = Vector{Vector{Int}}(undef,length(system))
     dels = zeros(Bool,length(system))
-    dels = ones(Bool,length(system)) # uncomment to have no deletions
+    # dels = ones(Bool,length(system)) # uncomment to have no deletions
     dels[1:nbopb].=true #we dont delete in the opb
     for p in prism
         dels[p].=true # we dont delete red and supproofs because veripb is already doing it
     end
-    # dels = ones(Bool,length(system)) # uncomment if you dont want deletions.
     invlink(systemlink,succ,cone,nbopb)
     todel = Vector{Int}()
     open(string(path,"/smol.",file,extention),"w") do f
@@ -2228,7 +2236,43 @@ function verticesfromnames(cone,conelits,system,varmap)
     end
     return pp,tt
 end
+function edgesfromnames(cone,conelits,system,varmap)
+    ep = Set{Tuple{Int,Int}}()
+    et = Set{Tuple{Int,Int}}()
+    for i in eachindex(system)
+        if cone[i]
+            pp = Set{Int}()
+            tt = Set{Int}()
+            for l in system[i].t
+                if !haskey(conelits,i) || l.var in conelits[i]
+                    name = varmap[l.var]
+                    u = findfirst('_',name)
+                    push!(pp,parse(Int,name[2:u-1])+1) # 2 becaust var looks like x1_2
+                    push!(tt,parse(Int,name[u+1:end])+1)
+                end
+            end
+            for p in pp
+                for p2 in pp
+                    if p!=p2
+                        push!(ep,(p,p2))
+                        push!(ep,(p2,p))
+                    end
+                end
+            end
+            for t in tt
+                for t2 in tt
+                    if t!=t2
+                        push!(et,(t,t2))
+                        push!(et,(t2,t))
+                    end
+                end
+            end
+        end
+    end
+    return ep,et
+end
 # using Graphs,GraphPlot,Compose,Cairo,Colors # we may not need all that
+# using Graphs,GraphPlot,Colors
 function comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)    
     pattern = target = ""
     gp = gt = nothing
@@ -2250,6 +2294,7 @@ function comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)
     # invvarmap = Dict(varmap[k] => k for k in keys(varmap)) # reverse the varmap (may be inneficient)
     # invctrmap = Dict(ctrmap[k] => k for k in keys(ctrmap)) # reverse the ctrmap (may be inneficient)
     lastid = length(system)
+    #=
     for id in 1:lastid
         if cone[id]
             eq = system[id]
@@ -2262,15 +2307,19 @@ function comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)
     end
     p,t,pint,tint = coneverteces(cone,invctrmap,nbopb)
     P,T,E = coneedges(cone,invctrmap)
-
-    P,T = verticesfromnames(cone,conelits,system,varmap)
-
     for i in P
         if i in pint
             printstyled("P",i,"  "; color = :green)
         else
             printstyled("P",i,"  "; color = :red)
         end
+    end
+    =#
+    P,T,E = coneedges(cone,invctrmap)
+    P,T = verticesfromnames(cone,conelits,system,varmap)
+    EP,ET = edgesfromnames(cone,conelits,system,varmap)
+    if length(invctrmap)>0
+        EP = E
     end
 
     # weneedbyid("a",invctrmap,cone,1:nbopb,2,p)
@@ -2286,12 +2335,12 @@ function comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)
     nprgb = [if i in P RGBA(0.0,0.8,0,0.8) else RGBA(0.8,0.0,0.0,0.8) end for i in 1:nv(gp)]
     # ewp = [if src(e) in pint && dst(e) in pint 4 else 1 end for e in edges(gp)]
     # ewp = [if src(e) in P && dst(e) in P RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gp)]
-    ewp = [if (src(e),dst(e)) in E || (dst(e),src(e)) in E RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gp)]
+    ewp = [if (src(e),dst(e)) in EP || (dst(e),src(e)) in EP RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gp)]
     saveplot(gplot(gp;layout = circular_layout, nodelabel = np, nodefillc = nprgb, edgestrokec  = ewp, plot_size = (16cm, 16cm)), "gp.svg")
 
     nt = [i for i in 1:nv(gt)]
     ntrgb = [if i in T RGBA(0.0,0.8,0,0.8) else RGBA(0.8,0.0,0.0,0.8) end for i in 1:nv(gt)]
-    ewt = [if src(e) in T && dst(e) in T RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gt)]
+    ewt = [if (src(e),dst(e)) in ET || (dst(e),src(e)) in ET RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gt)]
     saveplot(gplot(gt;layout = circular_layout, nodelabel = nt, nodefillc = ntrgb, edgestrokec  = ewt, plot_size = (16cm, 16cm)), "gt.svg")
 
     gg = makegkwin(gp,4)
@@ -2304,7 +2353,7 @@ function comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)
         ec = [if src(e) in T && dst(e) in T RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(g0)]
         saveplot(gplot(g0;layout = circular_layout, nodelabel = nt, nodefillc = ntrgb, edgestrokec  = ec, plot_size = (16cm, 16cm)), string("gt",k0,".svg"))
     end
-    println()
+    # println()
 end
 function removespaces(st)
     r = findall(x->x=="",st)
@@ -2955,7 +3004,7 @@ end
 if CONFIG.flamegraphprofile
     # @profilehtml main()             # activate this line to unable profiling
 else
-    @time main()
+    main()
 end
 
 # scp arthur@fataepyc-01.dcs.gla.ac.uk:/scratch/matthew/huub2/word_equations_01_track_140-int-.smol.pbp word_equations_01_track_140-int-.smol.pbp
