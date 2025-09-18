@@ -102,6 +102,9 @@ function parseargs(args)
     for (i, arg) in enumerate(args)
         if isfile(proofs*arg)||isfile(proofs*arg*".opb") 
             ins = arg
+            proofs = proofs[1:end-1]
+        elseif isfile(proofs*"/"*arg)||isfile(proofs*"/"*arg*".opb") 
+            ins = arg
         end
     end
     if split(ins,'.')[end] in ["opb","pbp"] ins = ins[1:end-4] end
