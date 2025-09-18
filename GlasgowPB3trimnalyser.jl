@@ -46,7 +46,7 @@ function parseargs(args)
     # proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
     # proofs = "/home/arthur_gla/veriPB/subgraphsolver/nolabelsproofs/"
     # proofs = "/scratch/matthew/huub3/"
-    proofs = "/scratch/arthur/proofs/"
+    proofs = "/scratch/arthur/proofs"
     # proofs = "/home/arthur_gla/veriPB/proofs/small/" # not 3.0 syntax yet
     # pbopath = "/home/arthur_gla/veriPB/subgraphsolver/pboxide-dev"
     pbopath = "/users/grad/arthur/pboxide-dev"
