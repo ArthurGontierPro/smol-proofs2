@@ -44,12 +44,14 @@ function parseargs(args)
     ins = ""
     proofs = pwd()*"/"
     # proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
-    proofs = "/home/arthur_gla/veriPB/subgraphsolver/nolabelsproofs/"
+    # proofs = "/home/arthur_gla/veriPB/subgraphsolver/nolabelsproofs/"
     # proofs = "/scratch/matthew/huub3/"
+    proofs = "/scratch/arthur/proofs/"
     # proofs = "/home/arthur_gla/veriPB/proofs/small/" # not 3.0 syntax yet
-    pbopath = "/home/arthur_gla/veriPB/subgraphsolver/pboxide-dev"
-    # pbopath = "/users/grad/arthur/pboxide-dev"
-    brimpath = "/home/arthur_gla/veriPB/subgraphsolver/ftrimer/pboxide-dev" # Berhan trimmer for testing.
+    # pbopath = "/home/arthur_gla/veriPB/subgraphsolver/pboxide-dev"
+    pbopath = "/users/grad/arthur/pboxide-dev"
+    # brimpath = "/home/arthur_gla/veriPB/subgraphsolver/ftrimer/pboxide-dev" # Berhan trimmer for testing.
+    brimpath = "/users/grad/arthur/ftrimer/pboxide-dev" # Berhan trimmer for testing.
     insid = 0
     tl = 2629800 # 1 month
     # tl = 2 # 1 month
@@ -171,8 +173,8 @@ function runtrimmers(ins)
     printstyled(" &          &          &          &      &      &      (                   ) \\\\\\hline"; color = :grey)
     printstyled("\r\033[",d+4,"G",prettybytes(so))
     tvp = @elapsed begin if CONFIG.veripb
-        v1 = ""
-        # v1 = verifier("$proofs/$ins.opb","$proofs/$ins$extention")
+        # v1 = ""
+        v1 = verifier("$proofs/$ins.opb","$proofs/$ins$extention")
     end end
     printstyled("\r\033[",d+37,"G",prettytime(tvp); color = :blue)
 
@@ -225,11 +227,13 @@ function verifier(formule,preuve)
     cd();cd(CONFIG.pbopath)
     v1 = 0
     if CONFIG.trace
-        println("timeout $tl cargo r -- --trace $formule $preuve ")
-        v1 = run(`timeout $tl cargo r -- --trace $formule $preuve `)
+        # println("timeout $tl cargo r -- --trace $formule $preuve ")
+        v1 = run(`timeout $tl cargo r -- --trace $formule $preuve`)
+        # v1 = run(`timeout $tl cargo r -- --trace $formule $preuve --elaborate out.tmp`)
     else
         redirect_stdio(stdout = devnull,stderr = devnull) do
-        v1 =read(`timeout $tl cargo r -- $formule $preuve `)
+        v1 =read(`timeout $tl cargo r -- $formule $preuve`)
+        # v1 =read(`timeout $tl cargo r -- $formule $preuve --elaborate out.tmp`)
         end
     end
     return v1
@@ -239,9 +243,11 @@ function runbrimmer(formule,preuve)
     v1 = 0
     if CONFIG.trace
         v1 = run(`timeout $tl cargo r -- --trace --trim $formule $preuve --elaborate out.tmp `)
+        # v1 = run(`timeout $tl cargo flamegraph -- --trace --trim $formule $preuve --elaborate out.tmp `)
     else
         redirect_stdio(stdout = devnull,stderr = devnull) do
         v1 =read(`timeout $tl cargo r -- --trim $formule $preuve --elaborate out.tmp `)
+        # v1 =read(`timeout $tl cargo flamegraph -- --trim $formule $preuve --elaborate out.tmp `)
         end
     end
     return v1
@@ -278,7 +284,7 @@ function rungrimmer(file)
         # showadjacencymatrixsimple(file,cone,index,systemlink,succ,nbopb)
         showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
     end
-    conelits = Dict{Int,Set{Int}}() # we nullify the conelits to compare stuff
+    # conelits = Dict{Int,Set{Int}}() # we nullify the conelits to compare stuff
     if CONFIG.order
         printorder(file,cone,invsys,varmap)
     end
