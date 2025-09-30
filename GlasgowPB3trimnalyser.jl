@@ -43,15 +43,15 @@ end
 function parseargs(args)
     ins = ""
     proofs = pwd()*"/"
-    # proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
+    proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
     # proofs = "/home/arthur_gla/veriPB/subgraphsolver/nolabelsproofs/"
     # proofs = "/scratch/matthew/huub3/"
-    proofs = "/scratch/arthur/proofs"
+    # proofs = "/scratch/arthur/proofs"
     # proofs = "/home/arthur_gla/veriPB/proofs/small/" # not 3.0 syntax yet
-    # pbopath = "/home/arthur_gla/veriPB/subgraphsolver/pboxide-dev"
-    pbopath = "/users/grad/arthur/pboxide-dev"
-    # brimpath = "/home/arthur_gla/veriPB/subgraphsolver/ftrimer/pboxide-dev" # Berhan trimmer for testing.
-    brimpath = "/users/grad/arthur/ftrimer/pboxide-dev" # Berhan trimmer for testing.
+    pbopath = "/home/arthur_gla/veriPB/subgraphsolver/pboxide-dev"
+    # pbopath = "/users/grad/arthur/pboxide-dev"
+    brimpath = "/home/arthur_gla/veriPB/subgraphsolver/ftrimer/pboxide-dev" # Berhan trimmer for testing.
+    # brimpath = "/users/grad/arthur/ftrimer/pboxide-dev" # Berhan trimmer for testing.
     insid = 0
     tl = 2629800 # 1 month
     # tl = 2 # 1 month
@@ -67,13 +67,13 @@ function parseargs(args)
     smartrup = false # use smart rup (conflict analysis)
     LPsimplif = false
     flamegraphprofile = false
-    keeplabels = false
+    keeplabels = true
     for (i, arg) in enumerate(args)
         if arg == "cd" cd() end # hack to add cd in paths
         if arg in ["verif"] veripb = true end
         if arg in ["brim","btrim"] brim = true end
         if arg in ["nogrim"] grim = false end
-        if arg in ["verif"] veripb = true end
+        if arg in ["verif","veripb"] veripb = true end
         if arg in ["LPsimplif","lp"] LPsimplif = true end
         if arg in ["nosort","ns"] sort = false end
         if arg in ["adj","adjm","adjmat"] adjm = true end
@@ -115,6 +115,8 @@ end
 const CONFIG = parseargs(ARGS)
 const proofs = CONFIG.proofs
 const pbopath = CONFIG.pbopath
+const SIPgraphpath = "/home/arthur_gla/veriPB/newSIPbenchmarks/"
+const visualisationpath = "/home/arthur_gla/veriPB/subgraphsolver/visualisations/"
 const tl = CONFIG.timelimit
 const extention = ".pbp"
 const version = "3.0"
@@ -245,12 +247,12 @@ function runbrimmer(formule,preuve)
     cd();cd(CONFIG.brimpath)
     v1 = 0
     if CONFIG.trace
-        v1 = run(`timeout $tl cargo r -- --trace --trim $formule $preuve --elaborate out.tmp `)
-        # v1 = run(`timeout $tl cargo flamegraph -- --trace --trim $formule $preuve --elaborate out.tmp `)
+        # v1 = run(`timeout $tl cargo r -- --trace --trim $formule $preuve --elaborate out.tmp `)
+        v1 = run(`sudo timeout $tl samply record cargo r -- --trace --trim $formule $preuve --elaborate out.tmp `)
     else
         redirect_stdio(stdout = devnull,stderr = devnull) do
-        v1 =read(`timeout $tl cargo r -- --trim $formule $preuve --elaborate out.tmp `)
-        # v1 =read(`timeout $tl cargo flamegraph -- --trim $formule $preuve --elaborate out.tmp `)
+        # v1 =read(`timeout $tl cargo r -- --trim $formule $preuve --elaborate out.tmp `)
+        v1 =read(`sudo timeout $tl samply record cargo r -- --trim $formule $preuve --elaborate out.tmp `)
         end
     end
     return v1
@@ -1174,7 +1176,6 @@ function justify(f,eq,i,asserthint,index,varmap)
     end
     return extrai
 end
-
 function justifydeg(f,eq,i,hints,index,varmap)
     link = [-2,parse(Int,hints[1])]
     for i in 2:length(hints)-1
@@ -2180,53 +2181,28 @@ function weneedbyid(prefix,map,cone,r,cordvertex=0,vertexdomains=Set{String}())
                         printstyled(map[id],"  "; color = :red)
                 end end end end end end
 end
-function coneverteces(cone,invctrmap,nbopb) # build the subsets of cone vertices in pattern and target graphs.
-    p = Set{String}()
-    t = Set{String}()
-    weneedbyid("D",invctrmap,cone,1:nbopb)
-    for id in 1:nbopb
-        if cone[id] && haskey(invctrmap,id)
-            if invctrmap[id][1]=='D'
-                m = if invctrmap[id][end]=='m' 1 else 0 end
-                push!(p,invctrmap[id][2:end-m])
-            elseif length(invctrmap[id])>3 && invctrmap[id][1:3]=="inj" 
-                push!(t,invctrmap[id][4:end])
-            end
-        end
-    end
-    return p,t,[parse(Int,e)+1 for e in p],[parse(Int,e)+1 for e in t]
-end
-function coneedges(cone,invctrmap)
+function setsfromlabels(cone,invctrmap)
     P = Set{Int}()
     T = Set{Int}()
-    E = Set{Tuple{Int,Int}}()
     for i in eachindex(cone)
         if cone[i]
             if haskey(invctrmap,i)
                 s = invctrmap[i]
-                e = findlast('e',s) # form of the parsed string is either asdf1e2 or asdf1e2i3
-                if e === nothing
-                    printstyled(s,"  "; color = :orange)
-                else
-                    d = findlast(!isdigit,s[1:e-1])
-                    p = parse(Int,s[d+1:e-1])+1
-                    push!(P,p)
-                    f = findfirst(!isdigit,s[e+1:end])
-                    t = f===nothing ? parse(Int,s[e+1:end]) : parse(Int,s[e+1:e+f-1])
-                    push!(T,t+1)
-                    if f !== nothing
-                        ee = parse(Int,s[e+f+1:end])+1
-                        push!(P,ee)
-                        push!(E,(p,ee))
+                if s[1]=='D'
+                    if s[end]=='m' 
+                        push!(P,parse(Int,s[2:end-1])+1)
+                    else
+                        push!(P,parse(Int,s[2:end])+1) # We cannot do that becaust it fails on instance LVg6g12 --> we only take the at least one constraint from the verticves 
                     end
-                    # printstyled(s,"  "; color = :yellow)
+                elseif length(s)>3 && s[1:3]=="inj" 
+                    push!(T,parse(Int,s[4:end])+1)
                 end
             else
                 # printstyled("",i,"  "; color = :blue)
             end
         end
     end
-    return P,T,E
+    return P,T
 end
 function verticesfromnames(cone,conelits,system,varmap)
     pp = Set{Int}()
@@ -2248,10 +2224,10 @@ end
 function edgesfromnames(cone,conelits,system,varmap)
     ep = Set{Tuple{Int,Int}}()
     et = Set{Tuple{Int,Int}}()
+    pp = Set{Int}()
+    tt = Set{Int}()
     for i in eachindex(system)
         if cone[i]
-            pp = Set{Int}()
-            tt = Set{Int}()
             for l in system[i].t
                 if !haskey(conelits,i) || l.var in conelits[i]
                     name = varmap[l.var]
@@ -2278,90 +2254,61 @@ function edgesfromnames(cone,conelits,system,varmap)
             end
         end
     end
-    return ep,et
+    return pp,tt,ep,et
 end
 # using Graphs,GraphPlot,Compose,Cairo,Colors # we may not need all that
-# using Graphs,GraphPlot,Colors
+using Graphs,GraphPlot,Colors
 function comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)    
     pattern = target = ""
+    path = ""
+    ext = ""
+    pre = ""
     gp = gt = nothing
     if file[1:3] == "bio"
         pattern = file[4:6]
         target = file[7:9]
-        gp = ladtograph("/home/arthur_gla/veriPB/newSIPbenchmarks/biochemicalReactions",pattern*".txt")
-        gt = ladtograph("/home/arthur_gla/veriPB/newSIPbenchmarks/biochemicalReactions",target*".txt")
+        path = SIPgraphpath*"biochemicalReactions"
+        est = ".txt"
     elseif file[1:2] == "LV"
         i = findlast(x->x=='g',file)
-        pattern = file[3:i-1]
-        target = file[i:end]
-        gp = ladtograph("/home/arthur_gla/veriPB/newSIPbenchmarks/LV",pattern)
-        gt = ladtograph("/home/arthur_gla/veriPB/newSIPbenchmarks/LV",target)
+        pattern = file[4:i-1]
+        target = file[i+1:end]
+        pre = "g"
+        path = SIPgraphpath*"LV"
     else
         println("ERROR: cannot compare graphs for file ",file,". The file name should start with bio or LV.")
         return
     end
-    # invvarmap = Dict(varmap[k] => k for k in keys(varmap)) # reverse the varmap (may be inneficient)
-    # invctrmap = Dict(ctrmap[k] => k for k in keys(ctrmap)) # reverse the ctrmap (may be inneficient)
-    lastid = length(system)
-    #=
-    for id in 1:lastid
-        if cone[id]
-            eq = system[id]
-            if haskey(invctrmap,id)
-                printstyled(invctrmap[id],"  "; color = :cyan)
-            else
-                printstyled("ID",id,"  "; color = :blue)
-            end
-        end
-    end
-    p,t,pint,tint = coneverteces(cone,invctrmap,nbopb)
-    P,T,E = coneedges(cone,invctrmap)
-    for i in P
-        if i in pint
-            printstyled("P",i,"  "; color = :green)
-        else
-            printstyled("P",i,"  "; color = :red)
-        end
-    end
-    =#
-    P,T,E = coneedges(cone,invctrmap)
-    P,T = verticesfromnames(cone,conelits,system,varmap)
-    EP,ET = edgesfromnames(cone,conelits,system,varmap)
-    if length(invctrmap)>0
-        EP = E
-    end
+    gp = ladtograph(path,pre*pattern*ext)
+    gt = ladtograph(path,pre*target*ext)
 
-    # weneedbyid("a",invctrmap,cone,1:nbopb,2,p)
-    # weneedbyid("G1x2ap",invctrmap,cone,1:lastid,7,p)
-    # weneedbyid("G2x2ap",invctrmap,cone,nbopb+1:lastid,7,p)
-    # weneedbyid("G3x2ap",invctrmap,cone,nbopb+1:lastid,7,p)
-    # weneedbyid("G4x2ap",invctrmap,cone,nbopb+1:lastid,7,p)
-    # weneedbyid("D",invctrmap,cone,1:nbopb)
-    # weneedbyid("inj",invctrmap,cone,1:nbopb)
+    P,T,EP,ET = edgesfromnames(cone,conelits,system,varmap)
 
-
+    P,T = setsfromlabels(cone,invctrmap)
     np = [i for i in 1:nv(gp)]
     nprgb = [if i in P RGBA(0.0,0.8,0,0.8) else RGBA(0.8,0.0,0.0,0.8) end for i in 1:nv(gp)]
-    # ewp = [if src(e) in pint && dst(e) in pint 4 else 1 end for e in edges(gp)]
-    # ewp = [if src(e) in P && dst(e) in P RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gp)]
     ewp = [if (src(e),dst(e)) in EP || (dst(e),src(e)) in EP RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gp)]
-    saveplot(gplot(gp;layout = circular_layout, nodelabel = np, nodefillc = nprgb, edgestrokec  = ewp, plot_size = (16cm, 16cm)), "gp.svg")
-
+    saveplot(gplot(gp;layout = circular_layout, nodelabel = np, nodefillc = nprgb, edgestrokec  = ewp, plot_size = (16cm, 16cm)),
+     visualisationpath*"gp"*file*".svg")
     nt = [i for i in 1:nv(gt)]
     ntrgb = [if i in T RGBA(0.0,0.8,0,0.8) else RGBA(0.8,0.0,0.0,0.8) end for i in 1:nv(gt)]
     ewt = [if (src(e),dst(e)) in ET || (dst(e),src(e)) in ET RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gt)]
-    saveplot(gplot(gt;layout = circular_layout, nodelabel = nt, nodefillc = ntrgb, edgestrokec  = ewt, plot_size = (16cm, 16cm)), "gt.svg")
+    saveplot(gplot(gt;layout = circular_layout, nodelabel = nt, nodefillc = ntrgb, edgestrokec  = ewt, plot_size = (16cm, 16cm)),
+     visualisationpath*"gt"*file*".svg")
+    # gg = makegkwin(gp,4)
+    # for (k0,g0) in enumerate(gg)
+    #     ec = [if src(e) in P && dst(e) in P RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(g0)]
+    #     saveplot(gplot(g0;layout = circular_layout, nodelabel = np, nodefillc = nprgb, edgestrokec  = ec, plot_size = (16cm, 16cm)), string("gp",k0,".svg"))
+    # end
+    # gg = makegkwin(gt,4)
+    # for (k0,g0) in enumerate(gg)
+    #     ec = [if src(e) in T && dst(e) in T RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(g0)]
+    #     saveplot(gplot(g0;layout = circular_layout, nodelabel = nt, nodefillc = ntrgb, edgestrokec  = ec, plot_size = (16cm, 16cm)), string("gt",k0,".svg"))
+    # end
 
-    gg = makegkwin(gp,4)
-    for (k0,g0) in enumerate(gg)
-        ec = [if src(e) in P && dst(e) in P RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(g0)]
-        saveplot(gplot(g0;layout = circular_layout, nodelabel = np, nodefillc = nprgb, edgestrokec  = ec, plot_size = (16cm, 16cm)), string("gp",k0,".svg"))
-    end
-    gg = makegkwin(gt,4)
-    for (k0,g0) in enumerate(gg)
-        ec = [if src(e) in T && dst(e) in T RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(g0)]
-        saveplot(gplot(g0;layout = circular_layout, nodelabel = nt, nodefillc = ntrgb, edgestrokec  = ec, plot_size = (16cm, 16cm)), string("gt",k0,".svg"))
-    end
+    createconegraph(path,pre*pattern*pattern*target*ext,gp,P)
+    createconegraph(path,pre*target*pattern*target*ext,gt,T)
+
     # println()
 end
 function removespaces(st)
@@ -2416,7 +2363,23 @@ function makegkwin(g,l,k) # l length of path (default 2); k number of paths
         end
     end
     return gg
-end 
+end
+function createconegraph(path,file,G,S) #G:graph S:set of mandatory vertices
+    IS = [i for i in 1:nv(G) if !(i in S)] # set of absented vertices
+    for i in length(IS):-1:1
+        rem_vertex!(G,IS[i])
+    end
+    open(string(path,'/',file),"w"; lock = false) do f
+        write(f,string(nv(G),"\n"))
+        for i in 1:nv(G)
+            st = string(degree(G,i))
+            for j in neighbors(G,i)
+                st *= " "*string(j-1) # -1 because the first node is 0
+            end
+            write(f,st,"\n")
+        end
+    end
+end
 
 
 # ================ Parser ================
@@ -3005,7 +2968,6 @@ function readveripb(path,file,system,varmap,ctrmap,obj)
     end
     return system,systemlink,redwitness,solirecord,assertrecord,output,conclusion,version
 end
-
 
 
 

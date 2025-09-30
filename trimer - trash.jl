@@ -1814,3 +1814,92 @@ end
 
 # 0 & 0 & 426.6 KB & 941.4 KB &   221   & 0.21 & 0.27 &   125   & 0.71 & 0.09 & 1.02 \\\hline # noheap
 # 0 & 0 & 426.6 KB & 941.4 KB &   221   & 0.22 & 0.26 &   121   & 19.7 & 0.04 & 0.98 \\\hline # heap
+
+
+    lastid = length(system)
+    #=
+    for id in 1:lastid
+        if cone[id]
+            eq = system[id]
+            if haskey(invctrmap,id)
+                printstyled(invctrmap[id],"  "; color = :cyan)
+            else
+                printstyled("ID",id,"  "; color = :blue)
+            end
+        end
+    end
+    p,t,pint,tint = coneverteces(cone,invctrmap,nbopb)
+    P,T,E = coneedges(cone,invctrmap)
+    for i in P
+        if i in pint
+            printstyled("P",i,"  "; color = :green)
+        else
+            printstyled("P",i,"  "; color = :red)
+        end
+    end
+    =#
+    # P,T,E = coneedges(cone,invctrmap)
+    # P,T = verticesfromnames(cone,conelits,system,varmap)
+    # if length(invctrmap)>0 # on a besoin de sa seulement si on pense que les labels sont suffisants.
+    #     EP = E
+    # end
+
+    
+    # weneedbyid("a",invctrmap,cone,1:nbopb,2,p)
+    # weneedbyid("G1x2ap",invctrmap,cone,1:lastid,7,p)
+    # weneedbyid("G2x2ap",invctrmap,cone,nbopb+1:lastid,7,p)
+    # weneedbyid("G3x2ap",invctrmap,cone,nbopb+1:lastid,7,p)
+    # weneedbyid("G4x2ap",invctrmap,cone,nbopb+1:lastid,7,p)
+    # weneedbyid("D",invctrmap,cone,1:nbopb)
+    # weneedbyid("inj",invctrmap,cone,1:nbopb)
+
+    # ewp = [if src(e) in pint && dst(e) in pint 4 else 1 end for e in edges(gp)]
+    # ewp = [if src(e) in P && dst(e) in P RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gp)]
+function coneedges(cone,invctrmap)
+    P = Set{Int}()
+    T = Set{Int}()
+    E = Set{Tuple{Int,Int}}()
+    for i in eachindex(cone)
+        if cone[i]
+            if haskey(invctrmap,i)
+                s = invctrmap[i]
+                e = findlast('e',s) # form of the parsed string is either asdf1e2 or asdf1e2i3
+                if e === nothing
+                    printstyled(s,"  "; color = :red)
+                else
+                    d = findlast(!isdigit,s[1:e-1])
+                    p = parse(Int,s[d+1:e-1])+1
+                    push!(P,p)
+                    f = findfirst(!isdigit,s[e+1:end])
+                    t = f===nothing ? parse(Int,s[e+1:end]) : parse(Int,s[e+1:e+f-1])
+                    push!(T,t+1)
+                    if f !== nothing
+                        ee = parse(Int,s[e+f+1:end])+1
+                        push!(P,ee)
+                        push!(E,(p,ee))
+                    end
+                    # printstyled(s,"  "; color = :yellow)
+                end
+            else
+                # printstyled("",i,"  "; color = :blue)
+            end
+        end
+    end
+    return P,T,E
+end
+function coneverteces(cone,invctrmap,nbopb) # build the subsets of cone vertices in pattern and target graphs.
+    p = Set{String}()
+    t = Set{String}()
+    # weneedbyid("D",invctrmap,cone,1:nbopb)
+    for id in 1:nbopb
+        if cone[id] && haskey(invctrmap,id)
+            if invctrmap[id][1]=='D'
+                m = if invctrmap[id][end]=='m' 1 else 0 end
+                push!(p,invctrmap[id][2:end-m])
+            elseif length(invctrmap[id])>3 && invctrmap[id][1:3]=="inj" 
+                push!(t,invctrmap[id][4:end])
+            end
+        end
+    end
+    return p,t,[parse(Int,e)+1 for e in p],[parse(Int,e)+1 for e in t]
+end
