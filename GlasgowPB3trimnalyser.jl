@@ -44,13 +44,13 @@ function parseargs(args)
     ins = ""
     proofs = pwd()*"/"
     proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
-    # proofs = "/home/arthur_gla/veriPB/subgraphsolver/nolabelsproofs/"
+    # proofs = "/home/arthur_gla/veriPB/subgraphsolver/nolabelsproofs3/"
     # proofs = "/scratch/matthew/huub3/"
     # proofs = "/scratch/arthur/proofs"
     # proofs = "/home/arthur_gla/veriPB/proofs/small/" # not 3.0 syntax yet
-    pbopath = "/home/arthur_gla/veriPB/subgraphsolver/pboxide-dev"
+    pbopath = "/home/arthur_gla/veriPB/subgraphsolver/veripb-dev"
     # pbopath = "/users/grad/arthur/pboxide-dev"
-    brimpath = "/home/arthur_gla/veriPB/subgraphsolver/ftrimer/pboxide-dev" # Berhan trimmer for testing.
+    brimpath = "/home/arthur_gla/veriPB/subgraphsolver/ftrimer/veripb-dev" # Berhan trimmer for testing.
     # brimpath = "/users/grad/arthur/ftrimer/pboxide-dev" # Berhan trimmer for testing.
     insid = 0
     tl = 2629800 # 1 month
@@ -80,7 +80,7 @@ function parseargs(args)
         if arg in ["varorder","order","vo"] order = true end
         if arg in ["cshow","show","cs","ciaran_show","ciaranshow"] cshow = true end
         if arg in ["--trace","-trace","trace","-tr","tr"] trace = true end
-        if arg in ["flamegraphprofile","fgp","fg","prof","profile"] flamegraphprofile = true end
+        if arg in ["flamegraphprofile","flamegraph","fgp","fg","prof","profile"] flamegraphprofile = true end
         if arg in ["timelimit","tl"] tl = parse(Int, args[i+1]) end
         if arg in ["insid","ins"] insid = parse(Int, args[i+1]) end
         if arg == "smart" smartrup = true end
@@ -135,39 +135,43 @@ mutable struct Red                      # w: witness. range: id range from beign
     pgranges::Vector{UnitRange{Int64}}
 end
 function main() # detect files (can sort them by size) and call the trimmers
-    if CONFIG.ins != ""
-        println()
-        println("\\begin{tabular}{|c|ccc|ccc|}\\hline & sizes &  &  & times (s) &  & \\\\\\hline\nInstance & veriPB & btrim & gtrim & veriPB & btrim & gtrim (parse trim write verif)  \\\\\\hline")
-        # print(" "^29);printstyled(CONFIG.ins,"  "; color = :yellow)
-        runtrimmers(CONFIG.ins)
+    if "atable" in ARGS
+        plotresultstable()
     else
-        list = cd(readdir, proofs)
-        list = [s for s in list if length(s)>5]
-        list = [s[1:end-4] for s in list if s[end-3:end]==".opb" && s[1:5]!="smol."]
-        # a=[println(proofs*s*extention,isfile(proofs*s*extention)) for s in list]
-        list = [s for s in list if isfile(proofs*s*extention)]
-        p = [i for i in eachindex(list)]
-        if CONFIG.sort
-            stats = [stat(proofs*file*extention).size+ (if isfile(proofs*file*".opb") stat(proofs*file*".opb").size else 0 end) for file in list]
-            p = sortperm(stats)
-        else 
-            rng = MersenneTwister(1234)
-            p = randperm(rng,length(list)) # randomize the order of the instances
+        if CONFIG.ins != ""
+            println()
+            println("\\begin{tabular}{|c|ccc|ccc|}\\hline & sizes &  &  & times (s) &  & \\\\\\hline\nInstance & veriPB & btrim & gtrim & veriPB & btrim & gtrim (parse trim write verif)  \\\\\\hline")
+            # print(" "^29);printstyled(CONFIG.ins,"  "; color = :yellow)
+            runtrimmers(CONFIG.ins)
+        else
+            list = cd(readdir, proofs)
+            list = [s for s in list if length(s)>5]
+            list = [s[1:end-4] for s in list if s[end-3:end]==".opb" && s[1:5]!="smol."]
+            # a=[println(proofs*s*extention,isfile(proofs*s*extention)) for s in list]
+            list = [s for s in list if isfile(proofs*s*extention)]
+            p = [i for i in eachindex(list)]
+            if CONFIG.sort
+                stats = [stat(proofs*file*extention).size+ (if isfile(proofs*file*".opb") stat(proofs*file*".opb").size else 0 end) for file in list]
+                p = sortperm(stats)
+            else 
+                rng = MersenneTwister(1234)
+                p = randperm(rng,length(list)) # randomize the order of the instances
+            end
+            println(list[p])
+            println("\\begin{tabular}{|c|ccc|ccc|}\\hline& sizes &  &  & times (s) &  & \\\\\\hline\nInstance & veriPB & btrim & gtrim & veriPB & btrim & gtrim (parse trim write verif)  \\\\\\hline")
+            if CONFIG.insid>0
+                ins = list[p[CONFIG.insid]]
+                # print(" "^29);print(CONFIG.insid,' ');printstyled(ins,"  "; color = :yellow)
+                runtrimmers(ins)
+            else for i in eachindex(list)
+            # else for i in 1:30
+                ins = list[p[i]]
+                # print(" "^29);print(i,' ');printstyled(ins,"  "; color = :yellow)
+                runtrimmers(ins)
+            end end
         end
-        println(list[p])
-        println("\\begin{tabular}{|c|ccc|ccc|}\\hline& sizes &  &  & times (s) &  & \\\\\\hline\nInstance & veriPB & btrim & gtrim & veriPB & btrim & gtrim (parse trim write verif)  \\\\\\hline")
-        if CONFIG.insid>0
-            ins = list[p[CONFIG.insid]]
-            # print(" "^29);print(CONFIG.insid,' ');printstyled(ins,"  "; color = :yellow)
-            runtrimmers(ins)
-        else for i in eachindex(list)
-        # else for i in 1:30
-            ins = list[p[i]]
-            # print(" "^29);print(i,' ');printstyled(ins,"  "; color = :yellow)
-            runtrimmers(ins)
-        end end
+        println("\\end{tabular}\\\\\n")
     end
-    println("\\end{tabular}\\\\\n")
 end
 function runtrimmers(ins)
     v1 = v2 = 0
@@ -247,12 +251,12 @@ function runbrimmer(formule,preuve)
     cd();cd(CONFIG.brimpath)
     v1 = 0
     if CONFIG.trace
-        # v1 = run(`timeout $tl cargo r -- --trace --trim $formule $preuve --elaborate out.tmp `)
-        v1 = run(`sudo timeout $tl samply record cargo r -- --trace --trim $formule $preuve --elaborate out.tmp `)
+        v1 = run(`timeout $tl cargo r -- --trace --trim $formule $preuve --elaborate out.tmp `)
+        # v1 = run(`sudo timeout $tl samply record cargo r -- --trace --trim $formule $preuve --elaborate out.tmp `)
     else
         redirect_stdio(stdout = devnull,stderr = devnull) do
-        # v1 =read(`timeout $tl cargo r -- --trim $formule $preuve --elaborate out.tmp `)
-        v1 =read(`sudo timeout $tl samply record cargo r -- --trim $formule $preuve --elaborate out.tmp `)
+        v1 =read(`timeout $tl cargo r -- --trim $formule $preuve --elaborate out.tmp `)
+        # v1 =read(`sudo timeout $tl samply record cargo r -- --trim $formule $preuve --elaborate out.tmp `)
         end
     end
     return v1
@@ -2080,6 +2084,40 @@ function roundt(t,d)
     end
     return t
 end
+function plotresultstable()
+    table = Vector{Vector{Float64}}()
+    open(string(proofs,"/atable"), "r") do f
+        for line in eachline(f)
+            st = split(line[2:end-2],',')
+            t = zeros(Float64,length(st))
+            for i in eachindex(st)
+                t[i] = parse(Float64,st[i])
+            end
+            push!(table,t)
+        end
+    end
+    # println(table)
+    for t in table # fast times
+        print(t[6],'/',t[7],',')
+    end
+    println()
+    for t in table # small times
+        print(t[6],'/',min(t[8],20),',')
+    end
+    println()
+    for t in table # fast sizes
+        print(t[3]/10^6,'/',t[4]/10^6,',')
+    end
+    println()
+    for t in table # small sizes
+        print(t[3]/10^6,'/',t[5]/10^6,',')
+    end
+    println()
+    for t in table # small compared veri times
+        print(t[6],'/',t[12],',')
+    end
+    println()
+end
 # Print meta comment information (additionnal comments dedicated to analysis)
 function printcom(file,system,invsys,cone,com)
 #print the type of the trimed constraints from the coms of the solver and the adjacency graphs.
@@ -2268,7 +2306,7 @@ function comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)
         pattern = file[4:6]
         target = file[7:9]
         path = SIPgraphpath*"biochemicalReactions"
-        est = ".txt"
+        ext = ".txt"
     elseif file[1:2] == "LV"
         i = findlast(x->x=='g',file)
         pattern = file[4:i-1]
@@ -2284,7 +2322,7 @@ function comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)
 
     P,T,EP,ET = edgesfromnames(cone,conelits,system,varmap)
 
-    P,T = setsfromlabels(cone,invctrmap)
+    # P,T = setsfromlabels(cone,invctrmap)
     np = [i for i in 1:nv(gp)]
     nprgb = [if i in P RGBA(0.0,0.8,0,0.8) else RGBA(0.8,0.0,0.0,0.8) end for i in 1:nv(gp)]
     ewp = [if (src(e),dst(e)) in EP || (dst(e),src(e)) in EP RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gp)]
@@ -2970,7 +3008,7 @@ function readveripb(path,file,system,varmap,ctrmap,obj)
 end
 
 
-
+# profiling became slow so deactivated by default
 # using StatProfilerHTML;             # activate this line to unable profiling
 if CONFIG.flamegraphprofile
     # @profilehtml main()             # activate this line to unable profiling
