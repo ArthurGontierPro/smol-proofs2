@@ -2274,21 +2274,21 @@ function edgesfromnames(cone,conelits,system,varmap)
                     push!(tt,parse(Int,name[u+1:end])+1)
                 end
             end
-            for p in pp
-                for p2 in pp
-                    if p!=p2
-                        push!(ep,(p,p2))
-                        push!(ep,(p2,p))
-                    end
-                end
+        end
+    end
+    for p in pp
+        for p2 in pp
+            if p!=p2
+                push!(ep,(p,p2))
+                push!(ep,(p2,p))
             end
-            for t in tt
-                for t2 in tt
-                    if t!=t2
-                        push!(et,(t,t2))
-                        push!(et,(t2,t))
-                    end
-                end
+        end
+    end
+    for t in tt
+        for t2 in tt
+            if t!=t2
+                push!(et,(t,t2))
+                push!(et,(t2,t))
             end
         end
     end
@@ -2303,8 +2303,8 @@ function comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)
     pre = ""
     gp = gt = nothing
     if file[1:3] == "bio"
-        pattern = file[4:6]
-        target = file[7:9]
+        pattern = file[4:end-3]
+        target = file[end-2:end]
         path = SIPgraphpath*"biochemicalReactions"
         ext = ".txt"
     elseif file[1:2] == "LV"
@@ -2318,21 +2318,21 @@ function comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)
         return
     end
     gp = ladtograph(path,pre*pattern*ext)
-    gt = ladtograph(path,pre*target*ext)
+    # gt = ladtograph(path,pre*target*ext)
 
     P,T,EP,ET = edgesfromnames(cone,conelits,system,varmap)
 
-    # P,T = setsfromlabels(cone,invctrmap)
+    # P,T = setsfromlabels(cone,invctrmap) # we cannot do that as we have a counter example that mandatory vertices may have no domain ctrs labels
     np = [i for i in 1:nv(gp)]
     nprgb = [if i in P RGBA(0.0,0.8,0,0.8) else RGBA(0.8,0.0,0.0,0.8) end for i in 1:nv(gp)]
     ewp = [if (src(e),dst(e)) in EP || (dst(e),src(e)) in EP RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gp)]
     saveplot(gplot(gp;layout = circular_layout, nodelabel = np, nodefillc = nprgb, edgestrokec  = ewp, plot_size = (16cm, 16cm)),
      visualisationpath*"gp"*file*".svg")
-    nt = [i for i in 1:nv(gt)]
-    ntrgb = [if i in T RGBA(0.0,0.8,0,0.8) else RGBA(0.8,0.0,0.0,0.8) end for i in 1:nv(gt)]
-    ewt = [if (src(e),dst(e)) in ET || (dst(e),src(e)) in ET RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gt)]
-    saveplot(gplot(gt;layout = circular_layout, nodelabel = nt, nodefillc = ntrgb, edgestrokec  = ewt, plot_size = (16cm, 16cm)),
-     visualisationpath*"gt"*file*".svg")
+    # nt = [i for i in 1:nv(gt)]
+    # ntrgb = [if i in T RGBA(0.0,0.8,0,0.8) else RGBA(0.8,0.0,0.0,0.8) end for i in 1:nv(gt)]
+    # ewt = [if (src(e),dst(e)) in ET || (dst(e),src(e)) in ET RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gt)]
+    # saveplot(gplot(gt;layout = circular_layout, nodelabel = nt, nodefillc = ntrgb, edgestrokec  = ewt, plot_size = (16cm, 16cm)),
+    #  visualisationpath*"gt"*file*".svg")
     # gg = makegkwin(gp,4)
     # for (k0,g0) in enumerate(gg)
     #     ec = [if src(e) in P && dst(e) in P RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(g0)]
@@ -2345,7 +2345,7 @@ function comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)
     # end
 
     createconegraph(path,pre*pattern*pattern*target*ext,gp,P)
-    createconegraph(path,pre*target*pattern*target*ext,gt,T)
+    # createconegraph(path,pre*target*pattern*target*ext,gt,T)
 
     # println()
 end
