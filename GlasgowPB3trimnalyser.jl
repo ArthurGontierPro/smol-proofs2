@@ -39,11 +39,14 @@ struct Options
     timelimit::Int  # time limit (one month default)
     flamegraphprofile::Bool  # make a flamegraph profile in html
     keeplabels::Bool # keep the labels in the trimmed proof (if they exist)
+    withsmol::Bool # also trim smol
 end
 function parseargs(args)
     ins = ""
     proofs = pwd()*"/"
-    proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
+    # proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
+    # proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofsthatbreaksveriPBtrimheuristics/"
+    proofs = "/home/arthur_gla/veriPB/trimmertests/veripb-dev-feature-trimmer-bench/benches/solver_instances/gss/"
     # proofs = "/home/arthur_gla/veriPB/subgraphsolver/nolabelsproofs3/"
     # proofs = "/scratch/matthew/huub3/"
     # proofs = "/scratch/arthur/proofs"
@@ -68,6 +71,7 @@ function parseargs(args)
     LPsimplif = false
     flamegraphprofile = false
     keeplabels = true
+    withsmol = false
     for (i, arg) in enumerate(args)
         if arg == "cd" cd() end # hack to add cd in paths
         if arg in ["verif"] veripb = true end
@@ -83,6 +87,8 @@ function parseargs(args)
         if arg in ["flamegraphprofile","flamegraph","fgp","fg","prof","profile"] flamegraphprofile = true end
         if arg in ["timelimit","tl"] tl = parse(Int, args[i+1]) end
         if arg in ["insid","ins"] insid = parse(Int, args[i+1]) end
+        if arg in ["nogrim"] grim = false end
+        if arg in ["withsmol"] withsmol = true end
         if arg == "smart" smartrup = true end
         if ispath(arg)&&isdir(arg) 
             if arg[end]!='/' 
@@ -110,7 +116,7 @@ function parseargs(args)
     if split(ins,'.')[end] in ["opb","pbp"] ins = ins[1:end-4] end
     if proofs!="" print("Dir:$proofs ") end
     if ins!="" print("Ins:$ins ") end
-    return Options(ins,insid,proofs,pbopath,brimpath,sort,veripb,brim,grim,trace,cshow,adjm,order,smartrup,LPsimplif,tl,flamegraphprofile,keeplabels)
+    return Options(ins,insid,proofs,pbopath,brimpath,sort,veripb,brim,grim,trace,cshow,adjm,order,smartrup,LPsimplif,tl,flamegraphprofile,keeplabels,withsmol)
 end
 const CONFIG = parseargs(ARGS)
 const proofs = CONFIG.proofs
@@ -146,7 +152,7 @@ function main() # detect files (can sort them by size) and call the trimmers
         else
             list = cd(readdir, proofs)
             list = [s for s in list if length(s)>5]
-            list = [s[1:end-4] for s in list if s[end-3:end]==".opb" && s[1:5]!="smol."]
+            list = [s[1:end-4] for s in list if s[end-3:end]==".opb" && (CONFIG.withsmol || s[1:5]!="smol.")]
             # a=[println(proofs*s*extention,isfile(proofs*s*extention)) for s in list]
             list = [s for s in list if isfile(proofs*s*extention)]
             p = [i for i in eachindex(list)]
@@ -174,7 +180,7 @@ function main() # detect files (can sort them by size) and call the trimmers
     end
 end
 function runtrimmers(ins)
-    v1 = v2 = 0
+    v1 = v2 = v3 = st = tri = tms = twc =0
     so = stat(string(proofs,"/",ins,".opb")).size + stat(string(proofs,"/",ins,extention)).size
     printstyled(ins; color = :yellow)
     d = length(ins)
@@ -188,20 +194,26 @@ function runtrimmers(ins)
     printstyled("\r\033[",d+37,"G",prettytime(tvp); color = :blue)
 
     tvb = @elapsed begin if CONFIG.brim 
+        try
         v3 = runbrimmer("$proofs/$ins.opb","$proofs/$ins$extention") 
+        catch e
+            printstyled("\nBrim trimmer failed on $ins:\n"; color = :red)
+        end
     end end
     sb = stat(string(proofs,"/",ins,".opb")).size + stat(string(CONFIG.brimpath,"/out.tmp")).size
     printstyled("\r\033[",d+15,"G",if CONFIG.brim prettybytes(sb) else "" end)
     printstyled("\r\033[",d+37+7,"G",prettytime(tvb); color = :blue)
 
-    tri,tms,twc = rungrimmer(ins)
-    st = stat(string(proofs,"/smol.",ins,".opb")).size + stat(string(proofs,"/smol.",ins,extention)).size
-    printstyled("\r\033[",d+15+11,"G",prettybytes(st))
+    if CONFIG.grim
+        tri,tms,twc = rungrimmer(ins)
+        st = stat(string(proofs,"/smol.",ins,".opb")).size + stat(string(proofs,"/smol.",ins,extention)).size
+    end
+    printstyled("\r\033[",d+15+11,"G",if CONFIG.grim prettybytes(st) else "" end)
     printstyled("\r\033[",d+37+7+7+6,"G",prettytime(tri); color = :cyan)
     printstyled("\r\033[",d+37+7+7+6+5,"G",prettytime(tms); color = :green)
     printstyled("\r\033[",d+37+7+7+6+10,"G",prettytime(twc); color = :cyan)
 
-    tvs = @elapsed begin if CONFIG.veripb
+    tvs = @elapsed begin if CONFIG.veripb && CONFIG.grim
         v2 = verifier("$proofs/smol.$ins.opb","$proofs/smol.$ins$extention")
     end end
     printstyled("\r\033[",d+37+7+7,"G",prettytime(tvs+tri+tms+twc); color = :blue)
@@ -235,14 +247,16 @@ end
 function verifier(formule,preuve)
     cd();cd(CONFIG.pbopath)
     v1 = 0
+    r = "--release"   #run parameters (release is basically full compile optimizations)
+    r = "" 
     if CONFIG.trace
         # println("timeout $tl cargo r -- --trace $formule $preuve ")
-        v1 = run(`timeout $tl cargo r -- --trace $formule $preuve`)
-        # v1 = run(`timeout $tl cargo r -- --trace $formule $preuve --elaborate out.tmp`)
+        v1 = run(`timeout $tl cargo r $r -- --trace $formule $preuve`)
+        # v1 = run(`timeout $tl cargo r $r  -- --trace $formule $preuve --elaborate out.tmp`)
     else
         redirect_stdio(stdout = devnull,stderr = devnull) do
-        v1 =read(`timeout $tl cargo r -- $formule $preuve`)
-        # v1 =read(`timeout $tl cargo r -- $formule $preuve --elaborate out.tmp`)
+        v1 =read(`timeout $tl cargo r $r -- $formule $preuve`)
+        # v1 =read(`timeout $tl cargo r $r -- $formule $preuve --elaborate out.tmp`)
         end
     end
     return v1
@@ -250,13 +264,19 @@ end
 function runbrimmer(formule,preuve)
     cd();cd(CONFIG.brimpath)
     v1 = 0
+    r = "--release"   #run parameters (release is basically full compile optimizations)
+    r = ""
     if CONFIG.trace
-        v1 = run(`timeout $tl cargo r -- --trace --trim $formule $preuve --elaborate out.tmp `)
-        # v1 = run(`sudo timeout $tl samply record cargo r -- --trace --trim $formule $preuve --elaborate out.tmp `)
+        # v1 = run(`timeout $tl cargo r $r -- --trim --trace $formule $preuve --elaborate out.tmp`)
+        # v1 = run(`timeout $tl cargo r -- trim $formule $preuve --elaborate out.tmp`)
+        v1 = run(`timeout $tl cargo r -- trim $formule $preuve --elaborate out.tmp --use-trimming-heuristic`)
+        # v1 = run(`sudo timeout $tl samply record cargo r $r -- --trace --trim $formule $preuve --elaborate out.tmp `)
     else
         redirect_stdio(stdout = devnull,stderr = devnull) do
-        v1 =read(`timeout $tl cargo r -- --trim $formule $preuve --elaborate out.tmp `)
-        # v1 =read(`sudo timeout $tl samply record cargo r -- --trim $formule $preuve --elaborate out.tmp `)
+        # v1 =read(`timeout $tl cargo r $r -- --trim $formule $preuve --elaborate out.tmp`)
+        # v1 =read(`timeout $tl cargo r $r -- trim $formule $preuve --elaborate out.tmp`)
+        v1 =read(`timeout $tl cargo r -- trim $formule $preuve --elaborate out.tmp --use-trimming-heuristic`)
+        # v1 =read(`sudo timeout $tl samply record cargo r $r -- --trim $formule $preuve --elaborate out.tmp `)
         end
     end
     return v1
@@ -279,6 +299,10 @@ function rungrimmer(file)
     # for (i,_) in conelits # nullify the conelits
     #     conelits[i] = Set([l.var for l in system[i].t]) # we reverse the lits to use the varmap
     # end
+    # for i in systemlink[end][2:end] # prints out the used labels in the antecedants of the last rup
+    #     print(invctrmap[i]," ")
+    # end
+
     twc = @elapsed begin
         varmap = Dict(varmap[k] => k for k in keys(varmap)) # reverse the varmap (may be inneficient)
         writeconedel(proofs,file,version,system,cone,conelits,systemlink,redwitness,solirecord,assertrecord,nbopb,
@@ -299,6 +323,7 @@ function rungrimmer(file)
     end
     if CONFIG.cshow
         comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)
+        showctrusage()
         # ciaranshow(proofs,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
     end
     return tri,tms,twc
