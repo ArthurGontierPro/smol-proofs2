@@ -37,7 +37,7 @@ struct Options
     smartrup::Bool  # use smart rup (conflict analysis) in the trimmer
     LPsimplif::Bool # simplificaiton of pol by LP (need more work)
     timelimit::Int  # time limit (one month default)
-    flamegraphprofile::Bool  # make a flamegraph profile in html
+    profile::Bool  # make a flamegraph profile in html
     keeplabels::Bool # keep the labels in the trimmed proof (if they exist)
     withsmol::Bool # also trim smol
 end
@@ -69,7 +69,7 @@ function parseargs(args)
     order = false
     smartrup = false # use smart rup (conflict analysis)
     LPsimplif = false
-    flamegraphprofile = false
+    profile = false
     keeplabels = true
     withsmol = false
     for (i, arg) in enumerate(args)
@@ -84,7 +84,7 @@ function parseargs(args)
         if arg in ["varorder","order","vo"] order = true end
         if arg in ["cshow","show","cs","ciaran_show","ciaranshow"] cshow = true end
         if arg in ["--trace","-trace","trace","-tr","tr"] trace = true end
-        if arg in ["flamegraphprofile","flamegraph","fgp","fg","prof","profile"] flamegraphprofile = true end
+        if arg in ["profile","flamegraph","fgp","fg","prof","profile"] profile = true end
         if arg in ["timelimit","tl"] tl = parse(Int, args[i+1]) end
         if arg in ["insid","ins"] insid = parse(Int, args[i+1]) end
         if arg in ["nogrim"] grim = false end
@@ -116,7 +116,7 @@ function parseargs(args)
     if split(ins,'.')[end] in ["opb","pbp"] ins = ins[1:end-4] end
     if proofs!="" print("Dir:$proofs ") end
     if ins!="" print("Ins:$ins ") end
-    return Options(ins,insid,proofs,pbopath,brimpath,sort,veripb,brim,grim,trace,cshow,adjm,order,smartrup,LPsimplif,tl,flamegraphprofile,keeplabels,withsmol)
+    return Options(ins,insid,proofs,pbopath,brimpath,sort,veripb,brim,grim,trace,cshow,adjm,order,smartrup,LPsimplif,tl,profile,keeplabels,withsmol)
 end
 const CONFIG = parseargs(ARGS)
 const proofs = CONFIG.proofs
@@ -268,14 +268,14 @@ function runbrimmer(formule,preuve)
     r = ""
     if CONFIG.trace
         # v1 = run(`timeout $tl cargo r $r -- --trim --trace $formule $preuve --elaborate out.tmp`)
-        # v1 = run(`timeout $tl cargo r -- trim $formule $preuve --elaborate out.tmp`)
-        v1 = run(`timeout $tl cargo r -- trim $formule $preuve --elaborate out.tmp --use-trimming-heuristic`)
+        v1 = run(`timeout $tl cargo r -- trim $formule $preuve --elaborate out.tmp`)
+        # v1 = run(`timeout $tl cargo r -- trim $formule $preuve --elaborate out.tmp --use-trimming-heuristic`)
         # v1 = run(`sudo timeout $tl samply record cargo r $r -- --trace --trim $formule $preuve --elaborate out.tmp `)
     else
         redirect_stdio(stdout = devnull,stderr = devnull) do
         # v1 =read(`timeout $tl cargo r $r -- --trim $formule $preuve --elaborate out.tmp`)
-        # v1 =read(`timeout $tl cargo r $r -- trim $formule $preuve --elaborate out.tmp`)
-        v1 =read(`timeout $tl cargo r -- trim $formule $preuve --elaborate out.tmp --use-trimming-heuristic`)
+        v1 =read(`timeout $tl cargo r -- trim $formule $preuve --elaborate out.tmp`)
+        # v1 =read(`timeout $tl cargo r -- trim $formule $preuve --elaborate out.tmp --use-trimming-heuristic`)
         # v1 =read(`sudo timeout $tl samply record cargo r $r -- --trim $formule $preuve --elaborate out.tmp `)
         end
     end
@@ -1002,7 +1002,7 @@ function fixconelits(conelits,system,i,antecedants,link) # TODO be more precise 
         myconelit = haskey(conelits,i) ? conelits[i] : Set([l.var for l in eq.t ])
         poslits = Set{Int}()
         neglits = Set{Int}()
-        for j in findall(antecedants)
+        for j in findall(antecedants) # TODO replace findall by more effeicient 
             for l in system[j].t
                 if l.sign
                     push!(poslits,l.var)
@@ -3035,7 +3035,9 @@ end
 
 # profiling became slow so deactivated by default
 # using StatProfilerHTML;             # activate this line to unable profiling
-if CONFIG.flamegraphprofile
+using Profile, PProf
+if CONFIG.profile
+    @pprof main()
     # @profilehtml main()             # activate this line to unable profiling
 else
     main()
