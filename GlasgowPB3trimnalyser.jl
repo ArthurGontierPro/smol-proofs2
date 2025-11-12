@@ -157,9 +157,12 @@ function main() # detect files (can sort them by size) and call the trimmers
             list = cd(readdir, proofs)
             println(list)
             list = [s for s in list if length(s)>5]
+            println(list)
             list = [s[1:end-4] for s in list if s[end-3:end]==".opb" && (CONFIG.withsmol || s[1:5]!="smol.")]
+            println(list)
             # a=[println(proofs*s*extention,isfile(proofs*s*extention)) for s in list]
             list = [s for s in list if isfile(proofs*s*extention)]
+            println(list)
             p = [i for i in eachindex(list)]
             if CONFIG.sort
                 stats = [stat(proofs*file*extention).size+ (if isfile(proofs*file*".opb") stat(proofs*file*".opb").size else 0 end) for file in list]
