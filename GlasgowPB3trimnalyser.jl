@@ -46,15 +46,16 @@ function parseargs(args)
     proofs = pwd()*"/"
     # proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
     # proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofsthatbreaksveriPBtrimheuristics/"
-    proofs = "/home/arthur_gla/veriPB/trimmertests/veripb-dev-feature-trimmer-bench/benches/solver_instances/gss/"
+    # proofs = "/home/arthur_gla/veriPB/trimmertests/veripb-dev-feature-trimmer-bench/benches/solver_instances/gss/"
     # proofs = "/home/arthur_gla/veriPB/subgraphsolver/nolabelsproofs3/"
     # proofs = "/scratch/matthew/huub3/"
     # proofs = "/scratch/arthur/proofs"
     # proofs = "/home/arthur_gla/veriPB/proofs/small/" # not 3.0 syntax yet
+    proofs = "users/grad/arthur/proofs"
     pbopath = "/home/arthur_gla/veriPB/subgraphsolver/veripb-dev"
     # pbopath = "/users/grad/arthur/pboxide-dev"
-    brimpath = "/home/arthur_gla/veriPB/subgraphsolver/ftrimer/veripb-dev" # Berhan trimmer for testing.
-    # brimpath = "/users/grad/arthur/ftrimer/pboxide-dev" # Berhan trimmer for testing.
+    # brimpath = "/home/arthur_gla/veriPB/subgraphsolver/ftrimer/veripb-dev" # Berhan trimmer for testing.
+    brimpath = "/users/grad/arthur/ftrimer/veripb-dev" # Berhan trimmer for testing.
     insid = 0
     tl = 2629800 # 1 month
     # tl = 2 # 1 month
@@ -144,6 +145,9 @@ function main() # detect files (can sort them by size) and call the trimmers
     if "atable" in ARGS
         plotresultstable()
     else
+        if CONFIG.grim
+
+        end
         if CONFIG.ins != ""
             println()
             println("\\begin{tabular}{|c|ccc|ccc|}\\hline & sizes &  &  & times (s) &  & \\\\\\hline\nInstance & veriPB & btrim & gtrim & veriPB & btrim & gtrim (parse trim write verif)  \\\\\\hline")
@@ -251,12 +255,12 @@ function verifier(formule,preuve)
     r = "" 
     if CONFIG.trace
         # println("timeout $tl cargo r -- --trace $formule $preuve ")
-        v1 = run(`timeout $tl cargo r $r -- --trace $formule $preuve`)
-        # v1 = run(`timeout $tl cargo r $r  -- --trace $formule $preuve --elaborate out.tmp`)
+        v1 = run(`timeout $tl cargo r -- --trace $formule $preuve`)
+        # v1 = run(`timeout $tl cargo r -- --trace $formule $preuve --elaborate out.tmp`)
     else
         redirect_stdio(stdout = devnull,stderr = devnull) do
-        v1 =read(`timeout $tl cargo r $r -- $formule $preuve`)
-        # v1 =read(`timeout $tl cargo r $r -- $formule $preuve --elaborate out.tmp`)
+        v1 =read(`timeout $tl cargo r -- $formule $preuve`)
+        # v1 =read(`timeout $tl cargo r -- $formule $preuve --elaborate out.tmp`)
         end
     end
     return v1
@@ -268,13 +272,13 @@ function runbrimmer(formule,preuve)
     r = ""
     if CONFIG.trace
         # v1 = run(`timeout $tl cargo r $r -- --trim --trace $formule $preuve --elaborate out.tmp`)
-        v1 = run(`timeout $tl cargo r -- trim $formule $preuve --elaborate out.tmp`)
+        v1 = run(`timeout $tl cargo r -r -- trim $formule $preuve --elaborate out.tmp`)
         # v1 = run(`timeout $tl cargo r -- trim $formule $preuve --elaborate out.tmp --use-trimming-heuristic`)
         # v1 = run(`sudo timeout $tl samply record cargo r $r -- --trace --trim $formule $preuve --elaborate out.tmp `)
     else
         redirect_stdio(stdout = devnull,stderr = devnull) do
         # v1 =read(`timeout $tl cargo r $r -- --trim $formule $preuve --elaborate out.tmp`)
-        v1 =read(`timeout $tl cargo r -- trim $formule $preuve --elaborate out.tmp`)
+        v1 =read(`timeout $tl cargo r -r -- trim $formule $preuve --elaborate out.tmp`)
         # v1 =read(`timeout $tl cargo r -- trim $formule $preuve --elaborate out.tmp --use-trimming-heuristic`)
         # v1 =read(`sudo timeout $tl samply record cargo r $r -- --trim $formule $preuve --elaborate out.tmp `)
         end
@@ -3034,10 +3038,10 @@ end
 
 
 # profiling became slow so deactivated by default
-# using StatProfilerHTML;             # activate this line to unable profiling
-using Profile, PProf
+# using StatProfilerHTML, ProfileSVG;             # activate this line to unable profiling
+# using Profile, PProf
 if CONFIG.profile
-    @pprof main()
+    # @pprof main()
     # @profilehtml main()             # activate this line to unable profiling
 else
     main()
