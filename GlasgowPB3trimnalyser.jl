@@ -53,7 +53,7 @@ function parseargs(args)
     # proofs = "/home/arthur_gla/veriPB/proofs/small/" # not 3.0 syntax yet
     proofs = "/users/grad/arthur/proofs/"
     # pbopath = "/home/arthur_gla/veriPB/subgraphsolver/veripb-dev"
-    pbopath = "/users/grad/arthur/pboxide-dev"
+    pbopath = "/users/grad/arthur/veripb-dev"
     # brimpath = "/home/arthur_gla/veriPB/subgraphsolver/ftrimer/veripb-dev" # Berhan trimmer for testing.
     brimpath = "/users/grad/arthur/ftrimer/veripb-dev" # Berhan trimmer for testing.
     insid = 0
