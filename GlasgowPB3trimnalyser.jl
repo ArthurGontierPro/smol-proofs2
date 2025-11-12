@@ -51,7 +51,7 @@ function parseargs(args)
     # proofs = "/scratch/matthew/huub3/"
     # proofs = "/scratch/arthur/proofs"
     # proofs = "/home/arthur_gla/veriPB/proofs/small/" # not 3.0 syntax yet
-    proofs = "users/grad/arthur/proofs"
+    proofs = "/users/grad/arthur/proofs"
     pbopath = "/home/arthur_gla/veriPB/subgraphsolver/veripb-dev"
     # pbopath = "/users/grad/arthur/pboxide-dev"
     # brimpath = "/home/arthur_gla/veriPB/subgraphsolver/ftrimer/veripb-dev" # Berhan trimmer for testing.
@@ -155,6 +155,7 @@ function main() # detect files (can sort them by size) and call the trimmers
             runtrimmers(CONFIG.ins)
         else
             list = cd(readdir, proofs)
+            println(list)
             list = [s for s in list if length(s)>5]
             list = [s[1:end-4] for s in list if s[end-3:end]==".opb" && (CONFIG.withsmol || s[1:5]!="smol.")]
             # a=[println(proofs*s*extention,isfile(proofs*s*extention)) for s in list]
