@@ -255,11 +255,11 @@ function verifier(formule,preuve)
     r = "" 
     if CONFIG.trace
         # println("timeout $tl cargo r -- --trace $formule $preuve ")
-        v1 = run(`timeout $tl cargo r -- --trace $formule $preuve`)
+        v1 = run(`timeout $tl cargo r -r -- --trace $formule $preuve`)
         # v1 = run(`timeout $tl cargo r -- --trace $formule $preuve --elaborate out.tmp`)
     else
         redirect_stdio(stdout = devnull,stderr = devnull) do
-        v1 =read(`timeout $tl cargo r -- $formule $preuve`)
+        v1 =read(`timeout $tl cargo r -r -- $formule $preuve`)
         # v1 =read(`timeout $tl cargo r -- $formule $preuve --elaborate out.tmp`)
         end
     end
