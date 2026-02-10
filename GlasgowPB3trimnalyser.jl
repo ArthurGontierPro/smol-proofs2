@@ -254,7 +254,7 @@ function verifier(formule,preuve)
     r = "--release"   #run parameters (release is basically full compile optimizations)
     r = "" 
     if CONFIG.trace
-        # println("timeout $tl cargo r -- --trace $formule $preuve ")
+        println("timeout $tl cargo r -r -- --trace $formule $preuve --elaborate out.tmp")
         # v1 = run(`timeout $tl cargo r -r -- --trace $formule $preuve`)
         v1 = run(`timeout $tl cargo r -r -- --trace $formule $preuve --elaborate out.tmp`)
         # v1 = run(`timeout $tl cargo r -- --trace $formule $preuve --elaborate out.tmp`)
