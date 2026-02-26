@@ -44,18 +44,18 @@ end
 function parseargs(args)
     ins = ""
     proofs = pwd()*"/"
-    # proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
+    proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
     # proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofsthatbreaksveriPBtrimheuristics/"
     # proofs = "/home/arthur_gla/veriPB/trimmertests/veripb-dev-feature-trimmer-bench/benches/solver_instances/gss/"
     # proofs = "/home/arthur_gla/veriPB/subgraphsolver/nolabelsproofs3/"
     # proofs = "/scratch/matthew/huub3/"
     # proofs = "/scratch/arthur/proofs"
     # proofs = "/home/arthur_gla/veriPB/proofs/small/" # not 3.0 syntax yet
-    proofs = "/users/grad/arthur/proofs/"
-    # pbopath = "/home/arthur_gla/veriPB/subgraphsolver/veripb-dev"
-    pbopath = "/users/grad/arthur/veripb-dev"
-    # brimpath = "/home/arthur_gla/veriPB/subgraphsolver/ftrimer/veripb-dev" # Berhan trimmer for testing.
-    brimpath = "/users/grad/arthur/ftrimer/veripb-dev" # Berhan trimmer for testing.
+    # proofs = "/users/grad/arthur/proofs/"
+    pbopath = "/home/arthur_gla/veriPB/subgraphsolver/veripb-dev"
+    # pbopath = "/users/grad/arthur/veripb-dev"
+    brimpath = "/home/arthur_gla/veriPB/subgraphsolver/ftrimer/veripb-dev" # Berhan trimmer for testing.
+    # brimpath = "/users/grad/arthur/ftrimer/veripb-dev" # Berhan trimmer for testing.
     insid = 0
     tl = 2629800 # 1 month
     # tl = 2 # 1 month
@@ -2114,6 +2114,28 @@ function roundt(t,d)
         t[i] = round(t[i],digits = d)
     end
     return t
+end
+function plotresultstablenature(table)
+    table = Vector{Vector{any}}()
+    legende = Vector{String}()
+    n = 0
+    open(string(table), "r") do f
+        firstline = readline(f)
+        legende = split(firstline,' ')
+        n = length(legende)
+        for line in eachline(f)
+            st = split(line,' ')
+            t = Vector{any}(n)
+            for i in eachindex(t)
+                t[i] = tryparse(Float64,st[i])
+            end
+            push!(table,t)
+        end
+    end
+    for t in table # veripb elaborate vs trimming elaborate
+        print(t[2],'/',t[8],',')
+    end
+    println()
 end
 function plotresultstable()
     table = Vector{Vector{Float64}}()
