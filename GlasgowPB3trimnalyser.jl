@@ -44,7 +44,7 @@ end
 function parseargs(args)
     ins = ""
     proofs = pwd()*"/"
-    proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
+    # proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
     # proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofsthatbreaksveriPBtrimheuristics/"
     # proofs = "/home/arthur_gla/veriPB/trimmertests/veripb-dev-feature-trimmer-bench/benches/solver_instances/gss/"
     # proofs = "/home/arthur_gla/veriPB/subgraphsolver/nolabelsproofs3/"
@@ -99,7 +99,7 @@ function parseargs(args)
         if (ispath(arg)||ispath(arg*".opb"))&&(isfile(arg)||isfile(arg*".opb"))
             if (tmp = findlast('/',arg))===nothing
                 ins = arg
-                proofs=""
+                # proofs=""
             else 
                 ins = arg[tmp+1:end]
                 proofs = arg[1:tmp-1]
@@ -193,13 +193,13 @@ function runtrimmers(ins)
     printstyled("\r\033[",d+4,"G",prettybytes(so))
     tvp = @elapsed begin if CONFIG.veripb
         # v1 = ""
-        v1 = verifier("$proofs/$ins.opb","$proofs/$ins$extention")
+        v1 = verifier(ins)
     end end
     printstyled("\r\033[",d+37,"G",prettytime(tvp); color = :blue)
 
     tvb = @elapsed begin if CONFIG.brim 
         try
-        v3 = runbrimmer("$proofs/$ins.opb","$proofs/$ins$extention") 
+        v3 = runbrimmer(ins)
         catch e
             printstyled("\nBrim trimmer failed on $ins:\n"; color = :red)
         end
@@ -218,7 +218,7 @@ function runtrimmers(ins)
     printstyled("\r\033[",d+37+7+7+6+10,"G",prettytime(twc); color = :cyan)
 
     tvs = @elapsed begin if CONFIG.veripb && CONFIG.grim
-        v2 = verifier("$proofs/smol.$ins.opb","$proofs/smol.$ins$extention")
+        v2 = verifier("smol."*ins)
     end end
     printstyled("\r\033[",d+37+7+7,"G",prettytime(tvs+tri+tms+twc); color = :blue)
     printstyled("\r\033[",d+37+7+7+7+14,"G",prettytime(tvs),"\n"; color = :blue)
@@ -248,46 +248,82 @@ function runtrimmers(ins)
         end
     end
 end
-function verifier(formule,preuve)
+function verifier(ins)
+    formule = "$proofs/$ins.opb"
+    preuve = "$proofs/$ins$extention"
     cd();cd(CONFIG.pbopath)
     v1 = 0
     r = "--release"   #run parameters (release is basically full compile optimizations)
     r = "" 
+    # out = "out.tmp"
+    out = "$proofs/$ins.elaborated.pbp"
     if CONFIG.trace
-        println("timeout $tl cargo r -r -- --trace $formule $preuve --elaborate out.tmp")
+        println("timeout $tl cargo r -r -- --trace $formule $preuve --elaborate $out")
         # v1 = run(`timeout $tl cargo r -r -- --trace $formule $preuve`)
-        v1 = run(`timeout $tl cargo r -r -- --trace $formule $preuve --elaborate out.tmp`)
-        # v1 = run(`timeout $tl cargo r -- --trace $formule $preuve --elaborate out.tmp`)
+        v1 = run(`timeout $tl cargo r -r -- --trace $formule $preuve --elaborate $out`)
+        # v1 = run(`timeout $tl cargo r -- --trace $formule $preuve --elaborate $out`)
     else
         redirect_stdio(stdout = devnull,stderr = devnull) do
         # v1 =read(`timeout $tl cargo r -r -- $formule $preuve`)
-        v1 =read(`timeout $tl cargo r -r -- $formule $preuve --elaborate out.tmp`)
-        # v1 =read(`timeout $tl cargo r -- $formule $preuve --elaborate out.tmp`)
+        v1 =read(`timeout $tl cargo r -r -- $formule $preuve --elaborate $out`)
+        # v1 =read(`timeout $tl cargo r -- $formule $preuve --elaborate $out`)
         end
     end
     return v1
 end
-function runbrimmer(formule,preuve)
+function runbrimmer(ins)
+    formule = "$proofs/$ins.opb"
+    preuve = "$proofs/$ins$extention"
     cd();cd(CONFIG.brimpath)
     v1 = 0
     r = "--release"   #run parameters (release is basically full compile optimizations)
     r = ""
+    # out = "out.tmp"
+    out = "$proofs/$ins.trimmed.pbp"
     if CONFIG.trace
-        # v1 = run(`timeout $tl cargo r $r -- --trim --trace $formule $preuve --elaborate out.tmp`)
-        v1 = run(`timeout $tl cargo r -r -- trim $formule $preuve --elaborate out.tmp`)
-        # v1 = run(`timeout $tl cargo r -- trim $formule $preuve --elaborate out.tmp --use-trimming-heuristic`)
-        # v1 = run(`sudo timeout $tl samply record cargo r $r -- --trace --trim $formule $preuve --elaborate out.tmp `)
+        # v1 = run(`timeout $tl cargo r $r -- --trim --trace $formule $preuve --elaborate $out`)
+        v1 = run(`timeout $tl cargo r -r -- trim $formule $preuve --elaborate $out`)
+        # v1 = run(`timeout $tl cargo r -- trim $formule $preuve --elaborate $out --use-trimming-heuristic`)
+        # v1 = run(`sudo timeout $tl samply record cargo r $r -- --trace --trim $formule $preuve --elaborate $out `)
     else
         redirect_stdio(stdout = devnull,stderr = devnull) do
-        # v1 =read(`timeout $tl cargo r $r -- --trim $formule $preuve --elaborate out.tmp`)
-        v1 =read(`timeout $tl cargo r -r -- trim $formule $preuve --elaborate out.tmp`)
-        # v1 =read(`timeout $tl cargo r -- trim $formule $preuve --elaborate out.tmp --use-trimming-heuristic`)
-        # v1 =read(`sudo timeout $tl samply record cargo r $r -- --trim $formule $preuve --elaborate out.tmp `)
+        # v1 =read(`timeout $tl cargo r $r -- --trim $formule $preuve --elaborate $out`)
+        v1 =read(`timeout $tl cargo r -r -- trim $formule $preuve --elaborate $out`)
+        # v1 =read(`timeout $tl cargo r -- trim $formule $preuve --elaborate $out --use-trimming-heuristic`)
+        # v1 =read(`sudo timeout $tl samply record cargo r $r -- --trim $formule $preuve --elaborate $out `)
         end
     end
     return v1
 end
+function conelitsanalysis(system,conelits,index)
+    sum = 0
+    isinterresting = false
+    pool = Vector{Int}()
+    weekened = Vector{Int}()
+    for (id,conelit) in conelits
+        eq = system[id]
+        nbconelits = length(conelit)
+        nblits = length(eq.t)
+        dif = nblits - nbconelits
+        if dif>0
+            push!(pool,id)
+            print(" ",dif)
+            sum+= dif
+            # print(id,"   ")
+            # printeqconelit(system[id],conelit)
+        end
+    end 
+    println(" = ",sum)
+    println("minmax ",minimum(index[pool])," ",maximum(index[pool])," old(",minimum(pool)," ",maximum(pool),")")
+    for p in pool
+        print(index[p]," ")
+    end
+    printeqconelit(system[pool[end]],conelits[pool[end]])
+end
 function rungrimmer(file)
+    tri=tms=twc=0
+    if "load" in ARGS
+    file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,version,obj,invsys,prism,cone,conelits,invctrmap,succ,index = loadsys(file) else
     tri = @elapsed begin
         system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,version,
         obj = readinstance(proofs,file)
@@ -299,12 +335,11 @@ function rungrimmer(file)
     if conclusion in ["SAT","NONE"] && !isequal(system[end],Eq([],1)) return 0,0,0 end
     tms = @elapsed begin
         cone,conelits = makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclusion,obj)
+        # cone,conelits = makesmolfake(system)
+        # conelitsanalysis(system,conelits)
     end
     # printstyled("\r"," "^12,prettytime(tms),"  "; color = :green)
     invctrmap = Dict(ctrmap[k] => k for k in keys(ctrmap)) # reverse the ctrmap (may be inneficient)
-    # for (i,_) in conelits # nullify the conelits
-    #     conelits[i] = Set([l.var for l in system[i].t]) # we reverse the lits to use the varmap
-    # end
     # for i in systemlink[end][2:end] # prints out the used labels in the antecedants of the last rup
     #     print(invctrmap[i]," ")
     # end
@@ -319,18 +354,22 @@ function rungrimmer(file)
     invlink(systemlink,succ,cone,nbopb)
     index = zeros(Int,length(system)) # map the old indexes to the new ones
     findallindexfirst(index,cone)
+    end
+
+    if "dump" in ARGS
+    dumpsys(file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,version,obj,invsys,prism,cone,conelits,invctrmap,succ,index) end
+
     if CONFIG.adjm
         # showadjacencymatrixsimple(file,cone,index,systemlink,succ,nbopb)
         showadjacencymatrix(file,cone,index,systemlink,succ,nbopb)
     end
     # conelits = Dict{Int,Set{Int}}() # we nullify the conelits to compare stuff
-    if CONFIG.order
-        printorder(file,cone,invsys,varmap)
-    end
+    varocc = CONFIG.order || CONFIG.cshow ? [sum(cone[j] for j in i) for i in invsys] : [] # order from var usage in cone
+    if CONFIG.order printorder(file,cone,invsys,varmap,varocc) end
     if CONFIG.cshow
-        comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)
-        showctrusage()
-        # ciaranshow(proofs,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
+        conelitsanalysis(system,conelits,index)
+        # comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)
+        ciaranshow(proofs,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc,conelits,solirecord)
     end
     return tri,tms,twc
 end
@@ -384,12 +423,11 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
             # print("\r\033[110G ",sum(front))
             #  println(findall(front))
         elseif conclusion == "BOUNDS"
-            begin
-            if !rup(system,invsys,front,firstcontradiction,assi,front,cone,prism,0:0)
+            if !rup(system,invsys,front,firstcontradiction,assi,front,cone,conelits,prism,0:0)
                 println("\n",firstcontradiction," s=",slack(reverse(system[firstcontradiction]),assi))
                 printeq(system[firstcontradiction-nbopb])
                 printstyled(" initial rup to look for bound contradiction failed \n"; color = :red)
-            end end
+            end
         end
         # println("  init : ",sum(front))#,findall(front)
         append!(systemlink[firstcontradiction-nbopb],findall(front))
@@ -484,6 +522,14 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
         # print(id,"   ")
         # printeqconelit(system[id],conelit)
     # end 
+    return cone,conelits
+end
+function makesmolfake(system)
+    cone = ones(Bool,length(system))
+    conelits = Dict{Int,Set{Int}}() # for the lits that we want to keep (works with conflict analysis)
+    for (i,_) in conelits # nullify the conelits
+        conelits[i] = Set([l.var for l in system[i].t]) # we reverse the lits to use the varmap
+    end
     return cone,conelits
 end
 function rup(system,invsys,antecedants,init,assi,front,cone,conelits,prism,subrange)# I am putting back cone and front together because they will both end up in the cone at the end.
@@ -762,7 +808,7 @@ function getcontrib(eq::Eq,assi::Vector{Int8}) # get the lits that contribute ne
 end
 function getlvl(implgraph,eq,assi::Vector{Int8})
     m = -1
-    for l in eq.t
+    @inbounds for l in eq.t
         if contributenegatively(l,assi)
             if haskey(implgraph,l.var)
                 m = max(m,implgraph[l.var][2])
@@ -1080,56 +1126,56 @@ function availableranges(redwitness)                   # build the prism, a rang
     return prism
 end
 module LP
-    using JuMP,HiGHS
-    export LPpol
-    function LPpol(a,b,asol,bsol,obj)
-        # TODO on a besoin du lazy pol generation sinon on retrouve avec des LP le fait que des tas de trucs sont inutiles.
-        # TODO retier de l'objectif les equations qui sont dans le opb ? (on peux garder comme ca si on veux une preuve le plus petite possible ? en esperant que ca passe mieux oiu on peux utiliser l'ordre et le mettre dans l'obj)
-        nbctr = size(a,1)
-        nbvar = size(a,2)
-        bigM = max(maximum(abs.(a)),maximum(abs.(b)),maximum(abs.(asol)),abs(bsol))+1 # 2^20
-        # println("x moi",bigM)
-        # pour highs on a un bug a partir de big m = 2^27 
-        # pour glpk  on a un big a partir de big m = 2^18 
-        m = Model(HiGHS.Optimizer)
-        set_optimizer_attribute(m,"output_flag",false)
+    # using JuMP,HiGHS
+    # export LPpol
+    # function LPpol(a,b,asol,bsol,obj)
+    #     # TODO on a besoin du lazy pol generation sinon on retrouve avec des LP le fait que des tas de trucs sont inutiles.
+    #     # TODO retier de l'objectif les equations qui sont dans le opb ? (on peux garder comme ca si on veux une preuve le plus petite possible ? en esperant que ca passe mieux oiu on peux utiliser l'ordre et le mettre dans l'obj)
+    #     nbctr = size(a,1)
+    #     nbvar = size(a,2)
+    #     bigM = max(maximum(abs.(a)),maximum(abs.(b)),maximum(abs.(asol)),abs(bsol))+1 # 2^20
+    #     # println("x moi",bigM)
+    #     # pour highs on a un bug a partir de big m = 2^27 
+    #     # pour glpk  on a un big a partir de big m = 2^18 
+    #     m = Model(HiGHS.Optimizer)
+    #     set_optimizer_attribute(m,"output_flag",false)
 
-        @variable(m,lambda[i = 1:nbctr] >=0,Int)            # I dont specify int here to make it faster. maybe we can use deletions in a smart manner here 
-        @variable(m,lambdaBin[i = 1:nbctr], Bin)
+    #     @variable(m,lambda[i = 1:nbctr] >=0,Int)            # I dont specify int here to make it faster. maybe we can use deletions in a smart manner here 
+    #     @variable(m,lambdaBin[i = 1:nbctr], Bin)
         
-        @constraint(m, ctr_milp1[j in 1:nbvar], sum(a[i,j]*lambda[i] for i in 1:nbctr) <= asol[j]) # on peut remplir la colone avec des axiomes
-        @constraint(m, ctr_milp2, sum(lambda[i] * b[i] for i in 1:nbctr) == bsol)
-        @constraint(m, ctr_milp_flag[i in 1:nbctr], lambda[i] <= lambdaBin[i] * bigM)  
+    #     @constraint(m, ctr_milp1[j in 1:nbvar], sum(a[i,j]*lambda[i] for i in 1:nbctr) <= asol[j]) # on peut remplir la colone avec des axiomes
+    #     @constraint(m, ctr_milp2, sum(lambda[i] * b[i] for i in 1:nbctr) == bsol)
+    #     @constraint(m, ctr_milp_flag[i in 1:nbctr], lambda[i] <= lambdaBin[i] * bigM)  
         
-        @objective(m, Min, sum(obj[i]*lambdaBin[i] for i in 1:nbctr))
+    #     @objective(m, Min, sum(obj[i]*lambdaBin[i] for i in 1:nbctr))
 
-        # print(m)
-        optimize!(m)
-        if termination_status(m) == MOI.OPTIMAL# && objective_value(m) < nbctr
-            simpler = false
-            for i in 1:nbctr
-                simpler |= round(Int,value(lambda[i]))==0
-            end
-            if simpler
-                println()
-                for i in 1:nbctr
-                    print(round(Int,value(lambda[i])),' ')
-                end
-                print('B')
-                return true , [round(Int,value(lambda[i])) for i in 1:nbctr]
-            else
-                print('T')
-            end
-        else
-            print('F')
-        end
-        return false , Int[]
-    end
+    #     # print(m)
+    #     optimize!(m)
+    #     if termination_status(m) == MOI.OPTIMAL# && objective_value(m) < nbctr
+    #         simpler = false
+    #         for i in 1:nbctr
+    #             simpler |= round(Int,value(lambda[i]))==0
+    #         end
+    #         if simpler
+    #             println()
+    #             for i in 1:nbctr
+    #                 print(round(Int,value(lambda[i])),' ')
+    #             end
+    #             print('B')
+    #             return true , [round(Int,value(lambda[i])) for i in 1:nbctr]
+    #         else
+    #             print('T')
+    #         end
+    #     else
+    #         print('F')
+    #     end
+    #     return false , Int[]
+    # end
     # add litteral axioms for negative variables. add objective wheights for the order  and deactivate the lambdabin for the opb
 end 
-if CONFIG.LPsimplif
-    using .LP
-end
+# if CONFIG.LPsimplif
+#     using .LP
+# end
 function simplepol(res,system,link,nbopb)
     varset = Vector{Int}()
     ctrset = [link[i] for i in eachindex(link) if isid(link,i)]
@@ -1225,6 +1271,24 @@ function justifydeg(f,eq,i,hints,index,varmap)
     return 1 # number of extra lines
 end
 
+# module Dumping
+    using Serialization
+    function dumpsys(file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,version,obj,invsys,prism,cone,conelits,invctrmap,succ,index)
+        println("dumping started")
+        sys = [file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,version,obj,invsys,prism,cone,conelits,invctrmap,succ,index]
+        open("dump.jls","w") do f
+            serialize(f,sys)
+        end
+        println("dumping ended")
+    end
+    function loadsys(file) 
+        println("loading started")
+        file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,version,obj,invsys,prism,cone,conelits,invctrmap,succ,index = deserialize("dump.jls")
+        println("loading ended")
+        return file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,version,obj,invsys,prism,cone,conelits,invctrmap,succ,index
+    end
+# end
+# using .Dumping
 
 
 # ================ Printer ================
@@ -1255,8 +1319,8 @@ function writeconedel(path,file,version,system,cone,conelits,systemlink,redwitne
         end
     end
     succ = Vector{Vector{Int}}(undef,length(system))
-    dels = zeros(Bool,length(system))
-    # dels = ones(Bool,length(system)) # uncomment to have no deletions
+    # dels = zeros(Bool,length(system))
+    dels = ones(Bool,length(system)); println("nodel mode") # uncomment to have no deletions
     dels[1:nbopb].=true #we dont delete in the opb
     for p in prism
         dels[p].=true # we dont delete red and supproofs because veripb is already doing it
@@ -1327,7 +1391,7 @@ function writeconedel(path,file,version,system,cone,conelits,systemlink,redwitne
                     write(f,writesolx(eq,varmap))
                     dels[i] = true # do not delete sol
                 elseif tlink == -21           # soli
-                    write(f,writesoli(solirecord[i]),varmap)
+                    write(f,writesoli(solirecord[i],varmap))
                     # dels[i] = true # do not delete sol
                 elseif tlink == -30           # unchecked assumption
                     if haskey(assertrecord,i)
@@ -1381,12 +1445,12 @@ function findallindexfirst(index,cone)
     end
 end
 function mkdir2(p) if !isdir(p) mkdir(p) end end
-function printorder(file,cone,invsys,varmap)
+function printorder(file,cone,invsys,varmap,varocc)
     dir = string(proofs,"/cone_var_order/")
     mkdir2(dir)
     open(string(dir,file,".cc"),"w") do f
         write(f,"map<string,int> order { "   )
-        varocc = [sum(cone[j] for j in i) for i in invsys] # order from var usage in cone
+        # varocc = [sum(cone[j] for j in i) for i in invsys] # order from var usage in cone
         p = sortperm(varocc,rev=true)
         occ = 0
         maxocc = length(varmap)
@@ -1427,7 +1491,8 @@ function writesoli(sol,varmap)
     for l in sol
         s = string(s,if l.sign " " else " ~" end, varmap[l.var])
     end
-    return string(s," ;\n")
+    lastvar = sol[length(sol)].var
+    return string(s," ;\n") 
 end
 function writewitness(s,witness,varmap)
     for l in witness.w
@@ -1839,15 +1904,26 @@ function printsucc(i,succ,nbsucc,maxsucc,index)
     end
     return string(s,"</span>\n")
 end
-function writelitcolor(l,varmap,varocc,m,r)
-    return string(l.coef," ",if l.sign "" else "~" end, "<span style=\"color: rgb(",Int(round(255*(varocc[l.var]-m)/r)),",0,255)\">",varmap[l.var],"</span>")
+function writevarcolor(v,varmap,varocc,m,r)
+    return string("<span style=\"color: rgb(",Int(round(255*(varocc[v]-m)/r)),",0,255)\">",varmap[v],"</span>")
 end
-function writeeqcolor(e,varmap,varocc,m,r)
+function writelitcolor(l,varmap,varocc,m,r)
+    return string(l.coef," ",if l.sign "" else "~" end, writevarcolor(l.var,varmap,varocc,m,r))
+end
+function writelitscolor(lits,varmap,varocc,m,r)
     s = ""
-    for l in e.t
+    for l in lits
         s = string(s,writelitcolor(l,varmap,varocc,m,r)," ")
     end
-    return string(s,">= ",e.b," ;\n")
+    return s
+end
+function writeeqcolor(e,varmap,conelits,i,varocc,m,r)
+    if haskey(conelits,i)
+        return writeeqconelitscolor(e,varmap,conelits[i],varocc,m,r)
+    else
+        s = writelitscolor(e.t,varmap,varocc,m,r)
+        return string(s,">= ",e.b," ;\n")
+    end
 end
 function writedelcolor(f,systemlink,i,succ,index,nbopb,dels)
     isdel = false
@@ -1871,6 +1947,37 @@ function writedelcolor(f,systemlink,i,succ,index,nbopb,dels)
     if isdel
         write(f,string("\n"))
     end
+end
+function writeobjcolor(obj,varmap,varocc,m,r)
+    s = string("min: ",writelitscolor(obj,varmap,varocc,m,r))
+    return string(s," ;\n")
+end
+function writepolcolor(link,index,varmap)
+    s = string("p")
+    for i in 2:length(link)
+        t = link[i]
+        if t==-1
+            s = string(s," +")
+        elseif t==-2
+            s = string(s," *")
+        elseif t==-3
+            s = string(s," d")
+        elseif t==-4
+            s = string(s," s")
+        elseif t==-5
+            s = string(s," w")
+        elseif t>0
+            if link[i+1] in [-2,-3]
+                s = string(s," ",t)
+            else
+                s = string(s," ",index[t])
+            end
+        elseif t<=-100
+            sign = mod((-t),100)!=1
+            s = string(s,if sign " " else " ~" end,varmap[(-t) ÷ 100])
+        end
+    end
+    return string(s," ;\n")
 end
 function makelinefit(len,s)
     if length(s)<len
@@ -1916,13 +2023,34 @@ function writeredcolor(e,varmap,witness,beg,varocc,m,r)
     end
     return string(s,beg,"\n")
 end
-function ciaranshow(path,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc)
+function writetrimmedlit(l,varmap)
+    return string("<span style=\"color: rgb(0,255,255)\">",
+    string(0," ",if l.sign "" else "~" end, varmap[l.var]),"</span>")
+end
+function writelitsconelitscolor(lits,varmap,conelit,varocc,m,r)
+    b=0
+    s = ""
+    for l in lits
+        if l.var in conelit || -l.var in conelit 
+            s = string(s,writelitcolor(l,varmap,varocc,m,r)," ")
+        else
+            s = string(s,writetrimmedlit(l,varmap)," ")
+            b+=l.coef
+        end
+    end
+    return s,b
+end
+function writeeqconelitscolor(e,varmap,conelit,varocc,m,r)
+    s,b = writelitsconelitscolor(e.t,varmap,conelit,varocc,m,r)
+    return string(s,">= ",max(0,e.b-b)," ;\n")
+end
+function ciaranshow(path,file,version,system,cone,index,systemlink,succ,redwitness,nbopb,varmap,output,conclusion,obj,prism,varocc,conelits,solirecord)
     dels = zeros(Bool,length(system))
     dels[1:nbopb].=true
     for p in prism
         dels[p].=true # we dont delete red and supproofs because veripb is already doing it
     end
-    # dels = ones(Bool,length(system)) # uncomment if you dont want deletions.
+    dels = ones(Bool,length(system)) # uncomment if you dont want deletions.
     todel = Vector{Int}()
     nbsucc = [if isassigned(succ,i) length(succ[i]) else 0 end for i in eachindex(succ)]
     maxsucc = maximum(nbsucc)
@@ -1937,12 +2065,14 @@ function ciaranshow(path,file,version,system,cone,index,systemlink,succ,redwitne
     open(string(dir,file,".html"),"w") do f
         write(f,"<html><head><style> a {color: inherit;text-decoration: none;}</style></head><body style=\"font-family: Courier, monospace; background-color:#a9a9a9 \"><pre>\n")
         write(f,"======================   ",file,".opb   ======================   <a href=\"#pbp\" style=\"color: blue;\">Go to pbp</a>\n")
-        write(f,obj)
+        if length(obj)>0
+            write(f,writeobjcolor(obj,varmap,varocc,m,r))
+        end
         for i in 1:nbopb
             eq = system[i]
             if cone[i]
                 lastindex += 1
-                write(f,string(wid(lastindex),writeeqcolor(eq,varmap,varocc,m,r)))
+                write(f,string(wid(lastindex),writeeqcolor(eq,varmap,conelits,i,varocc,m,r)))
                 write(f,printsucc(i,succ[i],nbsucc,maxsucc,index))
             else
                 write(f,writeeq(eq,varmap))
@@ -1955,20 +2085,20 @@ function ciaranshow(path,file,version,system,cone,index,systemlink,succ,redwitne
             if cone[i]
                 lastindex += 1
                 if tlink == -1               # rup
-                    write(f,string(wid(lastindex),"u ",writeeqcolor(eq,varmap,varocc,m,r)))
+                    write(f,string(wid(lastindex),"u ",writeeqcolor(eq,varmap,conelits,i,varocc,m,r)))
                     write(f,printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
-                    if length(eq.t)>0 
+                    if length(eq.t)>0 && i<length(system) #not last ctr
                         write(f,printsucc(i,succ[i],nbsucc,maxsucc,index))
                         writedelcolor(f,systemlink,i,succ,index,nbopb,dels)
                     end
                 elseif tlink == -2           # pol
-                    write(f,string(wid(lastindex),writepol(systemlink[i-nbopb],index,varmap)))
-                    write(f,writeeqcolor(eq,varmap,varocc,m,r))
+                    write(f,string(wid(lastindex),writepolcolor(systemlink[i-nbopb],index,varmap)))
+                    write(f,writeeqcolor(eq,varmap,conelits,i,varocc,m,r))
                     write(f,printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
                     write(f,printsucc(i,succ[i],nbsucc,maxsucc,index))
                     writedelcolor(f,systemlink,i,succ,index,nbopb,dels)
                 elseif tlink == -3           # ia
-                    write(f,string(wid(lastindex),"ia ",writeeqcolor(eq,varmap,varocc,m,r)[1:end-1]," ",lid(index[systemlink[i-nbopb][2]]),"\n"))
+                    write(f,string(wid(lastindex),"ia ",writeeqcolor(eq,varmap,conelits,i,varocc,m,r)[1:end-1]," ",lid(index[systemlink[i-nbopb][2]]),"\n"))
                     write(f,printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
                     write(f,printsucc(i,succ[i],nbsucc,maxsucc,index))
                     writedelcolor(f,systemlink,i,succ,index,nbopb,dels)
@@ -1979,14 +2109,14 @@ function ciaranshow(path,file,version,system,cone,index,systemlink,succ,redwitne
                     dels[i] = true  # we dont delete red statements
                 elseif tlink == -5           # rup in subproof
                     write(f,"    ")
-                    write(f,string(wid(lastindex),"u ",writeeqcolor(eq,varmap,varocc,m,r)))
+                    write(f,string(wid(lastindex),"u ",writeeqcolor(eq,varmap,conelits,i,varocc,m,r)))
                     write(f,"    ",printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
                     if isassigned(succ,i) write(f,"    ",printsucc(i,succ[i],nbsucc,maxsucc,index)) end
                     push!(todel,i)
                 elseif tlink == -6           # pol in subproofs
                     write(f,"    ")
                     write(f,string(wid(lastindex),writepol(systemlink[i-nbopb],index,varmap)))
-                    write(f,"    ",writeeqcolor(eq,varmap,varocc,m,r))
+                    write(f,"    ",writeeqcolor(eq,varmap,conelits,i,varocc,m,r))
                     write(f,"    ",printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
                     if isassigned(succ,i) write(f,"    ",printsucc(i,succ[i],nbsucc,maxsucc,index)) end
                     push!(todel,i)
@@ -1998,12 +2128,12 @@ function ciaranshow(path,file,version,system,cone,index,systemlink,succ,redwitne
                     dels[i] = true  # we dont delete red statements
                 elseif tlink == -7           # red proofgoal #
                     write(f,"    ",wid(lastindex),"proofgoal #1\n")
-                    write(f,"    ",writeeqcolor(eq,varmap,varocc,m,r))
+                    write(f,"    ",writeeqcolor(eq,varmap,conelits,i,varocc,m,r))
                     write(f,"    ",printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
                     write(f,"    ",printsucc(i,succ[i],nbsucc,maxsucc,index))
                 elseif tlink == -8           # red proofgoal normal
                     write(f,string("    ",wid(lastindex),"proofgoal ",lid(index[systemlink[i-nbopb][2]]),"\n"))
-                    write(f,"    ",writeeqcolor(eq,varmap,varocc,m,r))
+                    write(f,"    ",writeeqcolor(eq,varmap,conelits,i,varocc,m,r))
                     write(f,"    ",printpred(i,systemlink[i-nbopb],nbpred,maxpred,index,nbopb))
                     if isassigned(succ,i) write(f,"    ",printsucc(i,succ[i],nbsucc,maxsucc,index)) end
                     push!(todel,i)
@@ -2019,10 +2149,12 @@ function ciaranshow(path,file,version,system,cone,index,systemlink,succ,redwitne
                         end
                     end
                 elseif tlink == -20           # solx
-                    write(f,string(wid(lastindex),writesol(eq,varmap)))
+                    write(f,string(wid(lastindex),writesolx(eq,varmap)))
                     dels[i] = true # do not delete sol
-                # elseif tlink == -6           # soli
-                    # write(f,writesol(eq,varmap)) #TODO
+                elseif tlink == -21           # soli
+                    write(f,string(wid(lastindex),writesoli(solirecord[i],varmap)))
+                    write(f,writeeqcolor(eq,varmap,conelits,i,varocc,m,r))
+                    write(f,string("obj value is ",eq.b," ?\n"))
                     # dels[i] = true # do not delete sol
                 else
                     println("ERROR tlink = ",tlink)
@@ -2056,12 +2188,23 @@ function ciaranshow(path,file,version,system,cone,index,systemlink,succ,redwitne
                         write(f,"end\n") 
                     end
                 elseif tlink == -20           # solx
-                    write(f,writesol(eq,varmap))
+                    write(f,writesol(eq,varmap))                
+                elseif tlink == -21           # soli
+                    write(f,writesoli(solirecord[i],varmap))
                 else
                     println("ERROR tlink = ",tlink)
                 end
             end
         end
+        write(f,string("output ",output," ;\n"))
+        if conclusion == "SAT"
+            write(f,string("conclusion ",conclusion," ;\n"))
+        elseif conclusion == "UNSAT"
+            write(f,string("conclusion ",conclusion," : -1 ;\n"))
+        else # conclusion == "NONE" or "BOUNDS"
+            write(f,string(replace(conclusion,";"=>"")," ;\n"))
+        end
+        write(f,"end pseudo-Boolean proof ;")
         write(f,"</pre></body></html>")
     end
 end
@@ -2347,130 +2490,134 @@ function edgesfromnames(cone,conelits,system,varmap)
     end
     return pp,tt,ep,et
 end
-# using Graphs,GraphPlot,Compose,Cairo,Colors # we may not need all that
-using Graphs,GraphPlot,Colors
-function comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)    
-    pattern = target = ""
-    path = ""
-    ext = ""
-    pre = ""
-    gp = gt = nothing
-    if file[1:3] == "bio"
-        pattern = file[4:end-3]
-        target = file[end-2:end]
-        path = SIPgraphpath*"biochemicalReactions"
-        ext = ".txt"
-    elseif file[1:2] == "LV"
-        i = findlast(x->x=='g',file)
-        pattern = file[4:i-1]
-        target = file[i+1:end]
-        pre = "g"
-        path = SIPgraphpath*"LV"
-    else
-        println("ERROR: cannot compare graphs for file ",file,". The file name should start with bio or LV.")
-        return
-    end
-    gp = ladtograph(path,pre*pattern*ext)
-    # gt = ladtograph(path,pre*target*ext)
+module GR
+    # using Graphs,GraphPlot,Compose,Cairo,Colors # we may not need all that
+    # using Graphs,GraphPlot,Colors
+    # function comparegraphs(file,system,nbopb,cone,conelits,varmap,ctrmap,invctrmap)    
+    #     pattern = target = ""
+    #     path = ""
+    #     ext = ""
+    #     pre = ""
+    #     gp = gt = nothing
+    #     if file[1:3] == "bio"
+    #         pattern = file[4:end-3]
+    #         target = file[end-2:end]
+    #         path = SIPgraphpath*"biochemicalReactions"
+    #         ext = ".txt"
+    #     elseif file[1:2] == "LV"
+    #         i = findlast(x->x=='g',file)
+    #         pattern = file[4:i-1]
+    #         target = file[i+1:end]
+    #         pre = "g"
+    #         path = SIPgraphpath*"LV"
+    #     else
+    #         println("ERROR: cannot compare graphs for file ",file,". The file name should start with bio or LV.")
+    #         return
+    #     end
+    #     gp = ladtograph(path,pre*pattern*ext)
+    #     # gt = ladtograph(path,pre*target*ext)
 
-    P,T,EP,ET = edgesfromnames(cone,conelits,system,varmap)
+    #     P,T,EP,ET = edgesfromnames(cone,conelits,system,varmap)
 
-    # P,T = setsfromlabels(cone,invctrmap) # we cannot do that as we have a counter example that mandatory vertices may have no domain ctrs labels
-    np = [i for i in 1:nv(gp)]
-    nprgb = [if i in P RGBA(0.0,0.8,0,0.8) else RGBA(0.8,0.0,0.0,0.8) end for i in 1:nv(gp)]
-    ewp = [if (src(e),dst(e)) in EP || (dst(e),src(e)) in EP RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gp)]
-    saveplot(gplot(gp;layout = circular_layout, nodelabel = np, nodefillc = nprgb, edgestrokec  = ewp, plot_size = (16cm, 16cm)),
-     visualisationpath*"gp"*file*".svg")
-    # nt = [i for i in 1:nv(gt)]
-    # ntrgb = [if i in T RGBA(0.0,0.8,0,0.8) else RGBA(0.8,0.0,0.0,0.8) end for i in 1:nv(gt)]
-    # ewt = [if (src(e),dst(e)) in ET || (dst(e),src(e)) in ET RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gt)]
-    # saveplot(gplot(gt;layout = circular_layout, nodelabel = nt, nodefillc = ntrgb, edgestrokec  = ewt, plot_size = (16cm, 16cm)),
-    #  visualisationpath*"gt"*file*".svg")
-    # gg = makegkwin(gp,4)
-    # for (k0,g0) in enumerate(gg)
-    #     ec = [if src(e) in P && dst(e) in P RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(g0)]
-    #     saveplot(gplot(g0;layout = circular_layout, nodelabel = np, nodefillc = nprgb, edgestrokec  = ec, plot_size = (16cm, 16cm)), string("gp",k0,".svg"))
+    #     # P,T = setsfromlabels(cone,invctrmap) # we cannot do that as we have a counter example that mandatory vertices may have no domain ctrs labels
+    #     np = [i for i in 1:nv(gp)]
+    #     nprgb = [if i in P RGBA(0.0,0.8,0,0.8) else RGBA(0.8,0.0,0.0,0.8) end for i in 1:nv(gp)]
+    #     ewp = [if (src(e),dst(e)) in EP || (dst(e),src(e)) in EP RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gp)]
+    #     saveplot(gplot(gp;layout = circular_layout, nodelabel = np, nodefillc = nprgb, edgestrokec  = ewp, plot_size = (16cm, 16cm)),
+    #     visualisationpath*"gp"*file*".svg")
+    #     # nt = [i for i in 1:nv(gt)]
+    #     # ntrgb = [if i in T RGBA(0.0,0.8,0,0.8) else RGBA(0.8,0.0,0.0,0.8) end for i in 1:nv(gt)]
+    #     # ewt = [if (src(e),dst(e)) in ET || (dst(e),src(e)) in ET RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(gt)]
+    #     # saveplot(gplot(gt;layout = circular_layout, nodelabel = nt, nodefillc = ntrgb, edgestrokec  = ewt, plot_size = (16cm, 16cm)),
+    #     #  visualisationpath*"gt"*file*".svg")
+    #     # gg = makegkwin(gp,4)
+    #     # for (k0,g0) in enumerate(gg)
+    #     #     ec = [if src(e) in P && dst(e) in P RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(g0)]
+    #     #     saveplot(gplot(g0;layout = circular_layout, nodelabel = np, nodefillc = nprgb, edgestrokec  = ec, plot_size = (16cm, 16cm)), string("gp",k0,".svg"))
+    #     # end
+    #     # gg = makegkwin(gt,4)
+    #     # for (k0,g0) in enumerate(gg)
+    #     #     ec = [if src(e) in T && dst(e) in T RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(g0)]
+    #     #     saveplot(gplot(g0;layout = circular_layout, nodelabel = nt, nodefillc = ntrgb, edgestrokec  = ec, plot_size = (16cm, 16cm)), string("gt",k0,".svg"))
+    #     # end
+
+    #     createconegraph(path,pre*pattern*pattern*target*ext,gp,P)
+    #     # createconegraph(path,pre*target*pattern*target*ext,gt,T)
+
+    #     # println()
     # end
-    # gg = makegkwin(gt,4)
-    # for (k0,g0) in enumerate(gg)
-    #     ec = [if src(e) in T && dst(e) in T RGBA(0.5,1,0.5,1) else RGBA(0.1,0.1,0.1,0.1) end for e in edges(g0)]
-    #     saveplot(gplot(g0;layout = circular_layout, nodelabel = nt, nodefillc = ntrgb, edgestrokec  = ec, plot_size = (16cm, 16cm)), string("gt",k0,".svg"))
+    # function removespaces(st)
+    #     r = findall(x->x=="",st)
+    #     deleteat!(st,r)
     # end
+    # function ladtograph(path,file)
+    #     cd()
+    #     g = SimpleGraph()
+    #     open(string(path,'/',file),"r"; lock = false) do f
+    #         s = readline(f)
+    #         n = parse(Int,s)
+    #         add_vertices!(g,n)
+    #         l = 0
+    #         for ss in eachline(f)
+    #             l+=1
+    #             st = split(ss,' ')[2:end] # le premier chiffre est le degret du noeud
+    #             removespaces(st)
+    #             for sn in st
+    #                 n = parse(Int,sn)
+    #                 if n>0
+    #                     add_edge!(g, l, n+1) # +1 because the first node is 0
+    #                 end
+    #             end
+    #         end
+    #     end
+    #     return g
+    # end
+    # function add_nei(deb,cur,l,g,A)
+    #     if l == 0 if deb!=cur A[deb,cur] +=1 end
+    #     else
+    #         for nei in neighbors(g, cur)
+    #             add_nei(deb,nei,l-1,g,A)
+    #         end
+    #     end
+    # end
+    # function makegkwin(g,k) return makegkwin(g,2,k) end
+    # function makegkwin(g,l,k) # l length of path (default 2); k number of paths
+    #     n = nv(g)
+    #     A = zeros(Int,n,n)
+    #     gg = [SimpleGraph(n,0) for _ in 1:k]
+    #     for i in vertices(g)
+    #         add_nei(i,i,l,g,A)
+    #     end
+    #     for occ in 1:k
+    #         for i in 1:n
+    #             for j in i:n
+    #                 if A[i,j]>=occ
+    #                     add_edge!(gg[occ],i,j)
+    #                 end
+    #             end
+    #         end
+    #     end
+    #     return gg
+    # end
+    # function createconegraph(path,file,G,S) #G:graph S:set of mandatory vertices
+    #     IS = [i for i in 1:nv(G) if !(i in S)] # set of absented vertices
+    #     for i in length(IS):-1:1
+    #         rem_vertex!(G,IS[i])
+    #     end
+    #     open(string(path,'/',file),"w"; lock = false) do f
+    #         write(f,string(nv(G),"\n"))
+    #         for i in 1:nv(G)
+    #             st = string(degree(G,i))
+    #             for j in neighbors(G,i)
+    #                 st *= " "*string(j-1) # -1 because the first node is 0
+    #             end
+    #             write(f,st,"\n")
+    #         end
+    #     end
+    # end
+end
+using .GR
 
-    createconegraph(path,pre*pattern*pattern*target*ext,gp,P)
-    # createconegraph(path,pre*target*pattern*target*ext,gt,T)
-
-    # println()
-end
-function removespaces(st)
-    r = findall(x->x=="",st)
-    deleteat!(st,r)
-end
-function ladtograph(path,file)
-    cd()
-    g = SimpleGraph()
-    open(string(path,'/',file),"r"; lock = false) do f
-        s = readline(f)
-        n = parse(Int,s)
-        add_vertices!(g,n)
-        l = 0
-        for ss in eachline(f)
-            l+=1
-            st = split(ss,' ')[2:end] # le premier chiffre est le degret du noeud
-            removespaces(st)
-            for sn in st
-                n = parse(Int,sn)
-                if n>0
-                    add_edge!(g, l, n+1) # +1 because the first node is 0
-                end
-            end
-        end
-    end
-    return g
-end
-function add_nei(deb,cur,l,g,A)
-    if l == 0 if deb!=cur A[deb,cur] +=1 end
-    else
-        for nei in neighbors(g, cur)
-            add_nei(deb,nei,l-1,g,A)
-        end
-    end
-end
-function makegkwin(g,k) return makegkwin(g,2,k) end
-function makegkwin(g,l,k) # l length of path (default 2); k number of paths
-    n = nv(g)
-    A = zeros(Int,n,n)
-    gg = [SimpleGraph(n,0) for _ in 1:k]
-    for i in vertices(g)
-        add_nei(i,i,l,g,A)
-    end
-    for occ in 1:k
-        for i in 1:n
-            for j in i:n
-                if A[i,j]>=occ
-                    add_edge!(gg[occ],i,j)
-                end
-            end
-        end
-    end
-    return gg
-end
-function createconegraph(path,file,G,S) #G:graph S:set of mandatory vertices
-    IS = [i for i in 1:nv(G) if !(i in S)] # set of absented vertices
-    for i in length(IS):-1:1
-        rem_vertex!(G,IS[i])
-    end
-    open(string(path,'/',file),"w"; lock = false) do f
-        write(f,string(nv(G),"\n"))
-        for i in 1:nv(G)
-            st = string(degree(G,i))
-            for j in neighbors(G,i)
-                st *= " "*string(j-1) # -1 because the first node is 0
-            end
-            write(f,st,"\n")
-        end
-    end
-end
 
 
 # ================ Parser ================
@@ -2483,6 +2630,10 @@ function readinstance(path,file)
     return system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,version,obj
 end
 function readvar(s,varmap)
+    if s[1]==';' 
+        printstyled("; added as variable", color = :red)
+        throw("; added as variable")
+    end
     tmp = s[1]=='~' ? s[2:end] : s
     # tmp = split(s,'~')[end]
     if haskey(varmap,tmp)
@@ -2532,7 +2683,7 @@ function readeq(st,varmap,range)
     return eq
 end
 function readobj(st,varmap)
-    return readlits(st,varmap,2:2:length(st)-1)
+    return readlits(st,varmap,2:2:(length(st)-1))
 end
 function remove(s,st)
     r = findall(x->x==s,st)
@@ -2763,12 +2914,12 @@ function solvepol(st,system,link,init,varmap,ctrmap,nbopb)
     return res
 end
 function findfullassi(system,st,init,varmap,prism)
-    lits = Vector{Lit}(undef,length(st)-1)
-    for i in 2:length(st)
+    lits = Vector{Lit}(undef,length(st)-2)
+    for i in 2:length(st)-1 # sol var var var ;
         var = readvar(st[i],varmap)# add the new vars in the varmap
     end
     assi = zeros(Int8,length(varmap))
-    for i in 2:length(st)
+    for i in 2:length(st)-1
         sign = st[i][1]!='~'
         var = readvar(st[i],varmap)
         lits[i-1] = Lit(1,!sign,var)
@@ -3063,7 +3214,6 @@ end
 
 # profiling became slow so deactivated by default
 # using StatProfilerHTML, ProfileSVG;             # activate this line to unable profiling
-# using Profile, PProf
 if CONFIG.profile
     # @pprof main()
     # @profilehtml main()             # activate this line to unable profiling
