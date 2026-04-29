@@ -1054,7 +1054,8 @@ function fixconelits(conelits,system,i,antecedants,link) # TODO be more precise 
         myconelit = haskey(conelits,i) ? conelits[i] : Set([l.var for l in eq.t ])
         poslits = Set{Int}()
         neglits = Set{Int}()
-        for j in findall(antecedants) # TODO replace findall by more effeicient 
+        anteids = findall(antecedants)
+        for j in anteids 
             for l in system[j].t
                 if l.sign
                     push!(poslits,l.var)
@@ -1067,13 +1068,13 @@ function fixconelits(conelits,system,i,antecedants,link) # TODO be more precise 
             end
         end
         myconelit = myconelit ∪ (poslits ∩ neglits) # we add the cacelling lits in the mandatory conelit
-        for j in findall(antecedants)
+        for j in anteids
             conelits[j] =  myconelit ∩ Set([l.var for l in system[j].t])
             # conelits[j] = Set([l.var for l in system[j].t])
         end
         conelits[i] = myconelit ∩ Set([l.var for l in eq.t])
     else
-        for j in findall(antecedants)
+        for j in anteids
             conelits[j] = Set([l.var for l in system[j].t])
         end
     end
@@ -1116,10 +1117,7 @@ function fixredsystemlink(systemlink,cone,prism,nbopb)
     end
 end
 function inprism(n,prism)
-    for r in prism
-        if n in r return true end
-    end
-    return false
+    return any(r -> n in r, prism)
 end
 function availableranges(redwitness)                   # build the prism, a range colections of all the red subproofs
     prism = [a.range for (_,a) in redwitness if a.range!=0:0]
@@ -1380,7 +1378,7 @@ function writeconedel(path,file,version,system,cone,conelits,systemlink,redwitne
                     lastindex -= 1
                     write(f,"    end -1\n")
                     next = systemlink[i-nbopb][1]
-                    if next != -7 && next !=8  # if no more proofgoals, end the subproof
+                    if next != -7 && next != -8  # if no more proofgoals, end the subproof
                         lastindex += 1
                         write(f,"end\n") 
                         for ii in todel
@@ -2259,7 +2257,7 @@ function roundt(t,d)
     return t
 end
 function plotresultstablenature(table)
-    table = Vector{Vector{any}}()
+    table = Vector{Vector{Any}}()
     legende = Vector{String}()
     n = 0
     open(string(table), "r") do f

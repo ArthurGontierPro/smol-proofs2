@@ -71,7 +71,7 @@ println("\\begin{tikzpicture}[scale=$scale, x=$xx cm, y=$yy cm]
   \\def\\xmin{0} \\def\\xmax{$mx} \\def\\ymin{0} \\def\\ymax{$my}
   \\draw[style=help lines, ystep=$ysteps, xstep=$xsteps] (\\xmin,\\ymin) grid (\\xmax,\\ymax);
   \\draw[->] (\\xmin,\\ymin) -- (\\xmax,\\ymin) node[above left] {$xlbl};
-  \\draw[->] (\\xmin,\\ymin) -- (\\xmin,\\ymax) node[below right] {trimmed $ylbl};
+  \\draw[->] (\\xmin,\\ymin) -- (\\xmin,\\ymax) node[below right] {verif $ylbl};
   \\foreach \\x in {0,$xsteps,...,\\xmax} \\node at (\\x, \\ymin) [below] {\\x};
   \\foreach \\y in {0,$ysteps,...,\\xmax} \\node at (\\xmin,\\y) [left] {\\y};
 \\draw (\\xmin,\\ymin) -- (\\xmax,\\ymax) ;
