@@ -3,68 +3,74 @@
 const opb = ".opb"
 const pbp = ".pbp"
 const smol = ".smol"
+const version = "3.0"
 const abspath = "/home/arthur_gla/veriPB/subgraphsolver/"
 const inst = findfirst(x -> isfile(x*pbp) && isfile(x*opb), ARGS)  # search for proof 
 const proofs = (i = findfirst(x -> isdir(x), ARGS)) === nothing ? abspath*"proofs/" : ARGS[i]
 using Random,DataStructures
-function main()
-    if "atable" in ARGS
-        plotresultstable(); return 
-    elseif "clean" in ARGS
-        rm.(filter(f -> endswith(f, ".out") || endswith(f, ".err"),readdir(proofs; join=true))); return
-    elseif inst !== nothing 
-        printabline(ins)
-        trimnalyse(inst); return
-    end
-    println(tabhead)
-    for ins in getinstancesfromdir(proofs)
-        printabline(ins)
-        t1,t2,t3 = trimnalyse(ins)
-        t4,t5 = "verif" in ARGS ? verify(ins) : (-1,-1)
-        printabline2(ins,t1,t2,t3,t4,t5)
-    end
-    println(tabfoot) end
+# module Maine
+    function main()
+        if "atable" in ARGS
+            plotresultstable(); return 
+        elseif "clean" in ARGS
+            rm.(filter(f -> endswith(f, ".out") || endswith(f, ".err"),readdir(proofs; join=true))); return
+        elseif inst !== nothing 
+            printabline(ins)
+            trimnalyse(inst); return
+        end
+        println(tabhead)
+        for ins in getinstancesfromdir(proofs)
+            printabline(ins)
+            t1,t2,t3 = trimnalyse(ins)
+            t4,t5 = "verif" in ARGS ? verify(ins) : (-1,-1)
+            printabline2(ins,t1,t2,t3,t4,t5)
+        end
+        println(tabfoot) end
 
-function getinstancesfromdir(proofs)
-    list = onlyname.(filter(x -> ext(x)==opb && isfile(noext(x)*pbp), readdir(proofs, join=true)))
-    if "rand" in ARGS
-        shuffle!(list)
-    elseif "sort" in ARGS
-        sort!(list, by = x -> inssize(x))
-    end
-    println("%Found ", length(list), " instances in ", proofs)
-    return list end
+    function getinstancesfromdir(proofs)
+        list = onlyname.(filter(x -> ext(x)==opb && isfile(noext(x)*pbp), readdir(proofs, join=true)))
+        if "rand" in ARGS
+            shuffle!(list)
+        elseif "sort" in ARGS
+            sort!(list, by = x -> inssize(x))
+        end
+        println("%Found ", length(list), " instances in ", proofs)
+        return list end
 
-function trimnalyse(ins)
-    t1 = t2 = t3 = 0
-    if "load" in ARGS file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,version,obj,invsys,prism,cone,conelits,invctrmap,succ,index = loadsys(file) else
-    t1 = @elapsed begin
-        system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,version,
-        obj = readinstance(proofs,file)
-    end
-    normcoefsystem(system)
-    return trunc(Int,t1),trunc(Int,t2),trunc(Int,t3) end
-
-function verify(ins)
-    t4 = t5 = 0
-    veripb = "/home/arthur_gla/veriPB/trim/VeriPB/target/release/veripb"
-    ins2 = proofs*ins
-    ins3 = ins2*".smolverif"
-    ins4 = ins2*".verif"
-    ins31 = ins3*".out"
-    ins32 = ins3*".err"
-    ins41 = ins4*".out"
-    ins42 = ins4*".err"
-    redirect_stdio(stderr=devnull) do
-        tryrm(ins31); tryrm(ins32)
-        t4 = @elapsed try run(pipeline(`$veripb $ins2$opb$smol $ins2$pbp$smol`,stdout=ins31)) catch e write(ins32,string(e)) end
-        tryrm(ins41); tryrm(ins42)
-        t5 = @elapsed try run(pipeline(`$veripb $ins2$opb $ins2$pbp`,stdout=ins41)) catch e write(ins42,string(e)) end
-    end
-    return trunc(Int,t4),trunc(Int,t5) end
+    function trimnalyse(ins)
+        t1 = t2 = t3 = 0 ; file = ins
+        if "load" in ARGS file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index = loadsys(file); @goto skiped end # using goto because I was told not to
+        t1 = @elapsed begin 
+            system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsysprism = readinstance(proofs,file) 
+        end
+        t2 = @elapsed begin # cone mark usfull ctrs and lits
+            cone,conelits = getcone(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclusion,obj)
+        end
 
 
-module ploting # ======================================= plotting  ======================================= #
+        @label skiped
+        return trunc(Int,t1),trunc(Int,t2),trunc(Int,t3) end
+
+    function verify(ins)
+        t4 = t5 = 0
+        veripb = "/home/arthur_gla/veriPB/trim/VeriPB/target/release/veripb"
+        ins2 = proofs*ins
+        ins3 = ins2*".smolverif"
+        ins4 = ins2*".verif"
+        ins31 = ins3*".out"
+        ins32 = ins3*".err"
+        ins41 = ins4*".out"
+        ins42 = ins4*".err"
+        redirect_stdio(stderr=devnull) do
+            tryrm(ins31); tryrm(ins32)
+            t4 = @elapsed try run(pipeline(`$veripb $ins2$opb$smol $ins2$pbp$smol`,stdout=ins31)) catch e write(ins32,string(e)) end
+            tryrm(ins41); tryrm(ins42)
+            t5 = @elapsed try run(pipeline(`$veripb $ins2$opb $ins2$pbp`,stdout=ins41)) catch e write(ins42,string(e)) end
+        end
+        return trunc(Int,t4),trunc(Int,t5) end
+# end; using .Maine
+
+# module ploting # ======================================= plotting  ======================================= #
     function plotresultstable()
         list = onlyname.(filter(x -> ext(x)==".out", readdir(proofs)))
         table = Vector{Vector{Any}}()
@@ -137,14 +143,15 @@ module ploting # ======================================= plotting  =============
     function postfixtikz()
         println("}\\draw (\\x,\\y) node[noeudver] {};\n\\end{tikzpicture}") end
 
-end; using .ploting
-module Sugarbox # ======================================= sugar ======================================= #
+# end; using .ploting
+# module Sugarbox # ======================================= sugar ======================================= #
     onlyname(x) = splitext(basename(x))[1]
     ext(x) = splitext(basename(x))[2]
     noext(x) = splitext(x)[1]
     filesize(file) = stat(file).size
     inssize(file) = filesize(proofs*file*opb) + filesize(proofs*file*pbp)
     tryrm(s) = if isfile(s) rm(s) end
+    remove(s,c) = replace(s,c=>"")#deleteat!(s,findall(x->x==c,s))
     const tabhead = "\\begin{tabular}{|cc|cc|c|c|c|}\\hline sizes & & &  & times (s) & & Instance\\\\\\hline\nopb & pbp & smol o & smol p & grim time (parse trim write verif) & veri time & \\\\\\hline"
     const tabfoot = "\\end{tabular}\\\\\n"
     printgray(s)  = printstyled(s, color=:light_black)
@@ -186,12 +193,12 @@ module Sugarbox # ======================================= sugar ================
             return  string(trunc(Int,b)," B")
         end end 
 
-end; using .Sugarbox 
-module Dumping # ======================================= mem dump ======================================= #
+# end; using .Sugarbox 
+# module Dumping # ======================================= mem dump ======================================= #
     using Serialization
-    function dumpsys(file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,version,obj,invsys,prism,cone,conelits,invctrmap,succ,index)
+    function dumpsys(file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index)
         println("dumping started")
-        sys = [file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,version,obj,invsys,prism,cone,conelits,invctrmap,succ,index]
+        sys = [file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index]
         open("dump.jls","w") do f
             serialize(f,sys)
         end
@@ -199,57 +206,60 @@ module Dumping # ======================================= mem dump ==============
 
     function loadsys(file) 
         println("loading started")
-        file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,version,obj,invsys,prism,cone,conelits,invctrmap,succ,index = deserialize("dump.jls")
+        file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index = deserialize("dump.jls")
         println("loading ended")
-        return file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,version,obj,invsys,prism,cone,conelits,invctrmap,succ,index end
-end; # using .Dumping # to save the import un comment this.
-module parser # ======================================= parser  ======================================= #
+        return file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index end
+# end; # using .Dumping # to save the import un comment this.
+# module Parser # ======================================= parser  ======================================= #
     function readinstance(path,file)
         system,varmap,ctrmap,obj = readopb(path,file)
         nbopb = length(system)
-        system,systemlink,redwitness,solirecord,assertrecord,output,conclusion,version = readproof(path,file,system,varmap,ctrmap,obj)
-        return system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,version,obj end
+        system,systemlink,redwitness,solirecord,assertrecord,output,conclusion = readproof(path,file,system,varmap,ctrmap,obj)
+        normcoefeq.(system)
+        invsys = getinvsys(system,systemlink,varmap)
+        prism = availableranges(redwitness)
+        return system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism end
 
     function readopb(path,file)
         system = Eq[]
         varmap = Dict{String,Int}()
         ctrmap = Dict{String, Int}()
         obj = ""
-        open(string(path,'/',file,".opb"),"r"; lock = false) do f
+        open(path*file*opb,"r"; lock = false) do f
             c = 1
             for ss in eachline(f)
-                if ss[1] != '*'                                 # do not parse comments
-                    st = split(ss,keepempty=false)              # structure of a line is: int var int var ... >= int ;                 
-                    if st[1][1]=='@'
-                        ctrmap[st[1][2:end]] = c
-                        st = st[2:end] # remove the @label
+                if length(ss)==0 || ss[1]=='*' continue end     # do not parse comments
+                ss = remove(ss,";") # I fully rely on lines beeing complete TODO change that eventualy
+                st = split(ss,keepempty=false)              # structure of a line is: int var int var ... >= int ;                 
+                if st[1][1]=='@'
+                    ctrmap[st[1][2:end]] = c
+                    st = st[2:end] # remove the @label
+                end
+                if ss[1] == 'm'                     # objective function (only minimization is supported)
+                    obj = readobj(st,varmap)
+                else
+                    eq = readeq(st,varmap)
+                    if length(eq.t)==0 && eq.b==1
+                        printstyled(" !opb"; color = :blue)
                     end
-                    if ss[1] == 'm'                     # objective function (only minimization is supported)
-                        obj = readobj(st,varmap)
-                    else
-                        eq = readeq(st,varmap)
-                        if length(eq.t)==0 && eq.b==1
-                            printstyled(" !opb"; color = :blue)
-                        end
-                        normcoefeq(eq)
-                        push!(system, eq)
-                        c+=1
-                    end
+                    normcoefeq(eq)
+                    push!(system, eq)
+                    c+=1
                 end
             end
         end
         return system,varmap,ctrmap,obj end
-
-    mutable struct Eq
-        t::Vector{Lit}
-        b::Int end
 
     mutable struct Lit
         coef::Int
         sign::Bool
         var::Int end
 
-    readobj(st,varmap) = readlits(st,varmap,2:2:(length(st)-1))
+    mutable struct Eq
+        t::Vector{Lit}
+        b::Int end
+
+    readobj(st,varmap) = readlits(st,varmap,2:2:length(st))
     function readlits(st,varmap,range)
         lits = Vector{Lit}(undef,(length(range)))
         for i in range
@@ -270,12 +280,11 @@ module parser # ======================================= parser  ================
         varmap[tmp] = length(varmap)+1
         return length(varmap) end
 
-    readeq(st,varmap) = readeq(st,varmap,1:2:length(st)-4)
-    function readeq(st,varmap,range)
-        lits = readlits(st,varmap,range)
-        bid = range.start-1+2length(lits)+2
+    readeq(st,varmap) = readeq(st,varmap,1:2:length(st))
+    function readeq(st,varmap,r)
+        lits = readlits(st,varmap,r.start:r.step:(r.stop-2)) # because range should cover: coef lit coef lit >= b
         lits,c = merge(lits)
-        eq = Eq(lits,parse(Int,st[bid])-c)
+        eq = Eq(lits,parse(Int,st[r.start+2length(r)-1])-c)     # insupportable theoreme de la fourchette avec ces ranges
         return eq end
 
     function merge(lits)
@@ -317,8 +326,8 @@ module parser # ======================================= parser  ================
             return l.coef
         end
         return 0 end
-
-    function readveripb(path,file,system,varmap,ctrmap,obj)
+ 
+    function readproof(path,file,system,varmap,ctrmap,obj)
         systemlink = Vector{Vector{Int}}()
         redwitness = Dict{Int, Red}()
         solirecord = Dict{Int, Vector{Lit}}()
@@ -327,71 +336,43 @@ module parser # ======================================= parser  ================
         output = conclusion = ""
         c = length(system)+1
         nbopb = length(system)
-        open(string(path,'/',file,extention),"r"; lock = false) do f
+        open(path*file*pbp,"r"; lock = false) do f
             for ss in eachline(f)
                 if length(ss)==0 continue end
+                ss = remove(ss,";") # I fully rely on lines beeing complete TODO change that eventualy
                 i = findfirst(x->x=='%',ss)
                 if i !== nothing # there is a comment
                     if i<3 continue end # comment is at the start of the line, ignore the line
-                    if ss[1]=='a'
-                        # justifyable assertion needs hints that are in comments for the moment.
+                    if ss[1]=='a' # justifyable assertion needs hints that are in comments for the moment.
                         assertrecord[c] = ss[i+1:end]
                     end
-                    ss = ss[1:i-1] end # remove the comment
+                    ss = ss[1:i-1] # remove the comment
                 end
                 st = split(ss,keepempty=false)
                 if st[1][1]=='@'
                     ctrmap[st[1][2:end]] = c # keep track of constraint name
                     st = st[2:end] # remove the @label
-                end #TODO I AM HERE
+                end
                 type = st[1]
                 eq = Eq([],0)
-                if type == "u" || type == "rup"
-                    eq = readeq(st,varmap,2:2:length(st)-4)     # can fail if space is missing omg
-                    push!(systemlink,[-1])
-                elseif type == "p" || type == "pol"
-                    push!(systemlink,[-2])
-                    eq = solvepol(st,system,systemlink[end],c,varmap,ctrmap,nbopb)
-                    if !(length(eq.t)!=0 || eq.b!=0) printstyled("POL empty"; color=:red) end
-                elseif type == "a"  # unchecked assumption
-                    eq = readeq(st,varmap,2:2:length(st)-4)
-                    if haskey(assertrecord,c)
-                        hints = split(assertrecord[c],keepempty=false)[2:end]
-                        link = [-30]
-                        for i in eachindex(hints)
-                            push!(link,parse(Int,hints[i]))
-                        end
-                        push!(systemlink,link)
-                    else
-                        push!(systemlink,[-30])
-                    end
-                elseif type == "ia"
-                    eq,l = readia(st,varmap,ctrmap,eq,c)
-                    push!(systemlink,[-3,l])
-                elseif type == "red"  
-                    c = readred(system,systemlink,st,varmap,ctrmap,redwitness,c,f,prism)
-                    eq = Eq([],0)
-                elseif type == "sol" 
-                    printstyled("SAT Not supported."; color=:red)
-                    eq = Eq([Lit(0,true,1)],15) # just to add something to not break the id count
-                elseif type == "soli" 
-                    push!(systemlink,[-21])
-                    eq = findbound(system,st,c,varmap,prism,obj,solirecord)
-                elseif type == "solx"         # on ajoute la negation de la sol au probleme pour chercher d'autres solutions. jusqua contradiction finale. dans la preuve c.est juste des contraintes pour casser toutes les soloutions trouvees
-                    push!(systemlink,[-20])
-                    eq = solbreakingctr(system,st,c,varmap,prism)
-                elseif type == "output"
-                    output = replace(st[2],";"=>"")
+                    if type == "rup" || type == "u" eq = processrup(st,varmap,systemlink)
+                elseif type == "pol" || type == "p" eq = processpol(st,varmap,system,systemlink,c,ctrmap,nbopb)
+                elseif type == "a"                  eq = processassumption(st,varmap,systemlink,assertrecord,c)
+                elseif type == "ia"                 eq = processia(st,varmap,ctrmap,c,systemlink)
+                elseif type == "red"                c,eq = processred(system,systemlink,st,varmap,ctrmap,redwitness,c,f,prism)
+                elseif type == "sol"                throw("trimmed SAT is the solution")
+                elseif type == "soli"               eq = processsoli(st,varmap,system,systemlink,c,prism,obj,solirecord)
+                elseif type == "solx"               eq = processsolx(st,varmap,system,systemlink,c,prism)
+                elseif type == "output"             output = remove(st[2],";")
                 elseif type == "conclusion"
-                    conclusion = replace(st[2],";"=>"")
+                    conclusion = remove(st[2],";")
                     if conclusion == "BOUNDS"
                         conclusion = ss
-                        # printstyled("BOUNDS Not supported. "; color=:red)
                     elseif !isequal(system[end],Eq([],1)) && (conclusion == "SAT" || conclusion == "NONE")
-                        printstyled("SAT Not supported.."; color=:red)
+                        throw("SAT Not supported..")
                     end
                 elseif !(type in ["%","*","wiplvl","w","setlvl","#","f","d","del","end","pseudo-Boolean"])#,"de","co","en","ps"])
-                    printstyled("unknown2: ",ss; color=:red)
+                    printstyled("unknown line head (skiped): ",ss; color=:red)
                 end
                 if length(eq.t)!=0 || eq.b!=0 # the eq is not empty
                     normcoefeq(eq)
@@ -400,15 +381,505 @@ module parser # ======================================= parser  ================
                 end
             end
         end
-        return system,systemlink,redwitness,solirecord,assertrecord,output,conclusion,version end
+        return system,systemlink,redwitness,solirecord,assertrecord,output,conclusion end
 
     mutable struct Red                      # w: witness. range: id range from beign to end of red. pgranges are the proof goals ranges.
         w::Vector{Lit}                      # each odd index is the variable and each next even is tha target (lit(0,0,-1) means constant 1 and 0 means constant 0)
         range::UnitRange{Int64}
         pgranges::Vector{UnitRange{Int64}} end
 
-end; using .parser 
+    function processrup(st,varmap,systemlink)
+        push!(systemlink,[-1])
+        return readeq(st,varmap,2:2:length(st)) end
 
+    function processpol(st,varmap,system,systemlink,c,ctrmap,nbopb)
+        push!(systemlink,[-2])
+        eq = solvepol(st,system,systemlink[end],c,varmap,ctrmap,nbopb)
+        if !(length(eq.t)!=0 || eq.b!=0) throw("POL empty") end
+        return eq end 
+
+    function solvepol(st,system,link,init,varmap,ctrmap,nbopb)
+        i = st[2]
+        id = i[1]=='@' ? ctrmap[i[2:end]] : parse(Int,i)
+        if id<0
+            id = init+id
+        end
+        eq = copyeq(system[id])
+        stack = Vector{Eq}()
+        weakvar = ""
+        push!(stack,eq)
+        push!(link,id)
+        lastsaturate = false
+        for j in 3:length(st) 
+            i=st[j]
+            if i == ";" #we dont take the last ';'
+                continue
+            elseif i=="+"
+                push!(stack,addeq(pop!(stack),pop!(stack)))     
+                push!(link,-1)
+            elseif i=="*"
+                push!(stack,multiply(pop!(stack),link[end]))
+                push!(link,-2)
+            elseif i=="d"
+                push!(stack,divide(pop!(stack),link[end]))
+                push!(link,-3)
+            elseif i=="s"
+                if j == length(st)
+                    lastsaturate = true
+                else
+                    normcoefeq(first(stack))
+                    saturate(first(stack))
+                end
+                push!(link,-4)
+            elseif i=="w"
+                push!(stack,weaken(pop!(stack),weakvar))
+                push!(link,-5)
+            elseif !isdigit(i[1]) && i[1]!='@' && i[1]!='-' #if it is a variable do litteral axiom
+                if length(st)>j && st[j+1] == "w"
+                    weakvar = readvar(i,varmap)
+                    push!(link,-100weakvar-99) # ATTENTION HARDCODING DE SHIFT
+                else
+                    sign = i[1]!='~'
+                    var = readvar(i,varmap)
+                    push!(stack,Eq([Lit(1,sign,var)],0))
+                    push!(link,-100var-99sign) # ATTENTION HARDCODING DE SHIFT
+                end
+            elseif i!="0"
+                id = i[1]=='@' ? ctrmap[i[2:end]] : parse(Int,i)
+                if id<1
+                    id = init+id
+                end
+                push!(link,id)
+                if !(st[j+1] in ["*","d"])
+                    push!(stack,copyeq(system[id]))
+                end
+            end
+        end
+        eq = pop!(stack)
+        lits = eq.t
+        lits2 = removenulllits(lits)
+        if length(link)==2
+            link[1] = -3 # transform pol to ia 
+        end
+        res = Eq(lits2,eq.b)
+        if lastsaturate
+            normcoefeq(res)
+            saturate(res)
+        end
+        return res end
+
+    copyeq(eq) = Eq([Lit(l.coef,l.sign,l.var) for l in eq.t], eq.b)
+    function addeq(eq1,eq2)
+        lits = copy(eq2.t)
+        vars = [l.var for l in lits]
+        c = 0
+        for lit in eq1.t
+            i = findfirst(x->x==lit.var,vars)
+            if !isnothing(i)
+                tmplit,tmpc = add(lit,lits[i])
+                lits[i] = tmplit
+                c+=tmpc
+            else
+                push!(lits,lit)
+            end
+        end
+        lits=removenulllits(lits)
+        sort!(lits,by=x->x.var)
+        return Eq(lits,eq1.b+eq2.b-c) end
+
+    removenulllits(lits) = filter!(x->x.coef!=0,lits)
+    function multiply(eq,d)
+        lits = copy(eq.t)
+        for l in lits
+            l.coef = l.coef*d
+        end
+        return Eq(lits,eq.b*d) end
+
+    function divide(eq,d)
+        normcoefeq(eq)
+        lits = copy(eq.t)
+        for l in lits
+            l.coef = ceil(Int,l.coef/d)
+        end
+        return Eq(lits,ceil(Int,eq.b/d)) end
+
+    function saturate(eq)
+        for l in eq.t
+            l.coef = min(l.coef,eq.b)
+        end end
+
+    function weaken(eq,var)                                           
+        lits = copy(eq.t) # coef should be > 0
+        b = eq.b
+        for l in lits
+            if l.var==var
+                b-=l.coef
+                l.coef = 0
+            end
+        end
+        lits = removenulllits(lits) 
+        return Eq(lits,b) end
+
+    function processassumption(st,varmap,systemlink,assertrecord,c)
+        eq = readeq(st,varmap,2:2:length(st))
+        if haskey(assertrecord,c)
+            hints = split(assertrecord[c],keepempty=false)[2:end]
+            link = [-30]
+            for i in eachindex(hints)
+                push!(link,parse(Int,hints[i]))
+            end
+            push!(systemlink,link)
+        else
+            push!(systemlink,[-30])
+        end
+        return eq end
+
+    function processia(st,varmap,ctrmap,c,systemlink)
+        eq,l = readia(st,varmap,ctrmap,Eq([],0),c)
+        push!(systemlink,[-3,l])
+        return eq end
+
+    function readia(st,varmap,ctrmap,eq,c)
+        col = length(st)-1
+        if st[end-1] != ":" # coef lit coef lit >= b : id
+            eq = Eq([],0)
+            printstyled("missing ia ID: ctr will be ignored";color = :red)
+        else
+            eq = readeq(st,varmap,2:2:length(st)-3)
+            l = st[end]
+            l = l[1]=='@' ? ctrmap[l[2:end]] : parse(Int,l)
+            if l<0
+                l = c+l
+            end
+        end
+        return eq,l end
+
+    function processred(system,systemlink,st,varmap,ctrmap,redwitness,redid,f,prism)
+        i = findfirst(x->x==":",st)
+        eq = readeq(st[2:i],varmap)
+        j = findlast(x->x==":",st)
+        if i==j # detect the word begin
+            j=length(st)
+        end
+        w = readwitness(st[i+1:j],varmap)
+        c = redid
+        range = 0:0
+        pgranges = Vector{UnitRange{Int64}}()
+        if st[end] == "begin"
+            rev = reverse(eq)
+            normcoefeq(rev)
+            push!(system,rev)
+            push!(systemlink,[-9])
+            c+=1
+            range,pgranges,c = readsubproof(system,systemlink,eq,w,c,f,varmap,ctrmap)
+            push!(prism,range)
+            push!(systemlink,[-10])
+        else
+            push!(systemlink,[-4])
+        end
+        normcoefeq(eq)
+        push!(system,eq)
+        redwitness[redid] = Red(w,range,pgranges)
+        redwitness[length(system)] = Red(w,range,pgranges)
+        return c+1,Eq([],0) end
+
+    function readwitness(st,varmap)
+        st = remove(st,"->")
+        st = remove(st,";")
+        t = Vector{Lit}(undef,length(st))
+        k = 1
+        for i in 1:2:length(st)
+            j = i+1
+            t[i] = Lit(0,st[i][1]!='~',readwitnessvar(st[i],varmap))
+            t[j] = Lit(0,st[j][1]!='~',readwitnessvar(st[j],varmap))
+        end
+        return t end
+
+    function readwitnessvar(s,varmap)
+        if s=="0"
+            return 0
+        elseif s=="1"
+            return -1
+        else 
+            return readvar(s,varmap)
+        end end
+            
+    function readsubproof(system,systemlink,eq,w,c,f,varmap,ctrmap)
+        # notations : 
+        # proofgoal i est la i eme contrainte de la formule F /\ ~C /\` ~`Ciw
+        # proofgoal #1 est la contrainte dans la reduction
+        # -1 est la contrainte qui est declaree dans le proofgoal. elle est affecte par w
+        # -2 est la negation de la contrainte declaree dans le red
+        # end -1  le -1 donne l'id de la contradiction. on peux aussi mettre c -1
+        # l'affectation du temoins refais une nouvelle contrainte.
+        nbopb = length(system)-length(systemlink)
+        type,st = lparse(f)
+        redid = c-1
+        pgranges = Vector{UnitRange{Int64}}()
+        while type !="end"
+            if type == "proofgoal"
+                pgid = c
+                if st[2][1] == '#' 
+                    push!(system,reverse(applywitness(eq,w)))
+                    push!(systemlink,[-7])
+                else
+                    pgref = parse(Int,st[2])
+                    push!(system,reverse(applywitness(system[pgref],w)))
+                    push!(systemlink,[-8,pgref])
+                end
+                c+=1
+                type,st = lparse(f)
+                while type != "end"
+                    eq = Eq([],0)
+                    if type == "u" || type == "rup"
+                        eq = processrup(st,varmap,systemlink,in_pg=true)
+                        systemlink[end][1] = -5 # in subproof, rup is -5
+                    elseif type == "p" || type == "pol"
+                        eq = processpol(st,varmap,system,systemlink,c,ctrmap,nbopb)
+                        systemlink[end][1] = -6 # in subproof, rup is -6
+                    end
+                    if length(eq.t)!=0 || eq.b!=0
+                        normcoefeq(eq)
+                        push!(system,eq)
+                        c+=1
+                    end
+                    type,st = lparse(f)
+                end
+                push!(pgranges,pgid:c-1)
+            end
+            type,st = lparse(f)
+        end
+        return redid:c-1,pgranges,c end
+
+    function applywitness(eq,w)
+        t = Lit[]
+        b = eq.b
+        for l in eq.t
+            for i in 1:2:length(w)
+                if l.var == w[i].var
+                    if w[i+1].var > 0
+                        if l.sign != w[i].sign
+                            b-= l.coef
+                        end
+                    else 
+                        if l.sign == w[i].sign
+                            b-= l.coef
+                        end
+                    end
+                else
+                    push!(t,l)
+                end
+            end
+        end
+        return Eq(t,b) end
+
+    function processsoli(st,varmap,system,systemlink,c,prism,obj,solirecord)
+        push!(systemlink,[-21])
+        return findbound(system,st,c,varmap,prism,obj,solirecord) end
+
+    function findbound(system,st,c,varmap,prism,obj,solirecord)
+        assi = findfullassi(system,st,c,varmap,prism)
+        lits = Vector{Lit}(undef,length(assi))
+        for i in eachindex(assi)
+            if assi[i]==0
+                throw(" assignement not propagated to full")
+            else
+                lits[i] = Lit(1,assi[i]==1,i) # we add the assignement
+            end
+        end
+        solirecord[c] = lits
+        b = 0
+        for l in obj        #compute the bound
+            if assi[l.var]==1 && l.sign || assi[l.var]==2 && !l.sign
+                b+= l.coef
+            end
+        end
+        negobj = [Lit(-l.coef,l.sign,l.var) for l in obj] # we negate the objective
+        return Eq(negobj,-b+1) end # -b+1 because we want the bound to be strictly lower
+
+    function findfullassi(system,st,init,varmap,prism)
+        lits = Vector{Lit}(undef,length(st)-2)
+        for i in 2:length(st) # sol var var var ;
+            _ = readvar(st[i],varmap)# add the new vars in the varmap
+        end
+        assi = zeros(Int8,length(varmap))
+        for i in 2:length(st)
+            sign = st[i][1]!='~'
+            var = readvar(st[i],varmap)
+            lits[i-1] = Lit(1,!sign,var)
+            assi[var] = sign ? 1 : 2
+        end
+        changes = true
+        while changes
+            changes = false
+            for i in 1:init-1 # TODO can be replaced with efficient unit propagation
+                if !inprism(i,prism)
+                    eq = system[i]
+                    s = slack(eq,assi)
+                    if s<0
+                        printstyled(" sol propagated assignement to contradiction "; color = :red)
+                        print(" ",i," ")
+                        println(st)
+                        printeq(eq)
+                        lits = [Lit(l.coef,!l.sign,l.var) for l in lits]
+                        return assi
+                    else
+                        for l in eq.t                    
+                            if l.coef > s && assi[l.var]==0
+                                assi[l.var] = l.sign ? 1 : 2 # assi == 1 if l is true, 2 if l is false 0 if l is not assigned
+                                changes = true
+                            end end end end end end
+        return assi end
+
+    function processsolx(st,varmap,system,systemlink,c,prism)
+        push!(systemlink,[-20])
+        return solbreakingctr(system,st,c,varmap,prism) end
+
+    function solbreakingctr(system,st,init,varmap,prism)
+        assi = findfullassi(system,st,init,varmap,prism)
+        lits = Vector{Lit}(undef,length(assi))
+        for i in eachindex(assi)
+            if assi[i]==0
+                throw(" assignement not propagated to full")
+            else
+                lits[i] = Lit(1,assi[i]!=1,i) # we add the negation of the assignement
+            end
+        end
+        return Eq(lits,1) end
+
+# end; using .Parser 
+
+
+# module Trimmer
+    function getcone(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclusion,obj)
+        n = length(system)
+        antecedants = zeros(Bool,n)
+        assi = zeros(Int8,length(varmap))
+        cone = zeros(Bool,n)
+        conelits = Dict{Int,Set{Int}}() # for the lits that we want to keep (works with conflict analysis)
+        front = zeros(Bool,n)
+        firstcontradiction = 0
+        if conclusion == "UNSAT"
+            firstcontradiction = getfirstcontradiction(system,varmap,prism)
+        elseif occursin("BOUNDS",conclusion)
+            firstcontradiction = getfirstboundeq(system,varmap,prism,obj,conclusion,cone)
+        end
+        cone[firstcontradiction] = 
+        irminsul = Dict{} 
+        if systemlink[firstcontradiction-nbopb][1] == -2         # first contradiction is pol
+            fixfront(front,systemlink[firstcontradiction-nbopb])
+        else
+            if conclusion=="UNSAT" || conclusion=="NONE"
+                # upquebit(system,invsys,assi,front,prism,conelits) #TODO i am here and I want my irminsul tree
+                initialpropagation(system,invsys,)
+            elseif conclusion == "BOUNDS"
+                if !rup(system,invsys,front,firstcontradiction,assi,front,cone,conelits,prism,0:0) throw("rup failed onbound contradiction") end
+            end
+            append!(systemlink[firstcontradiction-nbopb],findall(front))
+        end
+        red = Red([],0:0,[]);
+        newpfgl = true
+        pfgl = Vector{UnitRange{Int64}}()
+        while newpfgl # restart if new frontless proofgoals are needed.
+            newpfgl = false
+            while true in front
+                #TODO put back stuff
+            end
+            for r in pfgl           # we check if any new proofgoal is needed
+                id = systemlink[r.start-nbopb][2]
+                if cone[id] && !cone[r.start]
+                    println("restart red at ")
+                    printeq(system[r.start])
+                    front[r.start] = front[r.stop] = true
+                    newpfgl = true
+                end
+            end
+        end
+        # fixredsystemlink(systemlink,cone,prism,nbopb)
+        return cone,conelits
+    end
+
+    function getfirstcontradiction(system,varmap,prism) # find first syntactic ⊥ in sys
+        assi = zeros(Int8,length(varmap))
+        return findfirst(x->!inprism(x,prism) && slack(x,assi)<0,system) end
+
+    function getfirstboundeq(system,varmap,prism,conclusion,obj,conclusion,cone) 
+        st = split(conclusion,keepempty=false) # conclusion BOUNDS 10 20   ||  10 : id 20 : id 
+        ub = 0; lb = parse(Int,st[3])
+        if length(st)>3
+            if st[4]!= ":"
+                ub = parse(Int,st[4])
+            else
+                i = findlast(x->x==":",st)
+                if i!=4
+                    ub = parse(Int,st[i-1])
+                end
+            end
+        end
+        lbctr = Eq(obj,lb)
+        ubctr = normcoefeq(negatecoefs(Eq(obj,ub)))
+        lbid = ubid = 0
+        for i in eachindex(system)
+            if lbid>0 && isequal(system[i],lbctr)
+                lbid = i
+            end
+            if ubid>0 && isequal(system[i],ubctr)
+                ubid = i
+            end
+        end
+        if ubid>0 cone[ubid] = true end
+        conclusion = "conclusion BOUNDS $lb $ub" # ids will change
+        return lbid end
+
+    function negatecoefs(eq::Eq)
+        c=0
+        lits = [Lit(l.coef,l.sign,l.var) for l in eq.t]
+        for l in lits
+            l.coef = -l.coef
+        end
+        return Eq(lits,-eq.b) end
+
+    function isequal(e::Eq,f::Eq) # equality between eq
+        if e.b!=f.b
+            return false
+        elseif length(e.t) != length(f.t)
+            return false
+        else
+            for i in eachindex(e.t)
+                if !isequal(e.t[i],f.t[i])
+                    return false
+                end
+            end
+            return true
+        end end
+
+    function isequal(a::Lit,b::Lit) # equality between lits
+        return a.coef==b.coef && a.sign==b.sign && a.var==b.var end
+    function fixfront(front::Vector{Bool},antecedants::Vector{Bool})
+        for i in eachindex(antecedants)
+            if antecedants[i]
+                front[i] = true
+            end
+        end end
+
+    function fixfront(front::Vector{Bool},antecedants::Vector{Int})
+        for i in antecedants
+            if i>0
+                front[i] = true
+            end
+        end end
+
+
+
+
+
+
+
+
+
+
+
+# end; using .Trimmer
 
 
 # ======================================= main code ======================================= #
@@ -418,3 +889,18 @@ if "profile" in ARGS
     # using StatProfilerHTML
     # @profilehtml main()
 else main() end
+
+
+#=
+Differences with the veriPB grammar:
+- the proof line is ended by \n, ; does not matter to the trimmer
+- rup must not have hints (they will be discarded anyway)
+- ia must be ended by : id
+- the proof cannot end by SAT or NONE
+
+Unsupported rules:
+  - dom
+  - obju
+  - pbc
+  - the ones I forgot
+=#
