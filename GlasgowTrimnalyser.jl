@@ -5,25 +5,21 @@ const pbp = ".pbp"
 const smol = ".smol"
 const version = "3.0"
 const abspath = "/home/arthur_gla/veriPB/subgraphsolver/"
-const inst = findfirst(x -> isfile(x*pbp) && isfile(x*opb), ARGS)  # search for proof 
 const proofs = (i = findfirst(x -> isdir(x), ARGS)) === nothing ? abspath*"proofs/" : ARGS[i]
+const inst   = (i = findfirst(x -> isfile(proofs*x*pbp) && isfile(proofs*x*opb), ARGS)) !== nothing ? ARGS[i] : nothing # search for proof 
 using Random,DataStructures
-# module Maine
+# =============== main stuff =============
     function main()
         if "atable" in ARGS
             plotresultstable(); return 
         elseif "clean" in ARGS
             rm.(filter(f -> endswith(f, ".out") || endswith(f, ".err"),readdir(proofs; join=true))); return
         elseif inst !== nothing 
-            printabline(ins)
-            trimnalyse(inst); return
+            trimnalyseandcie(inst); return
         end
         println(tabhead)
         for ins in getinstancesfromdir(proofs)
-            printabline(ins)
-            t1,t2,t3 = trimnalyse(ins)
-            t4,t5 = "verif" in ARGS ? verify(ins) : (-1,-1)
-            printabline2(ins,t1,t2,t3,t4,t5)
+            trimnalyseandcie(ins)
         end
         println(tabfoot) end
 
@@ -36,19 +32,28 @@ using Random,DataStructures
         end
         println("%Found ", length(list), " instances in ", proofs)
         return list end
+    function trimnalyseandcie(ins)
+            printabline(ins)
+            t1,t2,t3 = trimnalyse(ins)
+            t4,t5 = "verif" in ARGS ? verify(ins) : (-1,-1)
+            printabline2(ins,t1,t2,t3,t4,t5) end
 
     function trimnalyse(ins)
         t1 = t2 = t3 = 0 ; file = ins
-        if "load" in ARGS file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index = loadsys(file); @goto skiped end # using goto because I was told not to
+        # if "load" in ARGS file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index = loadsys(file); @goto skiped end # using goto because I was told not to
         t1 = @elapsed begin 
-            system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsysprism = readinstance(proofs,file) 
+            system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,prism = readinstance(proofs,file) 
         end
+        sys = PBSystem(system, length(varmap))
         t2 = @elapsed begin # cone mark usfull ctrs and lits
-            cone,conelits = getcone(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclusion,obj)
+            cone,conelits = getcone(sys,systemlink,nbopb,prism,redwitness,conclusion,obj)
         end
-
-
+        printconestat(cone)
         @label skiped
+        t3 = @elapsed begin
+            varmap_inv = Dict(varmap[k] => k for k in keys(varmap))
+            writeconedel(proofs,file,sys,cone,conelits,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap_inv,ctrmap,output,conclusion,obj,prism)
+        end
         return trunc(Int,t1),trunc(Int,t2),trunc(Int,t3) end
 
     function verify(ins)
@@ -68,9 +73,9 @@ using Random,DataStructures
             t5 = @elapsed try run(pipeline(`$veripb $ins2$opb $ins2$pbp`,stdout=ins41)) catch e write(ins42,string(e)) end
         end
         return trunc(Int,t4),trunc(Int,t5) end
-# end; using .Maine
 
-# module ploting # ======================================= plotting  ======================================= #
+
+# ======================================= plotting  ======================================= #
     function plotresultstable()
         list = onlyname.(filter(x -> ext(x)==".out", readdir(proofs)))
         table = Vector{Vector{Any}}()
@@ -143,8 +148,7 @@ using Random,DataStructures
     function postfixtikz()
         println("}\\draw (\\x,\\y) node[noeudver] {};\n\\end{tikzpicture}") end
 
-# end; using .ploting
-# module Sugarbox # ======================================= sugar ======================================= #
+# ======================================= sugar ======================================= #
     onlyname(x) = splitext(basename(x))[1]
     ext(x) = splitext(basename(x))[2]
     noext(x) = splitext(x)[1]
@@ -181,6 +185,8 @@ using Random,DataStructures
         printcyan(leftcarriage(69,string(t4)))
         printcyan(leftcarriage(78,string(t5)))
         println() end
+    function printconestat(cone)
+        printgray("\r\033[99G% "*string(sum(cone))*"/"*string(length(cone))) end
 
     function prettybytes(b)
         if b>=10^9
@@ -193,8 +199,7 @@ using Random,DataStructures
             return  string(trunc(Int,b)," B")
         end end 
 
-# end; using .Sugarbox 
-# module Dumping # ======================================= mem dump ======================================= #
+module Dumping # ======================================= mem dump ======================================= #
     using Serialization
     function dumpsys(file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index)
         println("dumping started")
@@ -209,16 +214,16 @@ using Random,DataStructures
         file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index = deserialize("dump.jls")
         println("loading ended")
         return file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index end
-# end; # using .Dumping # to save the import un comment this.
-# module Parser # ======================================= parser  ======================================= #
+end; # using .Dumping # to save the import un comment this.
+# ======================================= parser  ======================================= #
     function readinstance(path,file)
         system,varmap,ctrmap,obj = readopb(path,file)
         nbopb = length(system)
         system,systemlink,redwitness,solirecord,assertrecord,output,conclusion = readproof(path,file,system,varmap,ctrmap,obj)
         normcoefeq.(system)
-        invsys = getinvsys(system,systemlink,varmap)
+        # invsys = getinvsys(system,systemlink,varmap) # obselete since PBsys
         prism = availableranges(redwitness)
-        return system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism end
+        return system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,prism end
 
     function readopb(path,file)
         system = Eq[]
@@ -746,89 +751,526 @@ using Random,DataStructures
             end
         end
         return Eq(lits,1) end
+    function availableranges(redwitness)                   # build the prism, a range colections of all the red subproofs
+        prism = [a.range for (_,a) in redwitness if a.range!=0:0]
+        return prism end
 
-# end; using .Parser 
+
+# ======================================= data struct ======================================= #
+    struct PBSystem
+        # Forward: equation → terms
+        vars    ::Vector{Int32}
+        coefs   ::Vector{Int8}
+        signs   ::BitVector
+        rhs     ::Vector{Int32}
+        row_ptr ::Vector{Int32}
+        # Inverse: variable → equations containing it
+        var_ptr ::Vector{Int32}     # length = n_vars + 1
+        var_eqs ::Vector{Int32} end # flat list of equation ids end
+
+    mutable struct Trail
+        var  ::Vector{Int32}    # variables in propagation order
+        eq   ::Vector{Int32}    # reason equation for each entry
+        pos  ::Vector{Int}      # pos[v] = index in var/eq (0 = unassigned)
+        assi ::Vector{Int8} end # current assignment (1=true, 2=false, 0=unset) end
+# ======================================== Trimmer =====================================
+    Trail(n_vars::Int) = Trail(Int32[], Int32[], zeros(Int, n_vars), zeros(Int8, n_vars))
+    function reset!(t::Trail)
+        empty!(t.var); empty!(t.eq)
+        fill!(t.pos, 0); fill!(t.assi, 0) end
+
+    function pushtrail!(t::Trail, v::Int32, eq::Int32, val::Int8)
+        push!(t.var, v); push!(t.eq, eq)
+        t.pos[v] = length(t.var)
+        t.assi[v] = val end
+
+    function PBSystem(system::Vector{Eq}, n_vars::Int)
+        n_eqs  = length(system)
+        n_lits = sum(length(eq.t) for eq in system; init=0)
+
+        vars    = Vector{Int32}(undef, n_lits)
+        coefs   = Vector{Int8}(undef, n_lits)
+        signs   = BitVector(undef, n_lits)
+        rhs     = Vector{Int32}(undef, n_eqs)
+        row_ptr = Vector{Int32}(undef, n_eqs + 1)
+
+        row_ptr[1] = 1
+        k = 1
+        for (e, eq) in enumerate(system)
+            rhs[e] = eq.b
+            for lit in eq.t
+                vars[k]  = lit.var
+                coefs[k] = lit.coef
+                signs[k] = lit.sign
+                k += 1
+            end
+            row_ptr[e+1] = k
+        end
+
+        var_count = zeros(Int32, n_vars)
+        for eq in system, lit in eq.t
+            var_count[lit.var] += 1
+        end
+        var_ptr = Vector{Int32}(undef, n_vars + 1)
+        var_ptr[1] = 1
+        for v in 1:n_vars
+            var_ptr[v+1] = var_ptr[v] + var_count[v]
+        end
+        var_eqs = Vector{Int32}(undef, n_lits)
+        fill!(var_count, 0)
+        for (e, eq) in enumerate(system), lit in eq.t
+            v = lit.var
+            var_eqs[var_ptr[v] + var_count[v]] = e
+            var_count[v] += 1
+        end
+
+        return PBSystem(vars, coefs, signs, rhs, row_ptr, var_ptr, var_eqs) end
 
 
-# module Trimmer
-    function getcone(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclusion,obj)
-        n = length(system)
-        antecedants = zeros(Bool,n)
-        assi = zeros(Int8,length(varmap))
-        cone = zeros(Bool,n)
-        conelits = Dict{Int,Set{Int}}() # for the lits that we want to keep (works with conflict analysis)
-        front = zeros(Bool,n)
+
+    eqrange(sys::PBSystem, e) = sys.row_ptr[e]:sys.row_ptr[e+1]-1
+    varrange(sys::PBSystem, v) = sys.var_ptr[v]:sys.var_ptr[v+1]-1
+    function slack(sys::PBSystem, e::Int, assi::Vector{Int8})
+        c = zero(Int32)
+        @inbounds for i in eqrange(sys, e)
+            val  = assi[sys.vars[i]]
+            sign = sys.signs[i]
+            unaffected = (val == 0) | (sign & (val == 1)) | (!sign & (val == 2))
+            c += unaffected ? sys.coefs[i] : zero(Int8)
+        end
+        return c - sys.rhs[e] end
+
+    inprism(n, prism) = any(r -> n in r, prism)
+    function setconelits(conelits, v, id)
+        if haskey(conelits, id)
+            push!(conelits[id], v)
+        else
+            conelits[id] = Set([v])
+        end end
+
+    function printlitcolor(coef, sign, var, color)
+        if coef != 1 printstyled(coef; color = :blue) end
+        sign ? print(" ") : printstyled('~'; color = :red)
+        printstyled(var; color = color) end
+
+    function printeqconelit(sys::PBSystem, e::Int, conelits)
+        conelit = haskey(conelits, e) ? conelits[e] : Set{Int}()
+        s = zero(Int32)
+        for k in eqrange(sys, e)
+            v = Int(sys.vars[k])
+            print(" ")
+            if v in conelit
+                printlitcolor(sys.coefs[k], sys.signs[k], v, :yellow)
+            else
+                printlitcolor(sys.coefs[k], sys.signs[k], v, :magenta)
+                s += sys.coefs[k]
+            end
+        end
+        if s == 0
+            println(" >= ", sys.rhs[e])
+        else
+            println(" >= ", sys.rhs[e], " - ", s, " >= ", sys.rhs[e] - s)
+        end end
+
+    function printeq(sys::PBSystem, e::Int)
+        for k in eqrange(sys, e)
+            print(" ")
+            printlitcolor(sys.coefs[k], sys.signs[k], Int(sys.vars[k]), :green)
+        end
+        println(" >= ", sys.rhs[e]) end
+
+    function fixante(systemlink::Vector{Vector{Int}}, antecedants::Vector{Bool}, i)
+        for j in eachindex(systemlink[i])
+            t = systemlink[i][j]
+            if t > 0 && !(j < length(systemlink[i]) && systemlink[i][j+1] in (-2,-3))
+                antecedants[t] = true
+            end
+        end end
+
+    function fixredsystemlink(systemlink, cone, prism, nbopb)
+        for range in prism
+            for i in range
+                if cone[i]
+                    for j in eachindex(systemlink[i-nbopb])
+                        k = systemlink[i-nbopb][j]
+                        if k > 0 && !(k in systemlink[range.start-nbopb]) && k < range.start - nbopb
+                            push!(systemlink[range.start-nbopb], k)
+                        end
+                    end
+                end
+            end
+            sort!(systemlink[range.start-nbopb])
+        end end
+
+    function eqvars(sys::PBSystem, e::Int)
+        Set{Int}(Int(sys.vars[k]) for k in eqrange(sys, e)) end
+
+    function istrivial(sys::PBSystem, e::Int, conelits)
+        haskey(conelits, e) || return  sys.rhs[e] <= 0
+        a = zero(Int32)
+        for k in eqrange(sys, e)
+            if !(sys.vars[k] in conelits[e])
+                a += sys.coefs[k]
+            end
+        end
+        return sys.rhs[e] - a <= 0 end
+
+    function fixconelits(sys::PBSystem, conelits, i::Int, antecedants::Vector{Bool}, link)
+        anteids = findall(antecedants)
+        # if -3 in link[2:end] # deactivate lit trimming. when div is there 
+            # for j in anteids
+                # conelits[j] = eqvars(sys, j)
+            # end
+            # return
+        # end
+        myconelit = haskey(conelits, i) ? conelits[i] : eqvars(sys, i)
+        poslits = Set{Int}()
+        neglits = Set{Int}()
+        for j in anteids
+            for k in eqrange(sys, j)
+                sys.signs[k] ? push!(poslits, Int(sys.vars[k])) : push!(neglits, Int(sys.vars[k]))
+            end
+            haskey(conelits, j) && (myconelit = myconelit ∪ conelits[j])
+        end
+        myconelit = myconelit ∪ (poslits ∩ neglits)
+        conelits[i] = myconelit ∩ eqvars(sys, i)
+        for j in anteids
+            conelits[j] = myconelit ∩ eqvars(sys, j)
+        end end
+
+    function removetrivialantecedants(sys::PBSystem, antecedants::Vector{Bool}, conelits, link, init::Int)
+        for i in findall(antecedants)
+            istrivial(sys, i, conelits) || continue
+            j = findfirst(x -> x == i, link)
+            if j === nothing
+                println("antecedant $i not found in link $link")
+                continue
+            end
+            k0 = findfirst(x -> x == -1, link[j+1:end])
+            if k0 === nothing
+                printeqconelit(sys,init,conelits)
+                println(link)
+                for j in findall(antecedants)
+                    printeqconelit(sys,j,conelits)
+                end
+                println("antecedant $i's addition not found in link $link")
+                deleteat!(link, j)
+                antecedants[i] = false
+                continue
+            end
+            deleteat!(link, (j, k0 + j))
+            antecedants[i] = false
+        end end
+
+    function slack_reversed(sys::PBSystem, e::Int, assi::Vector{Int8})
+        total = zero(Int32)
+        c     = zero(Int32)
+        @inbounds for k in eqrange(sys, e)
+            coef   = Int32(sys.coefs[k])
+            total += coef
+            val    = assi[sys.vars[k]]
+            sign   = sys.signs[k]
+            # ~lit is active when original lit is false or unassigned
+            unaffected = (val == 0) | (sign & (val == Int8(2))) | (!sign & (val == Int8(1)))
+            c += unaffected ? coef : zero(Int32)
+        end
+        return c - (total - sys.rhs[e] + one(Int32)) end
+
+    # Given a falsified constraint ceq, traces back through the propagation trail to find
+    # the minimal set of antecedent equations whose cone literals explain the contradiction.
+    # Greedy heuristic: prefer falsified literals whose antecedent has the lowest proof index —
+    # early constraints have smaller antecedent subtrees, so using them minimises cone size.
+    function conflicttrail(ceq::Int, sys::PBSystem, t::Trail,
+                           antecedants::Vector{Bool}, conelits; rev_init::Int=-1)
+        n_vars = length(t.assi)
+        heap   = BinaryMaxHeap{Tuple{Int,Int32}}()       # max-heap on trail pos: ensures antecedents are still assigned when needed
+        inheap = falses(n_vars + 1)                      # inheap[v+1]: v is currently in the heap (index +1 to handle fake var 0)
+
+        antecedants[ceq] = true
+        push!(t.var, Int32(0)); push!(t.eq, Int32(ceq))  # fake var 0 represents the conflict eq itself
+        push!(heap, (length(t.var), Int32(0))); inheap[1] = true
+
+        falsified_lits = Tuple{Int,Int,Int32,Int32}[]    # reused buffer: (antecedent eq index, trail pos, var, coef)
+        while !isempty(heap)
+            vtp, v = pop!(heap)                          # most recently propagated unexplained variable
+            inheap[Int(v)+1] = false
+            v != Int32(0) && (t.assi[Int(v)] = Int8(0)) # unassign v: falsified check returns false for v in future iterations
+            eq     = Int(t.eq[vtp])                      # antecedent equation that propagated v
+            antecedants[eq] = true
+            eq_rev = (eq == rev_init)
+            b      = eq_rev ? (sum(Int32(sys.coefs[k]) for k in eqrange(sys, eq); init=zero(Int32)) - sys.rhs[eq] + one(Int32)) :
+                              sys.rhs[eq]                # effective RHS (adjusted if eq was used reversed in rup)
+            empty!(falsified_lits)
+            somme = zero(Int32)                          # sum of coefs of all literals except v
+            for k in eqrange(sys, eq)
+                w = sys.vars[k]
+                w == v && continue                       # v is the propagated literal; skip it
+                coef = Int32(sys.coefs[k])
+                somme += coef
+                wtp  = Int(t.pos[w])
+                wtp > vtp && continue                    # level skip: w assigned after v, cannot be an antecedent of v's propagation
+                wval = t.assi[w]; wsign = sys.signs[k]
+                falsified_w = eq_rev ? ((wsign & (wval == Int8(1))) | (!wsign & (wval == Int8(2)))) :
+                                       ((wsign & (wval == Int8(2))) | (!wsign & (wval == Int8(1))))
+                falsified_w && push!(falsified_lits, (wtp > 0 ? Int(t.eq[wtp]) : 0, wtp, w, coef))
+            end
+            sort!(falsified_lits; by = x -> x[1])        # lowest proof index first: early constraints have fewer antecedents, reducing cone size
+
+            v != Int32(0) && setconelits(conelits, Int(v), eq)
+            for (_, wtp, w, coef) in falsified_lits
+                somme < b && break                        # enough literals removed: propagation of v is explained
+                if wtp > 0 && !inheap[Int(w)+1]
+                    push!(heap, (wtp, w)); inheap[Int(w)+1] = true
+                end
+                setconelits(conelits, Int(w), eq)
+                somme -= coef
+            end
+            if somme >= b                                 # falsified literals were insufficient to explain v — should not happen
+                printstyled("conflicttrail: could not explain var $v in eq $eq\n"; color = :red)
+                printeq(sys, eq); printeqconelit(sys, eq, conelits)
+                throw(ErrorException("conflicttrail: could not explain $v with eq $eq"))
+            end
+        end end
+
+        # Trail-based unit propagation (replaces upquebit).
+    function propagate!(sys::PBSystem, t::Trail, prism, antecedants::Vector{Bool}, conelits)
+        i = 1; n = length(sys.rhs)
+        while i <= n
+            if !inprism(i, prism)
+                s = slack(sys, i, t.assi)
+                if s < 0
+                    conflicttrail(i, sys, t, antecedants, conelits)
+                    return
+                end
+                rewind = i + 1
+                for k in eqrange(sys, i)
+                    v = sys.vars[k]
+                    t.assi[v] != 0 && continue
+                    Int32(sys.coefs[k]) > s || continue
+                    pushtrail!(t, Int32(v), Int32(i), sys.signs[k] ? Int8(1) : Int8(2))
+                    for j in varrange(sys, v)
+                        rewind = min(rewind, Int(sys.var_eqs[j]))
+                    end
+                end
+                i = rewind
+            else
+                i += 1
+            end
+        end
+        printstyled("propagate! found no conflict\n"; color = :red) end
+
+        # Trail-based RUP check (replaces rup).
+        # Two-level priority queue: priority pass (prio=true) processes only cone/front equations first;
+        # non-priority pass (prio=false) processes all equations.
+        # r1 = priority rewind (cone/front), r0 = non-priority rewind (others).
+        # cone[init]=true at call site, so the reversed constraint is always handled in priority pass.
+    function ruptrail(sys::PBSystem, init::Int, t::Trail,
+                      antecedants::Vector{Bool}, front::Vector{Bool},
+                      cone::Vector{Bool}, conelits, prism, subrange)
+        prio = true
+        r0   = 1           # non-priority rewind; starts at 1 so non-prio pass sweeps from eq 1
+        r1   = init + 1    # priority rewind; init+1 = sentinel "none"
+        i    = 1
+        while i <= init
+            in_queue = !inprism(i, prism) || (i in subrange)
+            if in_queue && (!prio || cone[i] || front[i])
+                rev = (i == init)
+                s   = rev ? slack_reversed(sys, i, t.assi) : slack(sys, i, t.assi)
+                if s < 0
+                    conflicttrail(i, sys, t, antecedants, conelits; rev_init=init)
+                    return true
+                end
+                for k in eqrange(sys, i)
+                    v = sys.vars[k]
+                    t.assi[v] != 0 && continue
+                    Int32(sys.coefs[k]) > s || continue
+                    sign = sys.signs[k]
+                    pushtrail!(t, Int32(v), Int32(i),
+                               rev ? (sign ? Int8(2) : Int8(1)) :
+                                     (sign ? Int8(1) : Int8(2)))
+                    for j in varrange(sys, v)
+                        eid = Int(sys.var_eqs[j])
+                        (eid <= init && eid != i) || continue
+                        if cone[eid] || front[eid]
+                            r1 = min(r1, eid)
+                        else
+                            r0 = min(r0, eid)
+                        end
+                    end
+                end
+                i += 1
+                if prio
+                    i  = min(i, r1)
+                    r1 = init + 1
+                else
+                    if r1 < init + 1
+                        prio = true
+                        r0   = min(i, r0)
+                        i    = r1
+                        r1   = init + 1
+                    else
+                        i  = min(i, r0)
+                        r0 = init + 1
+                    end
+                end
+            else
+                i += 1
+            end
+            if prio && i == init + 1
+                prio = false
+                i    = r0
+                r0   = init + 1
+            end
+        end
+        return false end
+
+    function getcone(sys::PBSystem, systemlink, nbopb::Int,
+                     prism::Vector{UnitRange{Int64}}, redwitness, conclusion::String, obj)
+        n    = length(sys.rhs)
+        nvar = length(sys.var_ptr) - 1
+        cone      = zeros(Bool, n)
+        conelits  = Dict{Int,Set{Int}}()
+        front     = zeros(Bool, n)
+        trail = Trail(nvar)
+
         firstcontradiction = 0
         if conclusion == "UNSAT"
-            firstcontradiction = getfirstcontradiction(system,varmap,prism)
-        elseif occursin("BOUNDS",conclusion)
-            firstcontradiction = getfirstboundeq(system,varmap,prism,obj,conclusion,cone)
+            firstcontradiction = getfirstcontradiction(sys, prism)
+        elseif occursin("BOUNDS", conclusion)
+            firstcontradiction = getfirstboundeq(sys, prism, obj, conclusion, cone)
         end
-        cone[firstcontradiction] = 
-        irminsul = Dict{} 
-        if systemlink[firstcontradiction-nbopb][1] == -2         # first contradiction is pol
-            fixfront(front,systemlink[firstcontradiction-nbopb])
+        if firstcontradiction == 0
+            conclusion == "UNSAT" && printstyled("\nUNSAT contradiction not found\n"; color = :red)
+            return cone, conelits
+        end
+
+        cone[firstcontradiction] = true
+        if systemlink[firstcontradiction - nbopb][1] == -2
+            fixfront(front, systemlink[firstcontradiction - nbopb])
         else
-            if conclusion=="UNSAT" || conclusion=="NONE"
-                # upquebit(system,invsys,assi,front,prism,conelits) #TODO i am here and I want my irminsul tree
-                initialpropagation(system,invsys,)
-            elseif conclusion == "BOUNDS"
-                if !rup(system,invsys,front,firstcontradiction,assi,front,cone,conelits,prism,0:0) throw("rup failed onbound contradiction") end
+            if conclusion == "UNSAT" || conclusion == "NONE"
+                propagate!(sys, trail, prism, front, conelits)
+            elseif occursin("BOUNDS", conclusion)
+                if !ruptrail(sys, firstcontradiction, trail, front, front, cone, conelits, prism, 0:0)
+                    printstyled("initial rup for bound contradiction failed\n"; color = :red)
+                end
             end
-            append!(systemlink[firstcontradiction-nbopb],findall(front))
+            append!(systemlink[firstcontradiction - nbopb], findall(front))
         end
-        red = Red([],0:0,[]);
+        red         = Red([], 0:0, [])
+        pfgl        = UnitRange{Int64}[]
+        antecedants = zeros(Bool, n)
         newpfgl = true
-        pfgl = Vector{UnitRange{Int64}}()
-        while newpfgl # restart if new frontless proofgoals are needed.
+        while newpfgl
             newpfgl = false
-            while true in front
-                #TODO put back stuff
+            while any(front)
+                i = findlast(front)
+                front[i] = false
+                if !cone[i]
+                    cone[i] = true
+                    if i > nbopb
+                        tlink = systemlink[i - nbopb][1]
+                        if tlink == -1                              # rup
+                            fill!(antecedants, false)
+                            reset!(trail)
+                            if ruptrail(sys, i, trail, antecedants, front, cone, conelits, prism, 0:0)
+                                antecedants[i] = false
+                                append!(systemlink[i - nbopb], findall(antecedants))
+                                fixfront(front, antecedants)
+                            else
+                                printstyled("rup failed at $i\n"; color = :red)
+                                return cone, conelits
+                            end
+                        elseif tlink >= -3 || (tlink == -30 && length(systemlink[i - nbopb]) > 1)
+                            fill!(antecedants, false)
+                            fixante(systemlink, antecedants, i - nbopb)
+                            fixconelits(sys, conelits, i, antecedants, systemlink[i - nbopb])
+                            removetrivialantecedants(sys, antecedants, conelits, systemlink[i - nbopb], i)
+                            fixfront(front, antecedants)
+                        elseif tlink == -10                         # end of red subproof
+                            red = redwitness[i]
+                            front[red.range.start] = true
+                            for subr in red.pgranges
+                                if systemlink[subr.start - nbopb][1] == -8 && !(front[subr.start] || cone[subr.start])
+                                    push!(pfgl, subr)
+                                else
+                                    front[subr.start] = true
+                                    front[subr.stop]  = true
+                                end
+                            end
+                        elseif tlink == -5                          # subproof rup
+                            subran_idx = findfirst(x -> i in x, red.pgranges)
+                            fill!(antecedants, false)
+                            reset!(trail)
+                            if ruptrail(sys, i, trail, antecedants, front, cone, conelits, prism, red.pgranges[subran_idx])
+                                antecedants[i] = false
+                                append!(systemlink[i - nbopb], findall(antecedants))
+                                fixfront(front, antecedants)
+                            else
+                                printstyled("subproof rup failed\n"; color = :red)
+                            end
+                        elseif tlink == -6 || tlink == -8           # subproof pol / proofgoal ref
+                            fill!(antecedants, false)
+                            fixante(systemlink, antecedants, i - nbopb)
+                            fixfront(front, antecedants)
+                        elseif tlink == -7                          # proofgoal #1: nothing needed
+                        end
+                    end
+                end
             end
-            for r in pfgl           # we check if any new proofgoal is needed
-                id = systemlink[r.start-nbopb][2]
+            for r in pfgl
+                id = systemlink[r.start - nbopb][2]
                 if cone[id] && !cone[r.start]
-                    println("restart red at ")
-                    printeq(system[r.start])
                     front[r.start] = front[r.stop] = true
                     newpfgl = true
                 end
             end
         end
-        # fixredsystemlink(systemlink,cone,prism,nbopb)
-        return cone,conelits
-    end
+        fixredsystemlink(systemlink, cone, prism, nbopb)
+        return cone, conelits end
 
-    function getfirstcontradiction(system,varmap,prism) # find first syntactic ⊥ in sys
-        assi = zeros(Int8,length(varmap))
-        return findfirst(x->!inprism(x,prism) && slack(x,assi)<0,system) end
+    function getfirstcontradiction(sys::PBSystem, prism::Vector{UnitRange{Int64}})
+        assi = zeros(Int8, length(sys.var_ptr) - 1)
+        for e in eachindex(sys.rhs)
+            !inprism(e, prism) && slack(sys, e, assi) < 0 && return e
+        end
+        return 0 end
 
-    function getfirstboundeq(system,varmap,prism,conclusion,obj,conclusion,cone) 
-        st = split(conclusion,keepempty=false) # conclusion BOUNDS 10 20   ||  10 : id 20 : id 
-        ub = 0; lb = parse(Int,st[3])
-        if length(st)>3
-            if st[4]!= ":"
-                ub = parse(Int,st[4])
+    function eqmatch(sys::PBSystem, e::Int, eq::Eq)
+        sys.rhs[e] != eq.b && return false
+        r = eqrange(sys, e)
+        length(r) != length(eq.t) && return false
+        for (i, lit) in zip(r, eq.t)
+            (sys.vars[i] != lit.var || sys.coefs[i] != lit.coef || sys.signs[i] != lit.sign) && return false
+        end
+        return true end
+
+    function getfirstboundeq(sys::PBSystem, prism::Vector{UnitRange{Int64}}, obj, conclusion::String, cone::Vector{Bool})
+        st = split(conclusion, keepempty=false) # conclusion BOUNDS 10 20   ||  10 : id 20 : id
+        ub = 0; lb = parse(Int, st[3])
+        if length(st) > 3
+            if st[4] != ":"
+                ub = parse(Int, st[4])
             else
-                i = findlast(x->x==":",st)
-                if i!=4
-                    ub = parse(Int,st[i-1])
+                i = findlast(x -> x == ":", st)
+                if i != 4
+                    ub = parse(Int, st[i-1])
                 end
             end
         end
-        lbctr = Eq(obj,lb)
-        ubctr = normcoefeq(negatecoefs(Eq(obj,ub)))
+        lbctr = Eq(obj, lb)
+        ubctr = negatecoefs(Eq(obj, ub)); normcoefeq(ubctr)
         lbid = ubid = 0
-        for i in eachindex(system)
-            if lbid>0 && isequal(system[i],lbctr)
-                lbid = i
+        for e in eachindex(sys.rhs)
+            if lbid == 0 && eqmatch(sys, e, lbctr)
+                lbid = e
             end
-            if ubid>0 && isequal(system[i],ubctr)
-                ubid = i
+            if ubid == 0 && eqmatch(sys, e, ubctr)
+                ubid = e
             end
+            lbid > 0 && ubid > 0 && break
         end
-        if ubid>0 cone[ubid] = true end
-        conclusion = "conclusion BOUNDS $lb $ub" # ids will change
+        if ubid > 0 cone[ubid] = true end
         return lbid end
 
     function negatecoefs(eq::Eq)
@@ -869,17 +1311,298 @@ using Random,DataStructures
             end
         end end
 
+# ======================================= Printer ======================================= #
+    function isid(link, k)
+        return link[k] > 0 && (k == length(link) || (link[k+1] != -2 && link[k+1] != -3)) end
 
+    function writelit(l::Lit, varmap)
+        return string(l.coef, " ", l.sign ? "" : "~", varmap[l.var]) end
 
+    function writelit(coef, sign, var, varmap)
+        return string(coef, " ", sign ? "" : "~", varmap[var]) end
 
+    function writelits(lits, varmap)
+        s = ""
+        for l in lits
+            s = string(s, writelit(l, varmap), " ")
+        end
+        return s end
 
+    function writeeq(sys::PBSystem, e::Int, varmap)
+        s = ""
+        for k in eqrange(sys, e)
+            s = string(s, writelit(sys.coefs[k], sys.signs[k], Int(sys.vars[k]), varmap), " ")
+        end
+        return string(s, ">= ", sys.rhs[e], " ;\n") end
 
+    function writeeqconelits(sys::PBSystem, e::Int, varmap, conelit)
+        s = ""; b = zero(Int32)
+        for k in eqrange(sys, e)
+            v = Int(sys.vars[k])
+            if v in conelit || -v in conelit
+                s = string(s, writelit(sys.coefs[k], sys.signs[k], v, varmap), " ")
+            else
+                b += sys.coefs[k]
+            end
+        end
+        return string(s, ">= ", max(0, Int(sys.rhs[e]) - Int(b)), " ;\n") end
 
+    function writeu(sys::PBSystem, e::Int, varmap)
+        return string("rup ", writeeq(sys, e, varmap)) end
 
+    function writeuconelits(sys::PBSystem, e::Int, varmap, conelit)
+        return string("rup ", writeeqconelits(sys, e, varmap, conelit)) end
 
+    function writeia(sys::PBSystem, e::Int, link, index, varmap)
+        return string("ia ", writeeq(sys, e, varmap)[1:end-2], ": ", index[link], " ;\n") end
 
+    function writeiaconelits(sys::PBSystem, e::Int, link, index, varmap, conelit)
+        return string("ia ", writeeqconelits(sys, e, varmap, conelit)[1:end-2], ": ", index[link], " ;\n") end
 
-# end; using .Trimmer
+    function writewitness(s, witness, varmap)
+        for l in witness.w
+            if l.var > 0
+                s = string(s, !l.sign ? " ~" : " ", varmap[l.var])
+            else
+                s = string(s, " ", -l.var)
+            end
+        end
+        return s end
+
+    function writered(sys::PBSystem, e::Int, varmap, witness, beg; reversed=false)
+        s = "red"
+        for k in eqrange(sys, e)
+            sign = reversed ? !sys.signs[k] : sys.signs[k]
+            s = string(s, " ", sys.coefs[k], sign ? " " : " ~", varmap[Int(sys.vars[k])])
+        end
+        rhs = reversed ? (sum(Int(sys.coefs[k]) for k in eqrange(sys, e); init=0) - Int(sys.rhs[e]) + 1) :
+                         Int(sys.rhs[e])
+        s = string(s, " >= ", rhs, " ;")
+        s = writewitness(s, witness, varmap)
+        return string(s, beg, "\n") end
+
+    function writepol(link, index, varmap)
+        s = "pol"
+        for i in 2:length(link)
+            t = link[i]
+            if t == -1
+                s = string(s, " +")
+            elseif t == -2
+                s = string(s, " *")
+            elseif t == -3
+                s = string(s, " d")
+            elseif t == -4
+                s = string(s, " s")
+            elseif t == -5
+                s = string(s, " w")
+            elseif t > 0
+                if link[i+1] in [-2, -3]
+                    s = string(s, " ", t)
+                else
+                    s = string(s, " ", index[t])
+                end
+            elseif t <= -100
+                sign = mod((-t), 100) != 1
+                s = string(s, sign ? " " : " ~", varmap[(-t) ÷ 100])
+            end
+        end
+        return string(s, " ;\n") end
+
+    function writesolx(sys::PBSystem, e::Int, varmap)
+        s = "solx"
+        for k in eqrange(sys, e)
+            s = string(s, sys.signs[k] ? " ~" : " ", varmap[Int(sys.vars[k])])
+        end
+        return string(s, " ;\n") end
+
+    function writesoli(sol, varmap)
+        s = "soli"
+        for l in sol
+            s = string(s, l.sign ? " " : " ~", varmap[l.var])
+        end
+        return string(s, " ;\n") end
+
+    function writedel(f, systemlink, i, succ, index, nbopb, dels)
+        isdel = false
+        link = systemlink[i - nbopb]
+        for k in eachindex(link)
+            p = link[k]
+            if isid(link, k) && !dels[p]
+                m = maximum(succ[p])
+                if m == i
+                    if !isdel
+                        write(f, "del id ")
+                        isdel = true
+                    end
+                    dels[p] = true
+                    if index[p] == 0
+                        println(p, " in ", systemlink[p - nbopb])
+                        printstyled(string("del index is 0 for ", p, " => ", index[p], "\n"); color = :red)
+                    else
+                        write(f, string(index[p], " "))
+                    end
+                end
+            end
+        end
+        if isdel write(f, " ;\n") end end
+
+    function invlink(systemlink, succ::Vector{Vector{Int}}, cone, nbopb)
+        for i in eachindex(systemlink)
+            if isassigned(systemlink, i)
+                link = systemlink[i]
+                for k in eachindex(link)
+                    j = link[k]
+                    if isid(link, k) && cone[i + nbopb]
+                        if isassigned(succ, j)
+                            if !(i + nbopb in succ[j])
+                                push!(succ[j], i + nbopb)
+                            end
+                        else
+                            succ[j] = [i + nbopb]
+                        end
+                    end
+                end
+            end
+        end end
+
+    function justifydeg(f, sys::PBSystem, e::Int, hints, index, varmap)
+        link = [-2, parse(Int, hints[1])]
+        for j in 2:length(hints)-1
+            push!(link, parse(Int, hints[j]))
+            push!(link, -1)
+        end
+        push!(link, parse(Int, hints[end]))
+        push!(link, -1, -4)
+        write(f, writepol(link, index, varmap))
+        write(f, string("ia ", writeeq(sys, e, varmap)[1:end-2], ": -1 ;\n"))
+        write(f, "del id -2 ;\n")
+        return 1 end
+
+    function justify(f, sys::PBSystem, e::Int, asserthint, index, varmap)
+        st = split(asserthint, keepempty=false)
+        extrai = 0
+        if st[1] == "deg"
+            extrai = justifydeg(f, sys, e, st[2:end], index, varmap)
+        end
+        return extrai end
+
+    function writeconedel(path, file, sys::PBSystem, cone, conelits, systemlink,
+                          redwitness, solirecord, assertrecord, nbopb,
+                          varmap, ctrmap, output, conclusion, obj, prism)
+        index = zeros(Int, length(sys.rhs))
+        lastindex = 0
+        open(path*file*opb*smol, "w") do f
+            if length(obj) > 0
+                write(f, "min: ")
+                write(f, writelits(obj, varmap))
+                write(f, " ;\n")
+            end
+            for i in 1:nbopb
+                if cone[i]
+                    lastindex += 1
+                    index[i] = lastindex
+                    if haskey(conelits, i)
+                        write(f, writeeqconelits(sys, i, varmap, conelits[i]))
+                    else
+                        write(f, writeeq(sys, i, varmap))
+                    end
+                end
+            end
+        end
+        succ = Vector{Vector{Int}}(undef, length(sys.rhs))
+        dels = zeros(Bool, length(sys.rhs))
+        # dels = ones(Bool, length(sys.rhs)); println("nodel mode")
+        dels[1:nbopb] .= true
+        for p in prism
+            dels[p] .= true
+        end
+        invlink(systemlink, succ, cone, nbopb)
+        todel = Vector{Int}()
+        open(path*file*pbp*smol, "w") do f
+            write(f, string("pseudo-Boolean proof version ", version, "\n"))
+            write(f, string("f ", sum(cone[1:nbopb]), " ;\n"))
+            for i in nbopb+1:length(sys.rhs)
+                if cone[i]
+                    lastindex += 1
+                    index[i] = lastindex
+                    tlink = systemlink[i - nbopb][1]
+                    if tlink == -1               # rup
+                        if haskey(conelits, i)
+                            write(f, writeuconelits(sys, i, varmap, conelits[i]))
+                        else
+                            write(f, writeu(sys, i, varmap))
+                        end
+                        if !isempty(eqrange(sys, i))
+                            writedel(f, systemlink, i, succ, index, nbopb, dels)
+                        end
+                    elseif tlink == -2           # pol
+                        write(f, writepol(systemlink[i - nbopb], index, varmap))
+                        writedel(f, systemlink, i, succ, index, nbopb, dels)
+                    elseif tlink == -3           # ia
+                        if haskey(conelits, i)
+                            write(f, writeiaconelits(sys, i, systemlink[i - nbopb][2], index, varmap, conelits[i]))
+                        else
+                            write(f, writeia(sys, i, systemlink[i - nbopb][2], index, varmap))
+                        end
+                        writedel(f, systemlink, i, succ, index, nbopb, dels)
+                    elseif tlink == -4           # red alone
+                        write(f, writered(sys, i, varmap, redwitness[i], ""))
+                        dels[i] = true
+                    elseif tlink == -5           # rup in subproof
+                        write(f, "    ")
+                        write(f, writeu(sys, i, varmap))
+                        push!(todel, i)
+                    elseif tlink == -6           # pol in subproof
+                        write(f, "    ")
+                        write(f, writepol(systemlink[i - nbopb], index, varmap))
+                        push!(todel, i)
+                    elseif tlink == -9           # red with begin (reversed initial equation)
+                        write(f, writered(sys, i, varmap, redwitness[i], " ; begin"; reversed=true))
+                        todel = [i]
+                        dels[i] = true
+                    elseif tlink == -7           # red proofgoal #1
+                        write(f, "    proofgoal #1\n")
+                    elseif tlink == -8           # red proofgoal normal
+                        write(f, string("    proofgoal ", index[systemlink[i - nbopb][2]], "\n"))
+                        push!(todel, i)
+                    elseif tlink == -10          # red proofgoal end
+                        lastindex -= 1
+                        write(f, "    end -1\n")
+                        next = systemlink[i - nbopb][1]
+                        if next != -7 && next != -8
+                            lastindex += 1
+                            write(f, "end\n")
+                            for ii in todel
+                                writedel(f, systemlink, ii, succ, index, nbopb, dels)
+                            end
+                        end
+                    elseif tlink == -20          # solx
+                        write(f, writesolx(sys, i, varmap))
+                        dels[i] = true
+                    elseif tlink == -21          # soli
+                        write(f, writesoli(solirecord[i], varmap))
+                    elseif tlink == -30          # unchecked assumption
+                        if haskey(assertrecord, i)
+                            lastindex += justify(f, sys, i, assertrecord[i], index, varmap)
+                        else
+                            write(f, string("a ", writeeq(sys, i, varmap)))
+                        end
+                    else
+                        println("ERROR tlink = ", tlink)
+                        lastindex -= 1
+                    end
+                end
+            end
+            write(f, string("output ", output, " ;\n"))
+            if conclusion == "SAT"
+                write(f, string("conclusion ", conclusion, " ;\n"))
+            elseif conclusion == "UNSAT"
+                write(f, string("conclusion ", conclusion, " : -1 ;\n"))
+            else
+                write(f, string(replace(conclusion, ";" => ""), " ;\n"))
+            end
+            write(f, "end pseudo-Boolean proof ;")
+        end end
 
 
 # ======================================= main code ======================================= #

@@ -44,7 +44,7 @@ end
 function parseargs(args)
     ins = ""
     proofs = pwd()*"/"
-    # proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
+    proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofs/"
     # proofs = "/home/arthur_gla/veriPB/subgraphsolver/proofsthatbreaksveriPBtrimheuristics/"
     # proofs = "/home/arthur_gla/veriPB/trimmertests/veripb-dev-feature-trimmer-bench/benches/solver_instances/gss/"
     # proofs = "/home/arthur_gla/veriPB/subgraphsolver/nolabelsproofs3/"
@@ -511,7 +511,7 @@ function makesmol(system,invsys,varmap,systemlink,nbopb,prism,redwitness,conclus
             end
         end
     end
-    print("\r\033[$(d)G  ")
+    # print("\r\033[$(d)G  ")
     # print("\033[K\033[A                   ")  # Efface la ligne et remonte d'une ligne
     fixredsystemlink(systemlink,cone,prism,nbopb)
     # printeqlink(935,system,systemlink)
@@ -1317,8 +1317,8 @@ function writeconedel(path,file,version,system,cone,conelits,systemlink,redwitne
         end
     end
     succ = Vector{Vector{Int}}(undef,length(system))
-    # dels = zeros(Bool,length(system))
-    dels = ones(Bool,length(system)); println("nodel mode") # uncomment to have no deletions
+    dels = zeros(Bool,length(system))
+    # dels = ones(Bool,length(system)); println("nodel mode") # uncomment to have no deletions
     dels[1:nbopb].=true #we dont delete in the opb
     for p in prism
         dels[p].=true # we dont delete red and supproofs because veripb is already doing it
@@ -3212,11 +3212,11 @@ end
 
 # profiling became slow so deactivated by default
 # using StatProfilerHTML, ProfileSVG;             # activate this line to unable profiling
-if CONFIG.profile
+# if CONFIG.profile
     # @pprof main()
     # @profilehtml main()             # activate this line to unable profiling
-else
+# else
     main()
-end
+# end
 
 # scp arthur@fataepyc-01.dcs.gla.ac.uk:/scratch/matthew/huub2/word_equations_01_track_140-int-.smol.pbp word_equations_01_track_140-int-.smol.pbp
