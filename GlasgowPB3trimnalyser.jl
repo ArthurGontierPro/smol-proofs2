@@ -3216,7 +3216,7 @@ end
     # @pprof main()
     # @profilehtml main()             # activate this line to unable profiling
 # else
-    main()
+   main()
 # end
 
 # scp arthur@fataepyc-01.dcs.gla.ac.uk:/scratch/matthew/huub2/word_equations_01_track_140-int-.smol.pbp word_equations_01_track_140-int-.smol.pbp
