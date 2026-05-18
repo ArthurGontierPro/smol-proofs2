@@ -900,10 +900,10 @@ end; # using .Dumping # to save the import un comment this.
             end
         end end
 
-    # Reset trail to base state, filtering out entries whose reason >= init.
-    # OPB entries (reason ≤ nbopb ≤ any init) are always included.
-    # PBP entries with reason < init are included; reason == init is excluded because
-    # constraint init is the one being proved (using it as a reason is circular).
+        # Reset trail to base state, filtering out entries whose reason >= init.
+        # OPB entries (reason ≤ nbopb ≤ any init) are always included.
+        # PBP entries with reason < init are included; reason == init is excluded because
+        # constraint init is the one being proved (using it as a reason is circular).
     @inline function reset_to_base!(t::Trail, base::Trail, init::Int)
         empty!(t.var); empty!(t.eq)
         fill!(t.pos, 0); fill!(t.assi, 0)
@@ -1165,6 +1165,8 @@ end; # using .Dumping # to save the import un comment this.
         to_explain    = rs.to_explain     # self-cleaning: empty after each normal exit
         is_to_explain = rs.is_to_explain  # self-cleaning: all-false after each normal exit
 
+        # TODO incorporate lvl0 propag to hotstart trail without compromising order and cone rup first heuristics 
+
         ante_set!(ante, ceq)
         push!(t.var, Int32(0)); push!(t.eq, Int32(ceq))  # fake var 0 represents the conflict eq itself
         push!(to_explain, length(t.var)); is_to_explain[1] = true
@@ -1218,6 +1220,8 @@ end; # using .Dumping # to save the import un comment this.
                            cone::Vector{Bool}, on_frontier::Vector{Bool}; rev_init::Int=-1)
         to_explain    = rs.to_explain
         is_to_explain = rs.is_to_explain
+
+        # TODO search in the trail (=implicaiton graph) whyle mimicking order and cone rup first heuristics.
 
         ante_set!(ante, ceq)
         push!(t.var, Int32(0)); push!(t.eq, Int32(ceq))
