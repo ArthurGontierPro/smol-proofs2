@@ -902,13 +902,15 @@ end; # using .Dumping # to save the import un comment this.
             end
         end end
 
-    # Reset trail to base state, filtering out 0b entries whose reason exceeds init.
-    # OPB entries (reason ≤ nbopb) are always included; PBP entries only if reason ≤ init.
+    # Reset trail to base state, filtering out entries whose reason >= init.
+    # OPB entries (reason ≤ nbopb ≤ any init) are always included.
+    # PBP entries with reason < init are included; reason == init is excluded because
+    # constraint init is the one being proved (using it as a reason is circular).
     @inline function reset_to_base!(t::Trail, base::Trail, init::Int)
         empty!(t.var); empty!(t.eq)
         fill!(t.pos, 0); fill!(t.assi, 0)
         for k in 1:length(base.var)
-            Int(base.eq[k]) > init && continue             # PBP entry out of range for this call
+            Int(base.eq[k]) >= init && continue            # exclude init itself and anything beyond
             pushtrail!(t, base.var[k], base.eq[k], base.assi[Int(base.var[k])])
         end end
 
@@ -1169,7 +1171,8 @@ end; # using .Dumping # to save the import un comment this.
         # Greedy heuristic: prefer falsified literals whose antecedent has the lowest proof index because
         # early constraints have smaller potential antecedent subtrees, so using them minimises cone size.
     function conflicttrail(ceq::Int, sys::PBSystem, t::Trail,
-                           ante::Ante, conelits, rs::RupState; rev_init::Int=-1)
+                           ante::Ante, conelits, rs::RupState; rev_init::Int=-1,
+                           cone=nothing, on_frontier=nothing)
         to_explain    = rs.to_explain     # self-cleaning: empty after each normal exit
         is_to_explain = rs.is_to_explain  # self-cleaning: all-false after each normal exit
 
@@ -1177,13 +1180,44 @@ end; # using .Dumping # to save the import un comment this.
         push!(t.var, Int32(0)); push!(t.eq, Int32(ceq))  # fake var 0 represents the conflict eq itself
         push!(to_explain, length(t.var)); is_to_explain[1] = true
 
+        minimize = cone !== nothing
+        if minimize
+            for p in 1:length(t.var)                     # snapshot full assignment into assi_temp
+                w = Int(t.var[p]); w != 0 && (rs.assi_temp[w] = t.assi[w])
+            end
+        end
+        last_vtp = length(t.var) + 1                     # sweep pointer: positions ≥ last_vtp already cleared in assi_temp
+
         falsified_lits = Tuple{Int,Int,Int,Int32}[]      # reused buffer: (antecedent eq index, trail pos, var, coef)
         while !isempty(to_explain)
             vtp = pop!(to_explain)                        # trail position of variable still needing explanation
             v   = Int(t.var[vtp])                         # recover variable from trail
             is_to_explain[v+1] = false
+            v_val = v != 0 ? t.assi[v] : Int8(0)         # save before un-assigning (needed for direction check)
             v != 0 && (t.assi[v] = Int8(0))              # unassign v: falsified check returns false for v in future iterations
-            eq     = Int(t.eq[vtp])                      # antecedent equation that propagated v
+            if minimize
+                for p in vtp:last_vtp-1                  # sweep: un-assign positions vtp..last_vtp-1 from assi_temp
+                    w = Int(t.var[p]); w != 0 && (rs.assi_temp[w] = Int8(0))
+                end
+                last_vtp = vtp                           # assi_temp now holds exactly positions 1..vtp-1
+            end
+            eq = Int(t.eq[vtp])                          # antecedent equation that propagated v
+            if minimize && v != 0 && !cone[eq] && !on_frontier[eq]
+                for j in varrange(sys, v)                # try to replace non-cone reason with a cone one
+                    eid = Int(sys.var_eqs[j])
+                    (cone[eid] || on_frontier[eid])          || continue
+                    (rev_init == -1 || eid < rev_init)       || continue  # must precede init in the proof
+                    s = slack(sys, eid, rs.assi_temp)        # slack with historical assignment at vtp-1
+                    @inbounds for kk in eqrange(sys, eid)
+                        Int(sys.vars[kk]) == v || continue
+                        if sys.coefs[kk] > s && (sys.signs[kk] ? Int8(1) : Int8(2)) == v_val
+                            t.eq[vtp] = Int32(eid); eq = eid   # substitute
+                        end
+                        break
+                    end
+                    (cone[eq] || on_frontier[eq]) && break
+                end
+            end
             ante_set!(ante, eq)
             eq_rev = (eq == rev_init)
             b      = eq_rev ? (sum(sys.coefs[k] for k in eqrange(sys, eq); init=zero(Int32)) - sys.rhs[eq] + 1) :
@@ -1217,6 +1251,11 @@ end; # using .Dumping # to save the import un comment this.
                 printstyled("conflicttrail: could not explain var $v in eq $eq\n"; color = :red)
                 printeq(sys, eq); printeqconelit(sys, eq, conelits)
                 throw(ErrorException("conflicttrail: could not explain $v with eq $eq"))
+            end
+        end
+        if minimize
+            for p in 1:length(t.var)
+                w = Int(t.var[p]); w != 0 && (rs.assi_temp[w] = Int8(0))
             end
         end end
 
@@ -1252,7 +1291,7 @@ end; # using .Dumping # to save the import un comment this.
         printstyled("propagate! found no conflict\n"; color = :red) end
 
         # Linear-scan RUP (kept for comparison). Two rewind pointers (r0/r1) + que BitVector guard.
-    function ruptrail_deprecated(sys::PBSystem, init::Int, t::Trail,
+    function deprecated_ruptrail(sys::PBSystem, init::Int, t::Trail,
                       ante::Ante, on_frontier::Vector{Bool},
                       cone::Vector{Bool}, conelits, prism, subrange)
         prio = true
@@ -1315,10 +1354,10 @@ end; # using .Dumping # to save the import un comment this.
         end
         return false end
 
-    # Walk the trail forward and substitute non-cone reasons with cone ones where possible.
-    # Uses rs.assi_temp to reconstruct the historical assignment at each trail position,
-    # ensuring the substituted reason was valid at the time the variable was propagated.
-    function minimize_reasons!(t::Trail, sys::PBSystem, cone::Vector{Bool}, on_frontier::Vector{Bool}, rs::RupState)
+        # Walk the trail forward and substitute non-cone reasons with cone ones where possible.
+        # Uses rs.assi_temp to reconstruct the historical assignment at each trail position,
+        # ensuring the substituted reason was valid at the time the variable was propagated.
+    function deprecated_minimize_reasons!(t::Trail, sys::PBSystem, cone::Vector{Bool}, on_frontier::Vector{Bool}, rs::RupState, init::Int)
         for k in 1:length(t.var)
             v      = Int(t.var[k])
             reason = Int(t.eq[k])
@@ -1326,6 +1365,7 @@ end; # using .Dumping # to save the import un comment this.
                 for j in varrange(sys, v)
                     eid = Int(sys.var_eqs[j])
                     (cone[eid] || on_frontier[eid]) || continue
+                    eid < init || continue                 # constraint must precede init in the proof
                     s = slack(sys, eid, rs.assi_temp)  # slack with vars assigned before v only
                     @inbounds for kk in eqrange(sys, eid)
                         Int(sys.vars[kk]) == v || continue
@@ -1355,7 +1395,9 @@ end; # using .Dumping # to save the import un comment this.
         rev = (i == init)                  # reversed constraint for RUP check of init
         s   = rev ? slack_reversed(sys, i, t.assi) : slack(sys, i, t.assi)
         if s < 0                           # falsified: conflict found
-            minimize_reasons!(t, sys, cone, on_frontier, rs)
+            # cone/on_frontier not passed: substitution disabled for normal ruptrail.
+            # The priority queue already ensures cone-first reason selection; substitution
+            # would pick cone constraints with more falsified literals, inflating the cone.
             conflicttrail(i, sys, t, ante, conelits, rs; rev_init=init)
             return true
         end
@@ -1446,10 +1488,9 @@ end; # using .Dumping # to save the import un comment this.
                 rs.que[i] = false
             end
             if best_conflict != 0
-                minimize_reasons!(t, sys, cone, on_frontier, rs)
                 for v in rs.pending_vars; rs.pending_reason[v] = 0; end
                 empty!(rs.pending_vars)                        # clean pending state before conflicttrail
-                conflicttrail(best_conflict, sys, t, ante, conelits, rs; rev_init=init)
+                conflicttrail(best_conflict, sys, t, ante, conelits, rs; rev_init=init, cone, on_frontier)
                 return true
             end
             empty!(current_wave)
@@ -1492,8 +1533,12 @@ end; # using .Dumping # to save the import un comment this.
         conelits = Dict{Int,Set{Int}}()                # per-constraint vars needed (for literal trimming)
         on_frontier = zeros(Bool, n)                   # true = constraint is scheduled in frontier
         trail      = Trail(length(sys.var_ptr) - 1)    # var_ptr has length n_vars+1 (CSR convention)
+        # BFS uses a pre-computed level-0 base trail (propagations forced from the empty assignment)
+        # so that each RUP call starts from a common fixed point rather than from scratch.
+        # Normal ruptrail does not use this — its cone-first priority queue handles reason selection
+        # directly and the base trail would hurt quality by pre-empting that selection.
         base_trail = Trail(length(sys.var_ptr) - 1)
-        propagate_level0!(sys, base_trail)             # level-0: single forward pass, OPB+PBP, from empty
+        BFS && propagate_level0!(sys, base_trail)
 
         firstcontradiction = 0                         # root of the backward reachability
         if conclusion == "UNSAT"
@@ -1539,7 +1584,7 @@ end; # using .Dumping # to save the import un comment this.
                 if i > nbopb
                     tlink = systemlink[i - nbopb][1]   # rule type: -1=rup, -2=pol, -3=ia, -4=red, ...
                     if tlink == -1                              # rup
-                        ante_clear!(ante); reset_to_base!(trail, base_trail, i)
+                        ante_clear!(ante); BFS ? reset_to_base!(trail, base_trail, i) : reset!(trail)
                         if rup(sys, i, trail, ante, on_frontier, cone, conelits, prism_bv, 0:0, rs)
                             ante_remove!(ante, i)              # i itself is not its own antecedent
                             ante_into_frontier!(ante, frontier, on_frontier, cone, systemlink[i - nbopb])
@@ -1566,7 +1611,7 @@ end; # using .Dumping # to save the import un comment this.
                         end
                     elseif tlink == -5                          # subproof rup
                         subran_idx = findfirst(x -> i in x, red.pgranges)
-                        ante_clear!(ante); reset_to_base!(trail, base_trail, i)
+                        ante_clear!(ante); BFS ? reset_to_base!(trail, base_trail, i) : reset!(trail)
                         if rup(sys, i, trail, ante, on_frontier, cone, conelits, prism_bv, red.pgranges[subran_idx], rs)
                             ante_remove!(ante, i)
                             ante_into_frontier!(ante, frontier, on_frontier, cone, systemlink[i - nbopb])
