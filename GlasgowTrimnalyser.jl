@@ -59,13 +59,15 @@
         t1 = @elapsed begin
             system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,prism = readinstance(proofs,file)
         end
-        writeout_parse(ins, t1, nbopb, length(systemlink), prefix, fresh)
+        inp_lits = sum(length(eq.t) for eq in system; init=0)
+        writeout_parse(ins, t1, nbopb, length(systemlink), inp_lits, length(varmap), prefix, fresh)
         sys = PBSystem(system, length(varmap))
         t2 = @elapsed begin # cone mark usfull ctrs and lits
             cone,conelits = getcone(sys,systemlink,nbopb,prism,redwitness,conclusion,obj,bfs)
         end
         writeout_trim(ins, t2, cone, nbopb, prefix)
-        printconestat(cone)
+        writeout_conelits(ins, sys, cone, conelits, prefix)
+        printconestat(cone, sys, conelits)
         # @label skiped
         varmap_inv = Vector{String}(undef, length(varmap))
         for (k, v) in varmap; varmap_inv[v] = k; end
@@ -75,7 +77,7 @@
         writeout_write(ins, t1, t2, t3, prefix)
         return trunc(Int,t1),trunc(Int,t2),trunc(Int,t3) end
 
-    function writeout_parse(ins, t1, nbopb, n_pbp, prefix, fresh::Bool=true)
+    function writeout_parse(ins, t1, nbopb, n_pbp, inp_lits, inp_vars, prefix, fresh::Bool=true)
         opb_sz = filesize(proofs*ins*opb)
         pbp_sz = filesize(proofs*ins*pbp)
         open(proofs*ins*".out", fresh ? "w" : "a") do f
@@ -83,6 +85,8 @@
                 println(f, "inp OPB SIZE ",   opb_sz)
                 println(f, "inp PBP SIZE ",   pbp_sz)
                 println(f, "inp SIZE ",       opb_sz + pbp_sz)
+                println(f, "inp LIT ",        inp_lits)
+                println(f, "inp VAR ",        inp_vars)
             end
             println(f, prefix, " PARSE TIME ", t1)
             println(f, prefix, " OPB NBEQ ",  nbopb)
@@ -98,6 +102,26 @@
             println(f, prefix, " OPB CONE ",  cone_opb)
             println(f, prefix, " PBP CONE ",  cone_pbp)
             println(f, prefix, " CONE ",      cone_opb + cone_pbp)
+        end end
+
+    function conelits_stats(sys, cone, conelits)
+        lits_cone = 0; lits_smol = 0
+        used_vars = falses(length(sys.var_ptr) - 1)
+        for i in eachindex(cone)
+            cone[i] || continue
+            nl = length(eqrange(sys, i))
+            lits_cone += nl
+            lits_smol += haskey(conelits, i) ? length(conelits[i]) : nl
+            haskey(conelits, i) && for v in conelits[i]; used_vars[v] = true; end
+        end
+        return (lits_cone=lits_cone, lits_smol=lits_smol, vars_used=sum(used_vars), vars_total=length(used_vars)) end
+
+    function writeout_conelits(ins, sys, cone, conelits, prefix)
+        s = conelits_stats(sys, cone, conelits)
+        open(proofs*ins*".out", "a") do f
+            println(f, prefix, " CONE LIT ", s.lits_cone)
+            println(f, prefix, " SMOL LIT ", s.lits_smol)
+            println(f, prefix, " CONE VAR ", s.vars_used)
         end end
 
     function writeout_write(ins, t1, t2, t3, prefix)
@@ -165,7 +189,15 @@
         const T_GBFS_OCONE = 28  # BFS OPB constraints in cone
         const T_GBFS_PCONE = 29  # BFS proof steps in cone
         const T_GBFS_CONE  = 30  # BFS total constraints in cone
-        const T_NCOLS      = 30
+        const T_GRIM_CLIT  = 31  # total literals in grim cone constraints
+        const T_GRIM_SLIT  = 32  # total literals kept after conelits weakening (grim)
+        const T_GBFS_CLIT  = 33  # total literals in gbfs cone constraints
+        const T_GBFS_SLIT  = 34  # total literals kept after conelits weakening (gbfs)
+        const T_INP_LIT    = 35  # total literals in all input constraints
+        const T_INP_VAR    = 36  # total variables in input
+        const T_GRIM_CVAR  = 37  # distinct variables in union of grim conelits
+        const T_GBFS_CVAR  = 38  # distinct variables in union of gbfs conelits
+        const T_NCOLS      = 38
 
     function plotresultstable()
         list = filter(x -> ext(x)==".out" && !endswith(x,".smolverif.out") && !endswith(x,".verif.out"), readdir(proofs))
@@ -183,16 +215,24 @@
                 elseif occursin("grim SIZE ", line)          res[T_GRIM_SIZE] = tryparse(Int, split(line)[end])
                 elseif occursin("grim OPB CONE ", line)      res[T_GRIM_OCONE]= tryparse(Int, split(line)[end])
                 elseif occursin("grim PBP CONE ", line)      res[T_GRIM_PCONE]= tryparse(Int, split(line)[end])
+                elseif occursin("grim CONE LIT ", line)      res[T_GRIM_CLIT] = tryparse(Int, split(line)[end])
+                elseif occursin("grim SMOL LIT ", line)      res[T_GRIM_SLIT] = tryparse(Int, split(line)[end])
+                elseif occursin("grim CONE VAR ", line)      res[T_GRIM_CVAR] = tryparse(Int, split(line)[end])
                 elseif occursin("grim CONE ", line)          res[T_GRIM_CONE] = tryparse(Int, split(line)[end])
                 elseif occursin("grim OPB NBEQ ", line)      res[T_GRIM_ONBEQ]= tryparse(Int, split(line)[end])
                 elseif occursin("grim PBP NBEQ ", line)      res[T_GRIM_PNBEQ]= tryparse(Int, split(line)[end])
                 elseif occursin("inp OPB SIZE ", line)       res[T_INP_OSIZ]  = tryparse(Int, split(line)[end])
                 elseif occursin("inp PBP SIZE ", line)       res[T_INP_PSIZ]  = tryparse(Int, split(line)[end])
                 elseif occursin("inp SIZE ", line)           res[T_INP_SIZE]  = tryparse(Int, split(line)[end])
+                elseif occursin("inp LIT ", line)            res[T_INP_LIT]   = tryparse(Int, split(line)[end])
+                elseif occursin("inp VAR ", line)            res[T_INP_VAR]   = tryparse(Int, split(line)[end])
                 elseif occursin("grim NBEQ ", line)         res[T_GRIM_NBEQ] = tryparse(Int, split(line)[end])
                 elseif occursin("gbfs TRIM TIME ", line)     res[T_GBFS_TTIME]= tryparse(Int, split(line)[end])
                 elseif occursin("gbfs OPB CONE ", line)      res[T_GBFS_OCONE]= tryparse(Int, split(line)[end])
                 elseif occursin("gbfs PBP CONE ", line)      res[T_GBFS_PCONE]= tryparse(Int, split(line)[end])
+                elseif occursin("gbfs CONE LIT ", line)      res[T_GBFS_CLIT] = tryparse(Int, split(line)[end])
+                elseif occursin("gbfs SMOL LIT ", line)      res[T_GBFS_SLIT] = tryparse(Int, split(line)[end])
+                elseif occursin("gbfs CONE VAR ", line)      res[T_GBFS_CVAR] = tryparse(Int, split(line)[end])
                 elseif occursin("gbfs CONE ", line)          res[T_GBFS_CONE] = tryparse(Int, split(line)[end])
                 elseif occursin("veri smol TIME ", line)     res[T_VERI_STIME]= tryparse(Int, split(line)[end])
                 elseif occursin("veri TIME ", line)          res[T_VERI_TIME] = tryparse(Int, split(line)[end])
@@ -292,8 +332,10 @@
         printcyan(leftcarriage(69,string(t4)))
         printcyan(leftcarriage(78,string(t5)))
         println() end
-    function printconestat(cone)
-        printgray("\r\033[99G% "*string(sum(cone))*"/"*string(length(cone))) end
+    function printconestat(cone, sys, conelits)
+        s = conelits_stats(sys, cone, conelits)
+        printgray("\r\033[99G% "*string(sum(cone))*"/"*string(length(cone))*" "
+                                *string(s.vars_used)*"/"*string(s.vars_total)) end
 
     function prettybytes(b)
         if b>=10^9
