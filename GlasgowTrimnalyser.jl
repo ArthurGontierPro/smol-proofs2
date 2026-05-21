@@ -16,6 +16,8 @@
     const VERIF  = "verif"  in ARGS  # run VeriPB on trimmed output after each instance
     const PROFILE = "profile" in ARGS  # enable StatProfilerHTML profiling
     const NONORM = "no" in ARGS # does not run normal (not official)
+    const CORE   = "core"   in ARGS  # write unsat core graph files and reduced LAD files
+    const SIPgraphpath = "/home/arthur_gla/veriPB/newSIPbenchmarks/"
     using Random,DataStructures
 # =============== main stuff =============
     function main()
@@ -78,12 +80,16 @@
         t2 = @elapsed begin
             getcone!(cone, conelits, sys, systemlink, nbopb, prism, redwitness, conclusion, obj, mode)
         end
+        # for (i,_) in conelits # nullify the conelits
+        #     conelits[i] = Set{Int}(Int(sys.vars[k]) for k in eqrange(sys, i))
+        # end
         writeout_trim(ins, t2, cone, nbopb, prefix)
         writeout_conelits(ins, sys, cone, conelits, prefix)
         printconestat(cone, sys, conelits)
         # @label skiped
         varmap_inv = Vector{String}(undef, length(varmap))
         for (k, v) in varmap; varmap_inv[v] = k; end
+        mode isa Grim && CORE && writeunsatcore(ins, sys, cone, varmap_inv, nbopb)
         t3 = @elapsed begin
             writeconedel(proofs,file,sys,cone,conelits,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap_inv,ctrmap,output,conclusion,obj,prism)
         end
@@ -244,7 +250,7 @@
                 elseif occursin("inp SIZE ", line)           res[T_INP_SIZE]  = tryparse(Int, split(line)[end])
                 elseif occursin("inp LIT ", line)            res[T_INP_LIT]   = tryparse(Int, split(line)[end])
                 elseif occursin("inp VAR ", line)            res[T_INP_VAR]   = tryparse(Int, split(line)[end])
-                elseif occursin("grim NBEQ ", line)         res[T_GRIM_NBEQ] = tryparse(Int, split(line)[end])
+                elseif occursin("grim NBEQ ", line)          res[T_GRIM_NBEQ] = tryparse(Int, split(line)[end])
                 elseif occursin("gclt TRIM TIME ", line)     res[T_GCLT_TTIME]= tryparse(Int, split(line)[end])
                 elseif occursin("gclt OPB CONE ", line)      res[T_GCLT_OCONE]= tryparse(Int, split(line)[end])
                 elseif occursin("gclt PBP CONE ", line)      res[T_GCLT_PCONE]= tryparse(Int, split(line)[end])
@@ -272,7 +278,46 @@
             end
             push!(table,res)
         end
-        printpoints2Dlog(table, T_GRIM_CONE, T_GBFS_CONE, "grim CONE", "gbfs CONE") end
+        printpoints2Dlog(table, T_GRIM_CONE, T_GBFS_CONE, "grim CONE", "gbfs CONE")
+        printratios(table) end
+
+        # 1-shifted geometric mean of a column: exp(mean(log(v + 1))) - 1.
+    function col_sgm(table, col)
+        valid = [t[col] for t in table if t[col] !== nothing && t[col] > 0]
+        isempty(valid) && return nothing
+        exp(sum(log(v + 1) for v in valid) / length(valid)) - 1 end
+
+        # Ratio of the 1-shifted geomeans of two columns, restricted to rows where both are present.
+        # This gives "ratio of averages" rather than "average of ratios".
+    function ros(table, col_num, col_den)
+        valid = [t for t in table if t[col_num] !== nothing && t[col_den] !== nothing && t[col_num] > 0 && t[col_den] > 0]
+        isempty(valid) && return nothing
+        sgm_num = exp(sum(log(t[col_num] + 1) for t in valid) / length(valid)) - 1
+        sgm_den = exp(sum(log(t[col_den] + 1) for t in valid) / length(valid)) - 1
+        sgm_den == 0 && return nothing
+        sgm_num / sgm_den end
+
+    function printratios(table)
+        # "X times smaller, Y% of original" — for reductions where bigger ratio = better
+        fmt_r(x) = x === nothing ? "N/A" :
+            "$(rpad(string(round(x; digits=1))*"x smaller,", 14)) $(round(100/x; digits=1))% of original"
+        # plain percentage — for the trim-time fraction (already a ratio ≤ 1)
+        fmt_p(x) = x === nothing ? "N/A" : "$(round(100*x; digits=1))% of total time"
+        n = count(t -> t[T_GRIM_SIZE] !== nothing, table)
+        println("\n── Proof reduction (ratio of 1-shifted geomeans, n=", n, ") ──")
+        println("  size        : ", fmt_r(ros(table, T_INP_SIZE,  T_GRIM_SIZE)))
+        println("  constraints : ", fmt_r(ros(table, T_GRIM_NBEQ, T_GRIM_CONE)))
+        println("  literals    : ", fmt_r(ros(table, T_GRIM_CLIT, T_GRIM_SLIT)))
+        println("  variables   : ", fmt_r(ros(table, T_INP_VAR,   T_GRIM_CVAR)))
+        # println("  trim time   : ", fmt_p(ros(table, T_GRIM_TTIME, T_GRIM_TIME)))
+        any(t -> t[T_GCLT_SLIT] !== nothing, table) && begin
+            # println("  clit lits   : ", fmt_r(ros(table, T_GRIM_SLIT, T_GCLT_SLIT)), "  vs grim")
+            # println("  clit vars   : ", fmt_r(ros(table, T_GRIM_CVAR, T_GCLT_CVAR)), "  vs grim")
+        end
+        any(t -> t[T_VERI_TIME] !== nothing, table) && begin
+            println("  verif speed : ", fmt_r(ros(table, T_VERI_TIME, T_VERI_STIME)))
+        end
+        println() end
 
     function maxvalue(table,a)
         m = 0
@@ -991,12 +1036,13 @@ end; # using .Dumping # to save the import un comment this.
         pq_nonprio    ::BinaryMinHeap{Int}             # non-priority equations
         to_explain    ::BinaryMaxHeap{Int}             # conflicttrail: trail positions still needing explanation
         is_to_explain ::BitVector                      # membership guard for to_explain (self-cleaning)
-        falsified_lits::Vector{Tuple{Int,Int,Int,Int32}} end  # conflicttrail: reused per-iteration buffer
+        falsified_lits::Vector{Tuple{Int,Int,Int,Int32}} # conflicttrail: reused per-iteration buffer
+        essentials    ::Dict{Int,Set{Int}} end           # forward-pass: essential vars per constraint (Clit only)
 
     # Trimming mode — passed through getcone! → ruptrail → process_eq! → conflicttrail.
     # To add a new mode: define a new struct + a conflicttrail method. Nothing else changes.
     struct Grim end        # standard: proof-index sort in conflict analysis
-    struct Clit end        # cone-first sort + two-pass cone filter in conflict analysis
+    struct Clit end        # cone-first sort + essentials-aware filter in conflict analysis
     struct Bfs  end        # BFS propagation with wave-level reason selection (ruptrail_bfs)
 
     RupState(n_eqs::Int, n_vars::Int) = RupState(
@@ -1005,7 +1051,21 @@ end; # using .Dumping # to save the import un comment this.
         BinaryMinHeap{Int}(),
         BinaryMaxHeap{Int}(),
         falses(n_vars + 1),
-        Tuple{Int,Int,Int,Int32}[])
+        Tuple{Int,Int,Int,Int32}[],
+        Dict{Int,Set{Int}}())
+    # Forward pass: variable w is essential in constraint e if removing it makes e infeasible
+    # (total coef - coef_w < rhs[e]). Essential vars must stay in conelits — weakening them out
+    # would make the constraint unsatisfiable and break the proof. Only called for Clit mode.
+    function compute_essentials!(essentials::Dict{Int,Set{Int}}, sys::PBSystem)
+        for e in 1:length(sys.rhs)
+            total = sum(sys.coefs[k] for k in eqrange(sys, e); init=zero(Int32))
+            for k in eqrange(sys, e)
+                if total - sys.coefs[k] < sys.rhs[e]
+                    push!(get!(Set{Int}, essentials, e), Int(sys.vars[k]))
+                end
+            end
+        end end
+
     @inline function ante_set!(a::Ante, i::Int)
         a.flags[i] && return                          # already registered: avoid list duplicate
         a.flags[i] = true; push!(a.list, i) end
@@ -1282,21 +1342,14 @@ end; # using .Dumping # to save the import un comment this.
             end
         end end
 
-        # Clit conflict analysis: cone-first sort + two-pass cone filter.
+        # Clit conflict analysis: essentials-aware filter + cone-first sort.
         # x = (eq_id, trail_pos, var, coef) — falsified literal tuple.
-        # x[1] = proof index of the reason constraint (0 = level-0 assignment, no reason to pull in).
-        # x[4] = coefficient of the variable in the equation being explained.
-        # Sort ascending: smallest-key literals processed first, most likely to survive the somme < b break.
-        # Two-pass filter: if cone/level-0 vars alone explain the slack, non-cone vars are dropped entirely.
-        # ── sort heuristic — uncomment exactly one ──────────────────────────────
-        # sort_key = x -> (x[1] == 0 || cone[x[1]] ? 0 : 1, x[1])        # A: cone-first, depth
-        # sort_key = x -> (x[1] == 0 || cone[x[1]] ? 0 : 1, -x[4], x[1]) # B: cone-first, high coef, depth
-        # sort_key = x -> (x[1] == 0 || cone[x[1]] ? 0 : 1, x[1], -x[4]) # C: cone-first, depth, coef tiebreak
-        # sort_key = x -> (x[1] == 0 || cone[x[1]] ? 0 : 1, -x[4]/(x[1]+1)) # D: cone-first, coef/depth ratio
-        # sort_key = x -> x[1]                                # E: proof index only (= grim baseline)
-        # sort_key = x -> -x[4]                               # F: high coef only
-        # sort_key = x -> -x[4]/(x[1]+1)                     # G: coef/depth ratio only
-        # ─────────────────────────────────────────────────────────────────────────
+        # x[1] = proof index of the reason constraint (0 = level-0 assignment, free to include).
+        # x[3] = variable index.   x[4] = coefficient in the equation being explained.
+        # Essential vars (rs.essentials[eq]): removing them makes the constraint infeasible — must keep.
+        # Cone/lvl0 vars: their reason is already in the cone or has no cost — free to include.
+        # Filter: if essential+cone vars alone explain the slack, drop all others.
+        # Sort: essential first, then cone/lvl0, then proof depth (ascending).
     function conflicttrail(ceq::Int, sys::PBSystem, t::Trail,
                            ante::Ante, conelits, rs::RupState, ::Clit, cone::Vector{Bool}; rev_init::Int=-1)
         to_explain    = rs.to_explain
@@ -1329,12 +1382,16 @@ end; # using .Dumping # to save the import un comment this.
                                        ((wsign & (wval == Int8(2))) | (!wsign & (wval == Int8(1))))
                 falsified_w && push!(falsified_lits, (wtp > 0 ? @inbounds(Int(t.eq[wtp])) : 0, wtp, w, coef))
             end
-            cone_sum = zero(Int32)                             # two-pass: check if cone/lvl0 vars suffice
-            for (eq_id, _, _, coef) in falsified_lits
-                (eq_id == 0 || cone[eq_id]) && (cone_sum += coef)
+            ess_set  = get(rs.essentials, eq, nothing)
+            prio_sum = zero(Int32)                             # sum of essential+cone/lvl0 vars
+            for (eq_id, _, w, coef) in falsified_lits
+                ((ess_set !== nothing && w in ess_set) || eq_id == 0 || cone[eq_id]) && (prio_sum += coef)
             end
-            cone_sum > somme - b && filter!(x -> x[1] == 0 || cone[x[1]], falsified_lits)
-            sort!(falsified_lits; by = x -> (x[1] == 0 || cone[x[1]] ? 0 : 1, x[1]))  # active heuristic: A
+            if prio_sum > somme - b                            # high-priority vars alone explain the slack
+                filter!(x -> x[1] == 0 || cone[x[1]] || (ess_set !== nothing && x[3] in ess_set), falsified_lits)
+            end
+            sort!(falsified_lits; by = x -> (ess_set !== nothing && x[3] in ess_set ? 0 : 1,
+                                             x[1] == 0 || cone[x[1]] ? 0 : 1, x[1]))
             v != 0 && setconelits(conelits, v, eq)
             for (_, wtp, w, coef) in falsified_lits
                 somme < b && break
@@ -1551,8 +1608,7 @@ end; # using .Dumping # to save the import un comment this.
             end
             assi_temp[v] = t.assi[v]
         end
-        for k in 1:length(t.var); assi_temp[Int(t.var[k])] = Int8(0); end
-    end
+        for k in 1:length(t.var); assi_temp[Int(t.var[k])] = Int8(0); end end
 
     # Push eid into the right heap if not already queued.
     @inline function activate!(eid, rs::RupState, cone, on_frontier)
@@ -1722,6 +1778,7 @@ end; # using .Dumping # to save the import un comment this.
 
         ante = Ante(n)
         rs   = RupState(n, length(sys.var_ptr) - 1)   # reusable scratch buffers for rup/conflict analysis
+        mode isa Clit && compute_essentials!(rs.essentials, sys)  # forward pass: essential vars per constraint
         frontier = BinaryMaxHeap{Int}()                # max-heap: process highest-indexed eq first (backwards)
 
         # Local function: clear ante, reset trail, run rup. i and subrange are parameters (not captured)
@@ -2164,6 +2221,121 @@ end; # using .Dumping # to save the import un comment this.
             write(f, "end pseudo-Boolean proof ;")
         end end
 
+# ======================================= unsat core graphs ======================================= #
+
+    # Returns (pattern_file_path, target_file_path) for bio* and LV* instance names, nothing otherwise.
+    function parsegraphfiles(ins)
+        if startswith(ins, "bio")
+            pat = ins[4:end-3]
+            tar = ins[end-2:end]
+            base = SIPgraphpath * "biochemicalReactions/"
+            return base * pat * ".txt", base * tar * ".txt"
+        elseif startswith(ins, "LV")
+            i   = findlast('g', ins)
+            pat = ins[4:i-1]
+            tar = ins[i+1:end]
+            base = SIPgraphpath * "LV/"
+            return base * "g" * pat, base * "g" * tar
+        end
+        return nothing, nothing
+    end
+
+    # Reads a LAD format graph: first line = n, then n lines of "degree nb1 nb2 ..." (0-indexed neighbors).
+    # Returns 1-indexed adjacency list Vector{Vector{Int}}.
+    function readlad(path)
+        adj = Vector{Vector{Int}}()
+        open(path, "r") do f
+            n = parse(Int, readline(f))
+            for _ in 1:n
+                parts = filter(!isempty, split(readline(f)))
+                push!(adj, [parse(Int, p) + 1 for p in parts[2:end]])
+            end
+        end
+        return adj
+    end
+
+    # Parses "x{p}_{t}" (0-indexed) → (p+1, t+1). Returns nothing if name doesn't match.
+    function parsevarname(name)
+        length(name) < 3 && return nothing
+        name[1] == 'x'   || return nothing
+        u = findfirst('_', name)
+        u === nothing     && return nothing
+        p = tryparse(Int, name[2:u-1])
+        t = tryparse(Int, name[u+1:end])
+        (p === nothing || t === nothing) && return nothing
+        return p + 1, t + 1
+    end
+
+    # Extracts core pattern nodes P and target nodes T from OPB cone constraints.
+    function corenodes(sys::PBSystem, cone::Vector{Bool}, varmap_inv::Vector{String}, nbopb::Int)
+        P = Set{Int}(); T = Set{Int}()
+        for i in 1:nbopb
+            cone[i] || continue
+            for k in eqrange(sys, i)
+                pt = parsevarname(varmap_inv[sys.vars[k]])
+                pt === nothing && continue
+                push!(P, pt[1]); push!(T, pt[2])
+            end
+        end
+        return sort!(collect(P)), sort!(collect(T))
+    end
+
+    # Writes a DOT file for a graph. core_set nodes are green, others red.
+    # For graphs with many nodes, node labels are hidden to reduce clutter.
+    function writedot(path, adj, core_set)
+        n = length(adj)
+        large = n > 300
+        open(path, "w") do f
+            println(f, "graph G {")
+            println(f, "  layout=circo; overlap=false; node [shape=circle, width=0.2, fixedsize=true];")
+            for i in 1:n
+                color = i in core_set ? "#44bb44" : "#cc4444"
+                label = large ? "" : string(i)
+                println(f, "  $i [label=\"$label\", style=filled, fillcolor=\"$color\", fontsize=7];")
+            end
+            for i in 1:n, j in adj[i]
+                j > i || continue
+                ec = (i in core_set && j in core_set) ? "#44bb44" : "#aaaaaa"
+                println(f, "  $i -- $j [color=\"$ec\"];")
+            end
+            println(f, "}")
+        end
+    end
+
+    # Writes a LAD file for the induced subgraph on core (sorted 1-indexed node list).
+    function writecoreladfile(path, adj, core)
+        core_set = Set(core)
+        old2new  = Dict(v => i - 1 for (i, v) in enumerate(core))  # 0-indexed for LAD format
+        open(path, "w") do f
+            println(f, length(core))
+            for v in core
+                neighbors = [old2new[u] for u in adj[v] if u in core_set]
+                println(f, length(neighbors), " ", join(neighbors, " "))
+            end
+        end
+    end
+
+    function writeunsatcore(ins, sys::PBSystem, cone::Vector{Bool}, varmap_inv::Vector{String}, nbopb::Int)
+        patfile, tarfile = parsegraphfiles(ins)
+        (patfile === nothing || !isfile(patfile) || !isfile(tarfile)) && return
+        P, T = corenodes(sys, cone, varmap_inv, nbopb)
+        isempty(P) && return
+        adj_p = readlad(patfile)
+        adj_t = readlad(tarfile)
+        dir = proofs * "vis/"
+        isdir(dir) || mkdir(dir)
+        P_set = Set(P); T_set = Set(T)
+        writedot(dir * ins * ".pat.dot",  adj_p, P_set)
+        writedot(dir * ins * ".tar.dot",  adj_t, T_set)
+        writecoreladfile(dir * ins * ".core.pat.lad", adj_p, P)
+        writecoreladfile(dir * ins * ".core.tar.lad", adj_t, T)
+        for (base, layout) in [(ins*".pat", "circo"), (ins*".tar", "neato")]
+            dot = dir * base * ".dot"
+            svg = dir * base * ".svg"
+            run(ignorestatus(`neato -Tsvg -K$layout -o$svg $dot`))
+        end
+        println("  core: $(length(P))/$(length(adj_p)) pat nodes, $(length(T))/$(length(adj_t)) tar nodes → $dir")
+    end
 
 # ======================================= main code ======================================= #
 
