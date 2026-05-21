@@ -10,21 +10,40 @@
     const BFS    = "bfs"    in ARGS  # BFS propagation: best-reason selection across same-level constraints
     const CLIT   = "clit"   in ARGS  # Clit mode: cone-first conflict analysis with two-pass filter (see conflicttrail(::Clit))
     const ATABLE = "atable" in ARGS  # print TikZ scatter plot from existing .out files
-    const CLEAN  = "clean"  in ARGS  # delete all .out/.err files in proofs directory
+    const CLEAN  = "clean"  in ARGS  # delete all .out/.err files and vis intermediates (keeps .svg)
     const RAND   = "rand"   in ARGS  # shuffle instance order
     const SORT   = "sort"   in ARGS  # sort instances by file size (ascending)
     const VERIF  = "verif"  in ARGS  # run VeriPB on trimmed output after each instance
     const PROFILE = "profile" in ARGS  # enable StatProfilerHTML profiling
-    const NONORM = "no" in ARGS # does not run normal (not official)
-    const CORE   = "core"   in ARGS  # write unsat core graph files and reduced LAD files
-    const SIPgraphpath = "/home/arthur_gla/veriPB/newSIPbenchmarks/"
+    const NONORM  = "no"     in ARGS  # does not run normal (not official)
+    const CORE    = "core"   in ARGS  # write unsat core graph files and reduced LAD files
+    const SOLVE   = "solve"  in ARGS  # run SIP solver on original graphs before trimming
+    const RESOLV  = "resolv" in ARGS  # re-solve on core reduced graphs after trimming (implies CORE)
+    const SIPgraphpath  = "/home/arthur_gla/veriPB/newSIPbenchmarks/"
+    const sipsolverpath = "/home/arthur_gla/veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+    const solvertimeout = 300  # seconds
     using Random,DataStructures
 # =============== main stuff =============
+    const argflags = Set(["bfs","clit","core","verif","no","rand","sort","clean","atable","profile","solve","resolv"])
+
     function main()
         if ATABLE plotresultstable(); return
-        elseif CLEAN rm.(filter(f -> endswith(f, ".out") || endswith(f, ".err"),readdir(proofs; join=true))); return
-        elseif inst !== nothing 
+        elseif CLEAN
+            rm.(filter(f -> endswith(f, ".out") || endswith(f, ".err"), readdir(proofs; join=true)))
+            visdir = proofs * "vis/"
+            if isdir(visdir)
+                rm.(filter(f -> any(endswith(f, e) for e in (".lad", ".dot")), readdir(visdir; join=true)))
+            end
+            return
+        elseif inst !== nothing
             trimnalyseandcie(inst); return
+        elseif SOLVE || RESOLV
+            # proof files don't exist yet: find instance name by bio/LV prefix in ARGS
+            j = findfirst(x -> x ∉ argflags && !isdir(x) &&
+                               (startswith(x,"LV") || startswith(x,"bio")), ARGS)
+            if j !== nothing
+                trimnalyseandcie(ARGS[j]); return
+            end
         end
         println(tabhead)
         for ins in getinstancesfromdir(proofs)
@@ -41,12 +60,26 @@
         
     function trimnalyseandcie(ins)
             tryrm(proofs*ins*".out")
+            if SOLVE
+                patfile, tarfile = parsegraphfiles(ins)
+                if patfile === nothing
+                    printstyled("  solve: cannot parse graph paths for $ins\n"; color=:red)
+                    return
+                end
+                t = @elapsed ok = runsipsolver(ins, patfile, tarfile)
+                if !ok
+                    printstyled("  solve failed or timed out for $ins ($(round(t;digits=1))s)\n"; color=:red)
+                    return
+                end
+                printstyled("  solved $(round(t;digits=1))s\n"; color=:cyan)
+            end
             if !NONORM
                 printabline(ins)
                 t1,t2,t3 = trimnalyse(ins; mode=Grim())
                 t4,t5 = VERIF ? verify(ins) : (-1,-1)
                 printabline2(ins,t1,t2,t3,t4,t5)
                 writeout_verif(ins,t4,t5)
+                RESOLV && resolvecore(ins)
             end
             if CLIT
                 printabline(ins)
@@ -89,7 +122,7 @@
         # @label skiped
         varmap_inv = Vector{String}(undef, length(varmap))
         for (k, v) in varmap; varmap_inv[v] = k; end
-        mode isa Grim && CORE && writeunsatcore(ins, sys, cone, conelits, varmap_inv, nbopb)
+        mode isa Grim && (CORE || RESOLV) && writeunsatcore(ins, sys, cone, conelits, varmap_inv, nbopb)
         t3 = @elapsed begin
             writeconedel(proofs,file,sys,cone,conelits,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap_inv,ctrmap,output,conclusion,obj,prism)
         end
@@ -2223,8 +2256,16 @@ end; # using .Dumping # to save the import un comment this.
 
 # ======================================= unsat core graphs ======================================= #
 
-    # Returns (pattern_file_path, target_file_path) for bio* and LV* instance names, nothing otherwise.
+    # Returns (pattern_file_path, target_file_path) for an instance name.
+    # For ins.coreN, returns the LAD files written by the previous iteration.
+    # For original bio*/LV* instances, returns the benchmark graph files.
     function parsegraphfiles(ins)
+        m = match(r"^(.+)\.core(\d+)$", ins)
+        if m !== nothing
+            prev_ins = m.captures[1]
+            return proofs * "vis/" * prev_ins * ".core.pat.lad",
+                   proofs * "vis/" * prev_ins * ".core.tar.lad"
+        end
         if startswith(ins, "bio")
             pat = ins[4:end-3]
             tar = ins[end-2:end]
@@ -2286,10 +2327,15 @@ end; # using .Dumping # to save the import un comment this.
     end
 
     # Writes a DOT file for a graph. core_set nodes are green, others red.
+    # LAD format stores each edge once (asymmetric) — symmetrise before writing.
     # For graphs with many nodes, node labels are hidden to reduce clutter.
     function writedot(path, adj, core_set)
         n = length(adj)
         large = n > 300
+        edges = Set{Tuple{Int,Int}}()
+        for i in 1:n, j in adj[i]
+            push!(edges, (min(i,j), max(i,j)))
+        end
         open(path, "w") do f
             println(f, "graph G {")
             println(f, "  layout=circo; overlap=false; node [shape=circle, width=0.2, fixedsize=true];")
@@ -2298,8 +2344,7 @@ end; # using .Dumping # to save the import un comment this.
                 label = large ? "" : string(i)
                 println(f, "  $i [label=\"$label\", style=filled, fillcolor=\"$color\", fontsize=7];")
             end
-            for i in 1:n, j in adj[i]
-                j > i || continue
+            for (i, j) in edges
                 ec = (i in core_set && j in core_set) ? "#44bb44" : "#aaaaaa"
                 println(f, "  $i -- $j [color=\"$ec\"];")
             end
@@ -2317,6 +2362,52 @@ end; # using .Dumping # to save the import un comment this.
                 neighbors = [old2new[u] for u in adj[v] if u in core_set]
                 println(f, length(neighbors), " ", join(neighbors, " "))
             end
+        end
+    end
+
+    # Runs the Glasgow SIP solver on pat_lad/tar_lad, writing proof to proofs/out_prefix.{opb,pbp}.
+    # Returns true if both output files were produced.
+    function runsipsolver(out_prefix, pat_lad, tar_lad)
+        isfile(sipsolverpath) || (printstyled("  solver not found: $sipsolverpath\n"; color=:red); return false)
+        redirect_stdio(stdout=devnull, stderr=devnull) do
+            run(ignorestatus(`timeout $solvertimeout $sipsolverpath
+                --prove $(proofs*out_prefix) --no-clique-detection --format lad $pat_lad $tar_lad`))
+        end
+        return isfile(proofs*out_prefix*opb) && isfile(proofs*out_prefix*pbp)
+    end
+
+    # Runs the solver on the core LAD files produced by writeunsatcore, then trims the result.
+    # Iterates until fixpoint (core node counts stop shrinking) or solver fails.
+    # Instances are named ins.core1, ins.core2, ... ; LADs chain naturally from each trim.
+    function resolvecore(ins)
+        cur_pat = proofs * "vis/" * ins * ".core.pat.lad"
+        cur_tar = proofs * "vis/" * ins * ".core.tar.lad"
+        prev_np = prev_nt = -1
+        iter = 0
+        while true
+            iter += 1
+            if !isfile(cur_pat) || !isfile(cur_tar)
+                printstyled("  resolv: core LADs missing at iter $iter\n"; color=:red); return
+            end
+            np = parse(Int, readline(cur_pat))
+            nt = parse(Int, readline(cur_tar))
+            if np == prev_np && nt == prev_nt
+                printstyled("  resolv: fixpoint after $(iter-1) iteration(s) ($np pat, $nt tar nodes)\n"; color=:green); return
+            end
+            prev_np, prev_nt = np, nt
+            core_ins = ins * ".core$iter"
+            t = @elapsed ok = runsipsolver(core_ins, cur_pat, cur_tar)
+            if !ok
+                printstyled("  resolv: solver failed/timeout at iter $iter ($(round(t;digits=1))s)\n"; color=:red); return
+            end
+            printstyled("  resolv iter $iter: $np pat / $nt tar → solved $(round(t;digits=1))s\n"; color=:cyan)
+            printabline(core_ins)
+            tr1,tr2,tr3 = trimnalyse(core_ins; mode=Grim())
+            tr4,tr5 = VERIF ? verify(core_ins) : (-1,-1)
+            printabline2(core_ins, tr1, tr2, tr3, tr4, tr5)
+            writeout_verif(core_ins, tr4, tr5)
+            cur_pat = proofs * "vis/" * core_ins * ".core.pat.lad"
+            cur_tar = proofs * "vis/" * core_ins * ".core.tar.lad"
         end
     end
 
