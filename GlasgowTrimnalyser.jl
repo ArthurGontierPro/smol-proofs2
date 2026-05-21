@@ -8,12 +8,14 @@
     const proofs = (i = findfirst(x -> isdir(x), ARGS)) === nothing ? abspath*"proofs/" : ARGS[i]
     const inst   = (i = findfirst(x -> isfile(proofs*x*pbp) && isfile(proofs*x*opb), ARGS)) !== nothing ? ARGS[i] : nothing # search for proof
     const BFS    = "bfs"    in ARGS  # BFS propagation: best-reason selection across same-level constraints
+    const CLIT   = "clit"   in ARGS  # Clit mode: cone-first conflict analysis with two-pass filter (see conflicttrail(::Clit))
     const ATABLE = "atable" in ARGS  # print TikZ scatter plot from existing .out files
     const CLEAN  = "clean"  in ARGS  # delete all .out/.err files in proofs directory
     const RAND   = "rand"   in ARGS  # shuffle instance order
     const SORT   = "sort"   in ARGS  # sort instances by file size (ascending)
     const VERIF  = "verif"  in ARGS  # run VeriPB on trimmed output after each instance
     const PROFILE = "profile" in ARGS  # enable StatProfilerHTML profiling
+    const NONORM = "no" in ARGS # does not run normal (not official)
     using Random,DataStructures
 # =============== main stuff =============
     function main()
@@ -36,34 +38,45 @@
         return list end
         
     function trimnalyseandcie(ins)
-            printabline(ins)
-            t1,t2,t3 = trimnalyse(ins, false, "grim")         # normal run: fresh file, writes smol
-            t4,t5 = VERIF ? verify(ins) : (-1,-1)
-            printabline2(ins,t1,t2,t3,t4,t5)
-            writeout_verif(ins,t4,t5)
+            tryrm(proofs*ins*".out")
+            if !NONORM
+                printabline(ins)
+                t1,t2,t3 = trimnalyse(ins; mode=Grim())
+                t4,t5 = VERIF ? verify(ins) : (-1,-1)
+                printabline2(ins,t1,t2,t3,t4,t5)
+                writeout_verif(ins,t4,t5)
+            end
+            if CLIT
+                printabline(ins)
+                tc1,tc2,tc3 = trimnalyse(ins; mode=Clit())
+                tc4,tc5 = VERIF ? verify(ins) : (-1,-1)
+                printabline2(ins,tc1,tc2,tc3,tc4,tc5)
+                writeout_verif(ins,tc4,tc5)
+            end
             if BFS
                 printabline(ins)
-                tb1,tb2,tb3 = trimnalyse(ins, true, "gbfs", false)  # BFS run: append, overwrites smol
+                tb1,tb2,tb3 = trimnalyse(ins; mode=Bfs())
                 tb4,tb5 = VERIF ? verify(ins) : (-1,-1)
                 printabline2(ins,tb1,tb2,tb3,tb4,tb5)
                 writeout_verif(ins,tb4,tb5)
             end end
 
-    # bfs:    use BFS propagation in getcone
-    # prefix: key prefix written to .out file ("grim" or "gbfs")
-    # fresh:  true = start a new .out file ("w"), false = append ("a")
-    function trimnalyse(ins, bfs::Bool=BFS, prefix::String=bfs ? "gbfs" : "grim",
-                        fresh::Bool=true)
+        # mode: Grim(), Clit(), or Bfs() — see mode structs
+    function trimnalyse(ins; mode=Grim())
+        prefix = mode isa Bfs ? "gbfs" : mode isa Clit ? "gclt" : "grim"
         t1 = t2 = t3 = 0 ; file = ins
         # if "load" in ARGS file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index = loadsys(file); @goto skiped end # using goto because I was told not to
         t1 = @elapsed begin
             system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,prism = readinstance(proofs,file)
         end
         inp_lits = sum(length(eq.t) for eq in system; init=0)
-        writeout_parse(ins, t1, nbopb, length(systemlink), inp_lits, length(varmap), prefix, fresh)
+        writeout_parse(ins, t1, nbopb, length(systemlink), inp_lits, length(varmap), prefix)
         sys = PBSystem(system, length(varmap))
-        t2 = @elapsed begin # cone mark usfull ctrs and lits
-            cone,conelits = getcone(sys,systemlink,nbopb,prism,redwitness,conclusion,obj,bfs)
+        n = length(sys.rhs)
+        cone     = zeros(Bool, n)
+        conelits = Dict{Int,Set{Int}}()
+        t2 = @elapsed begin
+            getcone!(cone, conelits, sys, systemlink, nbopb, prism, redwitness, conclusion, obj, mode)
         end
         writeout_trim(ins, t2, cone, nbopb, prefix)
         writeout_conelits(ins, sys, cone, conelits, prefix)
@@ -77,17 +90,15 @@
         writeout_write(ins, t1, t2, t3, prefix)
         return trunc(Int,t1),trunc(Int,t2),trunc(Int,t3) end
 
-    function writeout_parse(ins, t1, nbopb, n_pbp, inp_lits, inp_vars, prefix, fresh::Bool=true)
+    function writeout_parse(ins, t1, nbopb, n_pbp, inp_lits, inp_vars, prefix)
         opb_sz = filesize(proofs*ins*opb)
         pbp_sz = filesize(proofs*ins*pbp)
-        open(proofs*ins*".out", fresh ? "w" : "a") do f
-            if fresh                                # inp lines are instance properties, write once
-                println(f, "inp OPB SIZE ",   opb_sz)
-                println(f, "inp PBP SIZE ",   pbp_sz)
-                println(f, "inp SIZE ",       opb_sz + pbp_sz)
-                println(f, "inp LIT ",        inp_lits)
-                println(f, "inp VAR ",        inp_vars)
-            end
+        open(proofs*ins*".out", "a") do f
+            println(f, "inp OPB SIZE ",   opb_sz)
+            println(f, "inp PBP SIZE ",   pbp_sz)
+            println(f, "inp SIZE ",       opb_sz + pbp_sz)
+            println(f, "inp LIT ",        inp_lits)
+            println(f, "inp VAR ",        inp_vars)
             println(f, prefix, " PARSE TIME ", t1)
             println(f, prefix, " OPB NBEQ ",  nbopb)
             println(f, prefix, " PBP NBEQ ",  n_pbp)
@@ -197,7 +208,14 @@
         const T_INP_VAR    = 36  # total variables in input
         const T_GRIM_CVAR  = 37  # distinct variables in union of grim conelits
         const T_GBFS_CVAR  = 38  # distinct variables in union of gbfs conelits
-        const T_NCOLS      = 38
+        const T_GCLT_TTIME = 39  # clit trim (getcone) time
+        const T_GCLT_OCONE = 40  # clit OPB constraints in cone
+        const T_GCLT_PCONE = 41  # clit proof steps in cone
+        const T_GCLT_CONE  = 42  # clit total constraints in cone
+        const T_GCLT_CLIT  = 43  # total literals in clit cone constraints
+        const T_GCLT_SLIT  = 44  # total literals kept after conelits weakening (clit)
+        const T_GCLT_CVAR  = 45  # distinct variables in union of clit conelits
+        const T_NCOLS      = 45
 
     function plotresultstable()
         list = filter(x -> ext(x)==".out" && !endswith(x,".smolverif.out") && !endswith(x,".verif.out"), readdir(proofs))
@@ -227,6 +245,13 @@
                 elseif occursin("inp LIT ", line)            res[T_INP_LIT]   = tryparse(Int, split(line)[end])
                 elseif occursin("inp VAR ", line)            res[T_INP_VAR]   = tryparse(Int, split(line)[end])
                 elseif occursin("grim NBEQ ", line)         res[T_GRIM_NBEQ] = tryparse(Int, split(line)[end])
+                elseif occursin("gclt TRIM TIME ", line)     res[T_GCLT_TTIME]= tryparse(Int, split(line)[end])
+                elseif occursin("gclt OPB CONE ", line)      res[T_GCLT_OCONE]= tryparse(Int, split(line)[end])
+                elseif occursin("gclt PBP CONE ", line)      res[T_GCLT_PCONE]= tryparse(Int, split(line)[end])
+                elseif occursin("gclt CONE LIT ", line)      res[T_GCLT_CLIT] = tryparse(Int, split(line)[end])
+                elseif occursin("gclt SMOL LIT ", line)      res[T_GCLT_SLIT] = tryparse(Int, split(line)[end])
+                elseif occursin("gclt CONE VAR ", line)      res[T_GCLT_CVAR] = tryparse(Int, split(line)[end])
+                elseif occursin("gclt CONE ", line)          res[T_GCLT_CONE] = tryparse(Int, split(line)[end])
                 elseif occursin("gbfs TRIM TIME ", line)     res[T_GBFS_TTIME]= tryparse(Int, split(line)[end])
                 elseif occursin("gbfs OPB CONE ", line)      res[T_GBFS_OCONE]= tryparse(Int, split(line)[end])
                 elseif occursin("gbfs PBP CONE ", line)      res[T_GBFS_PCONE]= tryparse(Int, split(line)[end])
@@ -968,6 +993,12 @@ end; # using .Dumping # to save the import un comment this.
         is_to_explain ::BitVector                      # membership guard for to_explain (self-cleaning)
         falsified_lits::Vector{Tuple{Int,Int,Int,Int32}} end  # conflicttrail: reused per-iteration buffer
 
+    # Trimming mode — passed through getcone! → ruptrail → process_eq! → conflicttrail.
+    # To add a new mode: define a new struct + a conflicttrail method. Nothing else changes.
+    struct Grim end        # standard: proof-index sort in conflict analysis
+    struct Clit end        # cone-first sort + two-pass cone filter in conflict analysis
+    struct Bfs  end        # BFS propagation with wave-level reason selection (ruptrail_bfs)
+
     RupState(n_eqs::Int, n_vars::Int) = RupState(
         falses(n_eqs),
         BinaryMinHeap{Int}(),
@@ -1200,19 +1231,15 @@ end; # using .Dumping # to save the import un comment this.
         end
         return c - (total - sys.rhs[e] + 1) end  # slack of ~eq: used to RUP-check the negated constraint
 
-        # Given a falsified constraint ceq, traces back through the propagation trail to find the
-        # minimal antecedent set. Greedy: prefer falsified literals with lowest proof index.
+        # TODO incorporate lvl0 propag to hotstart trail without compromising order and cone rup first heuristics
+        # Grim conflict analysis: proof-index sort only.
     function conflicttrail(ceq::Int, sys::PBSystem, t::Trail,
-                           ante::Ante, conelits, rs::RupState; rev_init::Int=-1)
+                           ante::Ante, conelits, rs::RupState, ::Grim, cone::Vector{Bool}; rev_init::Int=-1)
         to_explain    = rs.to_explain     # self-cleaning: empty after each normal exit
         is_to_explain = rs.is_to_explain  # self-cleaning: all-false after each normal exit
-
-        # TODO incorporate lvl0 propag to hotstart trail without compromising order and cone rup first heuristics 
-
         ante_set!(ante, ceq)
         push!(t.var, Int32(0)); push!(t.eq, Int32(ceq))  # fake var 0 represents the conflict eq itself
         push!(to_explain, length(t.var)); is_to_explain[1] = true
-
         falsified_lits = rs.falsified_lits
         while !isempty(to_explain)
             vtp = pop!(to_explain)
@@ -1255,25 +1282,92 @@ end; # using .Dumping # to save the import un comment this.
             end
         end end
 
-        # BFS variant: additionally substitutes non-cone reasons with cone ones when possible.
-        # cone and on_frontier are positional to give Julia concrete types and enable full specialization.
+        # Clit conflict analysis: cone-first sort + two-pass cone filter.
+        # x = (eq_id, trail_pos, var, coef) — falsified literal tuple.
+        # x[1] = proof index of the reason constraint (0 = level-0 assignment, no reason to pull in).
+        # x[4] = coefficient of the variable in the equation being explained.
+        # Sort ascending: smallest-key literals processed first, most likely to survive the somme < b break.
+        # Two-pass filter: if cone/level-0 vars alone explain the slack, non-cone vars are dropped entirely.
+        # ── sort heuristic — uncomment exactly one ──────────────────────────────
+        # sort_key = x -> (x[1] == 0 || cone[x[1]] ? 0 : 1, x[1])        # A: cone-first, depth
+        # sort_key = x -> (x[1] == 0 || cone[x[1]] ? 0 : 1, -x[4], x[1]) # B: cone-first, high coef, depth
+        # sort_key = x -> (x[1] == 0 || cone[x[1]] ? 0 : 1, x[1], -x[4]) # C: cone-first, depth, coef tiebreak
+        # sort_key = x -> (x[1] == 0 || cone[x[1]] ? 0 : 1, -x[4]/(x[1]+1)) # D: cone-first, coef/depth ratio
+        # sort_key = x -> x[1]                                # E: proof index only (= grim baseline)
+        # sort_key = x -> -x[4]                               # F: high coef only
+        # sort_key = x -> -x[4]/(x[1]+1)                     # G: coef/depth ratio only
+        # ─────────────────────────────────────────────────────────────────────────
     function conflicttrail(ceq::Int, sys::PBSystem, t::Trail,
-                           ante::Ante, conelits, rs::RupState,
-                           cone::Vector{Bool}, on_frontier::Vector{Bool}; rev_init::Int=-1)
+                           ante::Ante, conelits, rs::RupState, ::Clit, cone::Vector{Bool}; rev_init::Int=-1)
         to_explain    = rs.to_explain
         is_to_explain = rs.is_to_explain
+        ante_set!(ante, ceq)
+        push!(t.var, Int32(0)); push!(t.eq, Int32(ceq))
+        push!(to_explain, length(t.var)); is_to_explain[1] = true
+        falsified_lits = rs.falsified_lits
+        while !isempty(to_explain)
+            vtp = pop!(to_explain)
+            v   = Int(t.var[vtp])
+            is_to_explain[v+1] = false
+            v != 0 && (t.assi[v] = Int8(0))
+            eq     = Int(t.eq[vtp])
+            ante_set!(ante, eq)
+            eq_rev = (eq == rev_init)
+            b      = eq_rev ? (sum(sys.coefs[k] for k in eqrange(sys, eq); init=zero(Int32)) - sys.rhs[eq] + 1) :
+                              sys.rhs[eq]
+            empty!(falsified_lits)
+            somme = zero(Int32)
+            @inbounds for k in eqrange(sys, eq)
+                w = Int(sys.vars[k])
+                w == v && continue
+                coef = sys.coefs[k]
+                somme += coef
+                wtp  = t.pos[w]
+                wtp > vtp && continue
+                wval = t.assi[w]; wsign = sys.signs[k]
+                falsified_w = eq_rev ? ((wsign & (wval == Int8(1))) | (!wsign & (wval == Int8(2)))) :
+                                       ((wsign & (wval == Int8(2))) | (!wsign & (wval == Int8(1))))
+                falsified_w && push!(falsified_lits, (wtp > 0 ? @inbounds(Int(t.eq[wtp])) : 0, wtp, w, coef))
+            end
+            cone_sum = zero(Int32)                             # two-pass: check if cone/lvl0 vars suffice
+            for (eq_id, _, _, coef) in falsified_lits
+                (eq_id == 0 || cone[eq_id]) && (cone_sum += coef)
+            end
+            cone_sum > somme - b && filter!(x -> x[1] == 0 || cone[x[1]], falsified_lits)
+            sort!(falsified_lits; by = x -> (x[1] == 0 || cone[x[1]] ? 0 : 1, x[1]))  # active heuristic: A
+            v != 0 && setconelits(conelits, v, eq)
+            for (_, wtp, w, coef) in falsified_lits
+                somme < b && break
+                if wtp > 0 && !is_to_explain[w+1]
+                    push!(to_explain, wtp); is_to_explain[w+1] = true
+                end
+                setconelits(conelits, w, eq)
+                somme -= coef
+            end
+            if somme >= b
+                printstyled("conflicttrail: could not explain var $v in eq $eq\n"; color = :red)
+                printeq(sys, eq); printeqconelit(sys, eq, conelits)
+                throw(ErrorException("conflicttrail: could not explain $v with eq $eq"))
+            end
+        end end
 
-        # TODO search in the trail (=implicaiton graph) whyle mimicking order and cone rup first heuristics.
+        # BFS variant: cone-first sort + replaces non-cone trail reasons with cone ones.
+        # TODO search in the trail (=implication graph) while mimicking order and cone rup first heuristics.
+    function conflicttrail_bfs(ceq::Int, sys::PBSystem, t::Trail,
+                               ante::Ante, conelits, rs::RupState,
+                               cone::Vector{Bool}, on_frontier::Vector{Bool}; rev_init::Int=-1)
+        to_explain    = rs.to_explain
+        is_to_explain = rs.is_to_explain
 
         ante_set!(ante, ceq)
         push!(t.var, Int32(0)); push!(t.eq, Int32(ceq))
         push!(to_explain, length(t.var)); is_to_explain[1] = true
 
-        assi_temp = zeros(Int8, length(rs.is_to_explain) - 1)  # historical assignment for substitution check
+        assi_temp = zeros(Int8, length(rs.is_to_explain) - 1)
         for p in 1:length(t.var)
             w = Int(t.var[p]); w != 0 && (assi_temp[w] = t.assi[w])
         end
-        last_vtp = length(t.var) + 1  # sweep pointer: assi_temp holds positions 1..last_vtp-1
+        last_vtp = length(t.var) + 1
 
         falsified_lits = rs.falsified_lits
         while !isempty(to_explain)
@@ -1282,15 +1376,15 @@ end; # using .Dumping # to save the import un comment this.
             is_to_explain[v+1] = false
             v_val = v != 0 ? t.assi[v] : Int8(0)
             v != 0 && (t.assi[v] = Int8(0))
-            for p in vtp:last_vtp-1                      # sweep: clear assi_temp for positions vtp..last_vtp-1
+            for p in vtp:last_vtp-1
                 w = Int(t.var[p]); w != 0 && (assi_temp[w] = Int8(0))
             end
-            last_vtp = vtp                               # assi_temp now holds exactly positions 1..vtp-1
+            last_vtp = vtp
             eq = Int(t.eq[vtp])
-            if v != 0 && !cone[eq] && !on_frontier[eq]  # try to replace non-cone reason with a cone one
+            if v != 0 && !cone[eq]
                 for j in varrange(sys, v)
                     eid = Int(sys.var_eqs[j])
-                    (cone[eid] || on_frontier[eid])          || continue
+                    cone[eid]                                || continue
                     (rev_init == -1 || eid < rev_init)       || continue
                     s = slack(sys, eid, assi_temp)
                     @inbounds for kk in eqrange(sys, eid)
@@ -1300,7 +1394,7 @@ end; # using .Dumping # to save the import un comment this.
                         end
                         break
                     end
-                    (cone[eq] || on_frontier[eq]) && break
+                    cone[eq] && break
                 end
             end
             ante_set!(ante, eq)
@@ -1321,7 +1415,7 @@ end; # using .Dumping # to save the import un comment this.
                                        ((wsign & (wval == Int8(2))) | (!wsign & (wval == Int8(1))))
                 falsified_w && push!(falsified_lits, (wtp > 0 ? @inbounds(Int(t.eq[wtp])) : 0, wtp, w, coef))
             end
-            sort!(falsified_lits; by = x -> x[1])
+            sort!(falsified_lits; by = x -> (cone[x[1]] ? 0 : 1, x[1]))
             v != 0 && setconelits(conelits, v, eq)
             for (_, wtp, w, coef) in falsified_lits
                 somme < b && break
@@ -1342,14 +1436,14 @@ end; # using .Dumping # to save the import un comment this.
         end end
 
         # Trail-based unit propagation.
-    function propagate!(sys::PBSystem, t::Trail, prism, ante::Ante, conelits, rs::RupState)
+    function propagate!(sys::PBSystem, t::Trail, prism, ante::Ante, conelits, rs::RupState, cone::Vector{Bool})
         i = 1; n = length(sys.rhs)
         que = trues(n)                                # all constraints initially pending
         while i <= n
             if !inprism(i, prism) && que[i]
                 s = slack(sys, i, t.assi)
                 if s < 0                               # falsified: record conflict and stop
-                    conflicttrail(i, sys, t, ante, conelits, rs)
+                    conflicttrail(i, sys, t, ante, conelits, rs, Grim(), cone)
                     return
                 end
                 que[i] = false
@@ -1383,11 +1477,11 @@ end; # using .Dumping # to save the import un comment this.
         que  = trues(init)
         while i <= init
             in_queue = !inprism(i, prism) || (i in subrange)
-            if que[i] && in_queue && (!prio || cone[i] || on_frontier[i])
+            if que[i] && in_queue && (!prio || cone[i])
                 rev = (i == init)
                 s   = rev ? slack_reversed(sys, i, t.assi) : slack(sys, i, t.assi)
                 if s < 0
-                    conflicttrail(i, sys, t, ante, conelits; rev_init=init)
+                    conflicttrail(i, sys, t, ante, conelits, rs_placeholder, Grim(); rev_init=init)  # BROKEN: rs not available here — deprecated function, kept for reference only
                     return true
                 end
                 @inbounds for k in eqrange(sys, i)
@@ -1402,10 +1496,8 @@ end; # using .Dumping # to save the import un comment this.
                         eid = Int(sys.var_eqs[j])
                         (eid <= init && eid != i) || continue
                         que[eid] = true
-                        if cone[eid] || on_frontier[eid]
-                            r1 = min(r1, eid)
-                        else
-                            r0 = min(r0, eid)
+                        if cone[eid]; r1 = min(r1, eid)
+                        else         r0 = min(r0, eid)
                         end
                     end
                 end
@@ -1441,10 +1533,10 @@ end; # using .Dumping # to save the import un comment this.
         for k in 1:length(t.var)
             v      = Int(t.var[k])
             reason = Int(t.eq[k])
-            if !cone[reason] && !on_frontier[reason]
+            if !cone[reason]
                 for j in varrange(sys, v)
                     eid = Int(sys.var_eqs[j])
-                    (cone[eid] || on_frontier[eid]) || continue
+                    cone[eid] || continue
                     eid < init || continue
                     s = slack(sys, eid, assi_temp)
                     @inbounds for kk in eqrange(sys, eid)
@@ -1454,7 +1546,7 @@ end; # using .Dumping # to save the import un comment this.
                         end
                         break
                     end
-                    (cone[Int(t.eq[k])] || on_frontier[Int(t.eq[k])]) && break
+                    cone[Int(t.eq[k])] && break
                 end
             end
             assi_temp[v] = t.assi[v]
@@ -1466,19 +1558,16 @@ end; # using .Dumping # to save the import un comment this.
     @inline function activate!(eid, rs::RupState, cone, on_frontier)
         rs.que[eid] && return              # already in a heap, skip
         rs.que[eid] = true
-        if cone[eid] || on_frontier[eid]; push!(rs.pq_prio, eid)    # priority: already in cone
+        if cone[eid]; push!(rs.pq_prio, eid)                         # priority: already in cone
         else                        push!(rs.pq_nonprio, eid)  # non-priority: new to cone
         end end
 
     # Compute slack, propagate, re-activate triggered equations. Return true on conflict.
-    @inline function process_eq!(i, init, sys, t, ante, conelits, cone, on_frontier, rs::RupState)
+    @inline function process_eq!(i, init, sys, t, ante, conelits, cone, on_frontier, rs::RupState, mode)
         rev = (i == init)                  # reversed constraint for RUP check of init
         s   = rev ? slack_reversed(sys, i, t.assi) : slack(sys, i, t.assi)
         if s < 0                           # falsified: conflict found
-            # cone/on_frontier not passed: substitution disabled for normal ruptrail.
-            # The priority queue already ensures cone-first reason selection; substitution
-            # would pick cone constraints with more falsified literals, inflating the cone.
-            conflicttrail(i, sys, t, ante, conelits, rs; rev_init=init)
+            conflicttrail(i, sys, t, ante, conelits, rs, mode, cone; rev_init=init)
             return true
         end
         @inbounds for k in eqrange(sys, i)
@@ -1503,7 +1592,7 @@ end; # using .Dumping # to save the import un comment this.
         # Priority pass drains pq_prio fully before taking one step from pq_nonprio.
     function ruptrail(sys::PBSystem, init::Int, t::Trail,
                       ante::Ante, on_frontier::Vector{Bool},
-                      cone::Vector{Bool}, conelits, prism, subrange, rs::RupState)
+                      cone::Vector{Bool}, conelits, prism, subrange, rs::RupState, mode=Grim())
         fill!(rs.que, false)               # reset queue (may have stale trues from early return)
         empty!(rs.pq_prio.valtree); empty!(rs.pq_nonprio.valtree)  # BinaryHeap has no empty!, clear the internal vector
         for i in 1:init                    # seed both heaps with all eligible equations
@@ -1514,12 +1603,12 @@ end; # using .Dumping # to save the import un comment this.
             while !isempty(rs.pq_prio)     # drain priority equations first
                 i = pop!(rs.pq_prio)
                 rs.que[i] || continue      # stale pop guard (safety net)
-                process_eq!(i, init, sys, t, ante, conelits, cone, on_frontier, rs) && return true
+                process_eq!(i, init, sys, t, ante, conelits, cone, on_frontier, rs, mode) && return true
             end
             isempty(rs.pq_nonprio) && break  # nothing left: no conflict found
             i = pop!(rs.pq_nonprio)          # take one non-priority equation
             rs.que[i] || continue            # stale pop guard (safety net)
-            process_eq!(i, init, sys, t, ante, conelits, cone, on_frontier, rs) && return true
+            process_eq!(i, init, sys, t, ante, conelits, cone, on_frontier, rs, mode) && return true
         end
         return false end
 
@@ -1548,9 +1637,8 @@ end; # using .Dumping # to save the import un comment this.
                 rev = (i == init)
                 s = rev ? slack_reversed(sys, i, t.assi) : slack(sys, i, t.assi)
                 if s < 0
-                    if best_conflict == 0 || (!cone[best_conflict] && !on_frontier[best_conflict] &&
-                                               (cone[i] || on_frontier[i]))
-                        best_conflict = i                      # prefer cone/on_frontier conflict
+                    if best_conflict == 0 || (!cone[best_conflict] && cone[i])
+                        best_conflict = i                      # prefer cone conflict
                     end
                     rs.que[i] = false; continue
                 end
@@ -1565,7 +1653,7 @@ end; # using .Dumping # to save the import un comment this.
                     if cur == 0
                         pending_reason[v] = i; pending_value[v] = val
                         push!(pending_vars, v)                 # register for commit phase
-                    elseif !cone[cur] && !on_frontier[cur] && (cone[i] || on_frontier[i])
+                    elseif !cone[cur] && cone[i]
                         pending_reason[v] = i; pending_value[v] = val  # upgrade to cone reason
                     end
                 end
@@ -1574,7 +1662,7 @@ end; # using .Dumping # to save the import un comment this.
             if best_conflict != 0
                 for v in pending_vars; pending_reason[v] = 0; end
                 empty!(pending_vars)                           # clean pending state before conflicttrail
-                conflicttrail(best_conflict, sys, t, ante, conelits, rs, cone, on_frontier; rev_init=init)
+                conflicttrail_bfs(best_conflict, sys, t, ante, conelits, rs, cone, on_frontier; rev_init=init)
                 return true
             end
             empty!(current_wave)
@@ -1597,8 +1685,8 @@ end; # using .Dumping # to save the import un comment this.
         return false end
 
     @inline function push_frontier!(frontier, on_frontier::Vector{Bool}, cone::Vector{Bool}, j::Int)
-        (on_frontier[j] || cone[j]) && return         # already scheduled or already in cone
-        on_frontier[j] = true; push!(frontier, j) end
+        cone[j] && return                             # already in cone (scheduled or processed)
+        on_frontier[j] = true; cone[j] = true; push!(frontier, j) end
 
     # Expand the frontier with all active antecedents; optionally record them in systemlink.
     @inline function ante_into_frontier!(ante::Ante, frontier, on_frontier, cone)
@@ -1606,23 +1694,20 @@ end; # using .Dumping # to save the import un comment this.
     @inline function ante_into_frontier!(ante::Ante, frontier, on_frontier, cone, link)
         for j in ante.list; ante.flags[j] || continue; push!(link, j); push_frontier!(frontier, on_frontier, cone, j); end end  # push!(link,j): record antecedent for the writer
 
-    function getcone(sys::PBSystem, systemlink, nbopb::Int,
-                     prism::Vector{UnitRange{Int64}}, redwitness, conclusion::String, obj, bfs::Bool)
+    function getcone!(cone, conelits, sys::PBSystem, systemlink, nbopb::Int,
+                      prism::Vector{UnitRange{Int64}}, redwitness, conclusion::String, obj, mode)
         n    = length(sys.rhs)
         prism_bv = falses(n)
         for r in prism, i in r
             1 <= i <= n && (prism_bv[i] = true)       # bitvector version of prism for O(1) inprism checks
         end
-        cone     = zeros(Bool, n)                      # true = constraint is needed in the trimmed proof
-        conelits = Dict{Int,Set{Int}}()                # per-constraint vars needed (for literal trimming)
         on_frontier = zeros(Bool, n)                   # true = constraint is scheduled in frontier
         trail      = Trail(length(sys.var_ptr) - 1)    # var_ptr has length n_vars+1 (CSR convention)
-        # BFS uses a pre-computed level-0 base trail (propagations forced from the empty assignment)
+        # Bfs uses a pre-computed level-0 base trail (propagations forced from the empty assignment)
         # so that each RUP call starts from a common fixed point rather than from scratch.
-        # Normal ruptrail does not use this — its cone-first priority queue handles reason selection
-        # directly and the base trail would hurt quality by pre-empting that selection.
-        base_trail = bfs ? Trail(length(sys.var_ptr) - 1) : trail  # alias to trail when !bfs — never accessed
-        bfs && propagate_level0!(sys, base_trail)
+        # Grim/Clit do not use this — the cone-first priority queue handles reason selection directly.
+        base_trail = mode isa Bfs ? Trail(length(sys.var_ptr) - 1) : trail  # alias to trail for Grim/Clit
+        mode isa Bfs && propagate_level0!(sys, base_trail)
 
         firstcontradiction = 0                         # root of the backward reachability
         if conclusion == "UNSAT"
@@ -1632,12 +1717,22 @@ end; # using .Dumping # to save the import un comment this.
         end
         if firstcontradiction == 0
             conclusion == "UNSAT" && printstyled("\nUNSAT contradiction not found\n"; color = :red)
-            return cone, conelits
+            return
         end
 
         ante = Ante(n)
         rs   = RupState(n, length(sys.var_ptr) - 1)   # reusable scratch buffers for rup/conflict analysis
         frontier = BinaryMaxHeap{Int}()                # max-heap: process highest-indexed eq first (backwards)
+
+        # Local function: clear ante, reset trail, run rup. i and subrange are parameters (not captured)
+        # to avoid Julia boxing mutable loop variables. Everything else is captured from getcone! scope.
+        function do_rup!(i, subrange)
+            ante_clear!(ante)
+            mode isa Bfs ? reset_to_base!(trail, base_trail, i) : reset!(trail)
+            mode isa Bfs ? ruptrail_bfs(sys, i, trail, ante, on_frontier, cone, conelits, prism_bv, subrange, rs) :
+                           ruptrail(sys, i, trail, ante, on_frontier, cone, conelits, prism_bv, subrange, rs, mode)
+        end
+
         cone[firstcontradiction] = true
         if systemlink[firstcontradiction - nbopb][1] == -2   # contradiction is a pol: antecedents explicit in link
             for j in systemlink[firstcontradiction - nbopb]
@@ -1645,11 +1740,9 @@ end; # using .Dumping # to save the import un comment this.
             end
         else                                           # contradiction is rup/ia: run propagation to find antecedents
             if conclusion == "UNSAT" || conclusion == "NONE"
-                propagate!(sys, trail, prism_bv, ante, conelits, rs)
+                propagate!(sys, trail, prism_bv, ante, conelits, rs, cone)
             elseif occursin("BOUNDS", conclusion)
-                ok = bfs ? ruptrail_bfs(sys, firstcontradiction, trail, ante, on_frontier, cone, conelits, prism_bv, 0:0, rs) :
-                            ruptrail(sys, firstcontradiction, trail, ante, on_frontier, cone, conelits, prism_bv, 0:0, rs)
-                if !ok printstyled("initial rup for bound contradiction failed\n"; color = :red) end
+                if !do_rup!(firstcontradiction, 0:0) printstyled("initial rup for bound contradiction failed\n"; color = :red) end
             end
             ante_into_frontier!(ante, frontier, on_frontier, cone, systemlink[firstcontradiction - nbopb])
         end
@@ -1660,22 +1753,17 @@ end; # using .Dumping # to save the import un comment this.
             newpfgl = false
             while !isempty(frontier)
                 i = pop!(frontier)
-                on_frontier[i] || continue             # stale pop guard (equation pushed multiple times)
-                on_frontier[i] = false                 # remove from frontier, about to add to cone
-                cone[i] && continue                    # safety: already in cone
-                cone[i] = true
+                on_frontier[i] || continue             # stale pop guard
+                on_frontier[i] = false                 # remove from queue (cone[i] already true since push)
                 if i > nbopb
                     tlink = systemlink[i - nbopb][1]   # rule type: -1=rup, -2=pol, -3=ia, -4=red, ...
                     if tlink == -1                              # rup
-                        ante_clear!(ante); bfs ? reset_to_base!(trail, base_trail, i) : reset!(trail)
-                        ok = bfs ? ruptrail_bfs(sys, i, trail, ante, on_frontier, cone, conelits, prism_bv, 0:0, rs) :
-                                    ruptrail(sys, i, trail, ante, on_frontier, cone, conelits, prism_bv, 0:0, rs)
-                        if ok
+                        if do_rup!(i, 0:0)
                             ante_remove!(ante, i)              # i itself is not its own antecedent
                             ante_into_frontier!(ante, frontier, on_frontier, cone, systemlink[i - nbopb])
                         else
                             printstyled("rup failed at $i\n"; color = :red)
-                            return cone, conelits
+                            return
                         end
                     elseif tlink >= -3 || (tlink == -30 && length(systemlink[i - nbopb]) > 1)  # pol / ia / assumption with hints
                         ante_clear!(ante)
@@ -1687,7 +1775,7 @@ end; # using .Dumping # to save the import un comment this.
                         red = redwitness[i]
                         push_frontier!(frontier, on_frontier, cone, red.range.start)  # red declaration itself
                         for subr in red.pgranges
-                            if systemlink[subr.start - nbopb][1] == -8 && !(on_frontier[subr.start] || cone[subr.start])
+                            if systemlink[subr.start - nbopb][1] == -8 && !cone[subr.start]
                                 push!(pfgl, subr)              # defer: ref constraint not yet in cone
                             else
                                 push_frontier!(frontier, on_frontier, cone, subr.start)
@@ -1696,10 +1784,7 @@ end; # using .Dumping # to save the import un comment this.
                         end
                     elseif tlink == -5                          # subproof rup
                         subran_idx = findfirst(x -> i in x, red.pgranges)
-                        ante_clear!(ante); bfs ? reset_to_base!(trail, base_trail, i) : reset!(trail)
-                        ok = bfs ? ruptrail_bfs(sys, i, trail, ante, on_frontier, cone, conelits, prism_bv, red.pgranges[subran_idx], rs) :
-                                    ruptrail(sys, i, trail, ante, on_frontier, cone, conelits, prism_bv, red.pgranges[subran_idx], rs)
-                        if ok
+                        if do_rup!(i, red.pgranges[subran_idx])
                             ante_remove!(ante, i)
                             ante_into_frontier!(ante, frontier, on_frontier, cone, systemlink[i - nbopb])
                         else
@@ -1723,7 +1808,7 @@ end; # using .Dumping # to save the import un comment this.
             end
         end
         fixredsystemlink(systemlink, cone, prism, nbopb)  # propagate subproof antecedents up to red declarations
-        return cone, conelits end
+    end
 
     function getfirstcontradiction(sys::PBSystem, prism)
         assi = zeros(Int8, length(sys.var_ptr) - 1)
@@ -1789,18 +1874,14 @@ end; # using .Dumping # to save the import un comment this.
 
     function isequal(a::Lit,b::Lit) # equality between lits
         return a.coef==b.coef && a.sign==b.sign && a.var==b.var end
-    @inline function fixon_frontier(on_frontier::Vector{Bool},antecedants::Vector{Bool})
+    @inline function fixon_frontier(on_frontier::Vector{Bool}, cone::Vector{Bool}, antecedants::Vector{Bool})
         for i in eachindex(antecedants)
-            if antecedants[i]
-                on_frontier[i] = true
-            end
+            if antecedants[i]; on_frontier[i] = true; cone[i] = true; end
         end end
 
-    @inline function fixon_frontier(on_frontier::Vector{Bool},antecedants::Vector{Int})
+    @inline function fixon_frontier(on_frontier::Vector{Bool}, cone::Vector{Bool}, antecedants::Vector{Int})
         for i in antecedants
-            if i>0
-                on_frontier[i] = true
-            end
+            if i > 0; on_frontier[i] = true; cone[i] = true; end
         end end
 
 # ======================================= Printer ======================================= #
