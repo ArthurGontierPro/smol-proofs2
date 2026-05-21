@@ -89,7 +89,7 @@
         # @label skiped
         varmap_inv = Vector{String}(undef, length(varmap))
         for (k, v) in varmap; varmap_inv[v] = k; end
-        mode isa Grim && CORE && writeunsatcore(ins, sys, cone, varmap_inv, nbopb)
+        mode isa Grim && CORE && writeunsatcore(ins, sys, cone, conelits, varmap_inv, nbopb)
         t3 = @elapsed begin
             writeconedel(proofs,file,sys,cone,conelits,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap_inv,ctrmap,output,conclusion,obj,prism)
         end
@@ -2266,13 +2266,18 @@ end; # using .Dumping # to save the import un comment this.
         return p + 1, t + 1
     end
 
-    # Extracts core pattern nodes P and target nodes T from OPB cone constraints.
-    function corenodes(sys::PBSystem, cone::Vector{Bool}, varmap_inv::Vector{String}, nbopb::Int)
+    # Extracts core pattern nodes P and target nodes T from OPB cone constraints,
+    # restricted to variables kept by conelits (weakened-out variables are excluded).
+    function corenodes(sys::PBSystem, cone::Vector{Bool}, varmap_inv::Vector{String},
+                       conelits::Dict{Int,Set{Int}}, nbopb::Int)
         P = Set{Int}(); T = Set{Int}()
         for i in 1:nbopb
             cone[i] || continue
+            clit = get(conelits, i, nothing)
             for k in eqrange(sys, i)
-                pt = parsevarname(varmap_inv[sys.vars[k]])
+                v = Int(sys.vars[k])
+                clit !== nothing && v ∉ clit && continue
+                pt = parsevarname(varmap_inv[v])
                 pt === nothing && continue
                 push!(P, pt[1]); push!(T, pt[2])
             end
@@ -2315,10 +2320,11 @@ end; # using .Dumping # to save the import un comment this.
         end
     end
 
-    function writeunsatcore(ins, sys::PBSystem, cone::Vector{Bool}, varmap_inv::Vector{String}, nbopb::Int)
+    function writeunsatcore(ins, sys::PBSystem, cone::Vector{Bool},
+                            conelits::Dict{Int,Set{Int}}, varmap_inv::Vector{String}, nbopb::Int)
         patfile, tarfile = parsegraphfiles(ins)
         (patfile === nothing || !isfile(patfile) || !isfile(tarfile)) && return
-        P, T = corenodes(sys, cone, varmap_inv, nbopb)
+        P, T = corenodes(sys, cone, varmap_inv, conelits, nbopb)
         isempty(P) && return
         adj_p = readlad(patfile)
         adj_t = readlad(tarfile)
@@ -2334,7 +2340,7 @@ end; # using .Dumping # to save the import un comment this.
             svg = dir * base * ".svg"
             run(ignorestatus(`neato -Tsvg -K$layout -o$svg $dot`))
         end
-        println("  core: $(length(P))/$(length(adj_p)) pat nodes, $(length(T))/$(length(adj_t)) tar nodes → $dir")
+        println("\ncore: $(length(P))/$(length(adj_p)) pat nodes, $(length(T))/$(length(adj_t)) tar nodes → $dir")
     end
 
 # ======================================= main code ======================================= #
