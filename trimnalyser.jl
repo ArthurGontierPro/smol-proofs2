@@ -2,7 +2,7 @@
 julia trimnalyser.jl [options] [instance name or directory of instances]   options: atable sort rand clean verif profile bfs
 julia --threads 196 trimnalyser.jl solve resolv allgraphs maxnodes=50 
 julia --threads 6 trimnalyser.jl solve resolv verif allgraphs maxnodes=50 
-julia --threads 188 trimnalyser.jl solve resolv verif allgraphs maxnodes=300 st=60 tt=600
+julia --threads 188 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=60 tt=6000 rand
 =#
     const opb = ".opb"
     const pbp = ".pbp"
@@ -88,7 +88,10 @@ julia --threads 188 trimnalyser.jl solve resolv verif allgraphs maxnodes=300 st=
             end
         end
         list = ALLGRAPHS ? allgraphinstances() : getinstancesfromdir(proofs)
-        println("%Running ", length(list), " instances on ", Threads.nthreads(), " thread(s)")
+        n = length(list)
+        println("%Running ", n, " instances on ", Threads.nthreads(), " thread(s)")
+        done    = Threads.Atomic{Int}(0)
+        t_start = time()
         wall = @elapsed Threads.@threads :greedy for ins in list
             try
                 trimnalyseandcie(ins)
@@ -96,6 +99,15 @@ julia --threads 188 trimnalyser.jl solve resolv verif allgraphs maxnodes=300 st=
                 msg = sprint(showerror, e, catch_backtrace())
                 printstyled("  ERROR $ins: $msg\n"; color=:red)
                 open(proofs*ins*".err", "a") do f; println(f, msg) end
+            end
+            d = Threads.atomic_add!(done, 1) + 1
+            if d % 100 == 0 || d == n
+                elapsed = time() - t_start
+                rate    = d / elapsed * 60
+                eta     = rate > 0 ? (n - d) / rate : Inf
+                println("[", d, "/", n, "] ",
+                        round(rate; digits=1), " inst/min  ETA ",
+                        round(Int, eta), "min")
             end
         end
         println("%Wall time: ", round(wall; digits=1), "s")
