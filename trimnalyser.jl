@@ -2,7 +2,7 @@
 julia trimnalyser.jl [options] [instance name or directory of instances]   options: atable sort rand clean verif profile bfs
 julia --threads 196 trimnalyser.jl solve resolv allgraphs maxnodes=50 
 julia --threads 6 trimnalyser.jl solve resolv verif allgraphs maxnodes=50 
-julia --threads 188 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=60 tt=6000 rand
+julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=300 st=6 tt=60 rand
 =#
     const opb = ".opb"
     const pbp = ".pbp"
@@ -36,6 +36,7 @@ julia --threads 188 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
     end
     const solvertimeout = begin i = findfirst(x -> startswith(x, "st="), ARGS); i !== nothing ? parse(Int, ARGS[i][4:end]) : 5   end  # st=N
     const trimtimeout   = begin i = findfirst(x -> startswith(x, "tt="), ARGS); i !== nothing ? parse(Int, ARGS[i][4:end]) : 45  end  # tt=N
+    const minfreemem    = begin i = findfirst(x -> startswith(x, "minmem="), ARGS); i !== nothing ? parse(Int, ARGS[i][8:end]) * 1024^3 : (_cluster ? 100 : 4) * 1024^3 end  # minmem=N GB, default 100 on cluster / 4 locally
     using Random,DataStructures
 # =============== main stuff =============
     const argflags = Set(["bfs","clit","core","verif","no","rand","sort","clean","atable",
@@ -61,7 +62,8 @@ julia --threads 188 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
             m = match(r"layout=(\w+)", content)
             layout = m !== nothing ? m.captures[1] : "neato"
             try run(ignorestatus(`neato -Tsvg -K$layout -o$svg $dot`))
-            catch; printstyled("  neato not found — install graphviz\n"; color=:yellow); return
+            catch; #printstyled("  neato not found — install graphviz\n"; color=:yellow); 
+                return
             end
         end
         println("Rendered $(length(dots)) SVGs in $visdir") end
@@ -105,9 +107,9 @@ julia --threads 188 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
                 elapsed = time() - t_start
                 rate    = d / elapsed * 60
                 eta     = rate > 0 ? (n - d) / rate : Inf
-                println("[", d, "/", n, "] ",
+                printstyled("[", d, "/", n, "] ",
                         round(rate; digits=1), " inst/min  ETA ",
-                        round(Int, eta), "min")
+                        round(Int, eta), "min\n"; color=:magenta)
             end
         end
         println("%Wall time: ", round(wall; digits=1), "s")
@@ -172,6 +174,9 @@ julia --threads 188 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
         end end
 
     function trimnalyseandcie(ins)
+            while Sys.free_memory() < minfreemem
+                sleep(2)
+            end
             tryrm(proofs*ins*".out")
             tryrm(proofs*ins*".err")
             if SOLVE
@@ -2643,7 +2648,9 @@ end; # using .Dumping # to save the import un comment this.
             dot = dir * base * ".dot"
             svg = dir * base * ".svg"
             try run(ignorestatus(`neato -Tsvg -K$layout -o$svg $dot`))
-            catch; printstyled("  neato not found — install graphviz to render $svg\n"; color=:yellow) end
+            catch; 
+                # printstyled("  neato not found — install graphviz to render $svg\n"; color=:yellow) 
+            end
         end
         println("  $ins core: $(length(P))/$(length(adj_p)) pat nodes, $(length(T))/$(length(adj_t)) tar nodes")
     end
