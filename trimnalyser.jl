@@ -12,7 +12,7 @@ julia --threads 188 trimnalyser.jl solve resolv verif allgraphs maxnodes=300 st=
     const abspath       = _cluster ? "/users/grad/arthur/"                                                              : "/home/arthur_gla/veriPB/subgraphsolver/"
     const SIPgraphpath  = _cluster ? "/users/grad/arthur/newSIPbenchmarks/"                                            : "/home/arthur_gla/veriPB/newSIPbenchmarks/"
     const sipsolverpath = _cluster ? "/users/grad/arthur/glasgow-subgraph-solver/build/glasgow_subgraph_solver"        : "/home/arthur_gla/veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-    const _defaultproofs = _cluster ? "/users/grad/arthur/proofs/" : abspath*"proofs/"
+    const _defaultproofs = _cluster ? "/scratch/arthur/proofs/" : abspath*"proofs/"
     const proofs = (i = findfirst(x -> isdir(x), ARGS)) === nothing ? _defaultproofs : ARGS[i]
     const inst   = (i = findfirst(x -> isfile(proofs*x*pbp) && isfile(proofs*x*opb), ARGS)) !== nothing ? ARGS[i] : nothing # search for proof
     const BFS    = "bfs"    in ARGS  # BFS propagation: best-reason selection across same-level constraints
