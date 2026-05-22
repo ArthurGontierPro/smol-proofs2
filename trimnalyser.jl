@@ -1,7 +1,7 @@
 #= This is a PB trimmer made to analyse proofs. If problem, ask arthur.pro.gontier@gmail.com
 julia trimnalyser.jl [options] [instance name or directory of instances]   options: atable sort rand clean verif profile bfs
 julia --threads 196 trimnalyser.jl solve resolv allgraphs maxnodes=50 
-julia --threads 6 trimnalyser.jl solve resolv verif allgraphs maxnodes=50 
+julia --threads 8 trimnalyser.jl solve resolv verif allgraphs maxnodes=30 st=8 tt=60 rand
 julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=6000 rand
 =#
     const opb = ".opb"
@@ -107,9 +107,9 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
                 elapsed = time() - t_start
                 rate    = d / elapsed * 60
                 eta     = rate > 0 ? (n - d) / rate : Inf
-                printstyled("[", d, "/", n, "] ",
+                printstyled("\n\n\n[", d, "/", n, "] ",
                         round(rate; digits=1), " inst/min  ETA ",
-                        round(Int, eta), "min\n"; color=:magenta)
+                        round(Int, eta), "min\n\n"; color=:magenta)
             end
         end
         println("%Wall time: ", round(wall; digits=1), "s")
@@ -246,7 +246,11 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
         cone     = zeros(Bool, n)
         conelits = Dict{Int,Set{Int}}()
         t2 = @elapsed begin
-            getcone!(cone, conelits, sys, systemlink, nbopb, prism, redwitness, conclusion, obj, mode)
+            cone_timeout = getcone!(cone, conelits, sys, systemlink, nbopb, prism, redwitness, conclusion, obj, mode) === true
+        end
+        if cone_timeout
+            open(proofs*ins*".err", "a") do f; println(f, "getcone timeout after $(trimtimeout)s") end
+            return trunc(Int,t1),trunc(Int,t2),0,cs
         end
         # for (i,_) in conelits # nullify the conelits
         #     conelits[i] = Set{Int}(Int(sys.vars[k]) for k in eqrange(sys, i))
@@ -2039,9 +2043,14 @@ end; # using .Dumping # to save the import un comment this.
         red     = Red([], 0:0, [])                     # current red block being processed
         pfgl    = UnitRange{Int64}[]                   # deferred proof goals (ref not yet known to be in cone)
         newpfgl = true
+        t_cone_start = time()
         while newpfgl                                  # outer loop: retry deferred proof goals until stable
             newpfgl = false
             while !isempty(frontier)
+                if time() - t_cone_start > trimtimeout
+                    printstyled("  getcone timeout after $(trimtimeout)s — partial cone\n"; color=:red)
+                    return true
+                end
                 i = pop!(frontier)
                 on_frontier[i] || continue             # stale pop guard
                 on_frontier[i] = false                 # remove from queue (cone[i] already true since push)
