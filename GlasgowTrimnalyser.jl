@@ -8,8 +8,12 @@ julia --threads 196 GlasgowTrimnalyser.jl solve resolv verif allgraphs maxnodes=
     const pbp = ".pbp"
     const smol = ".smol"
     const version = "3.0"
-    const abspath = "/home/arthur_gla/veriPB/subgraphsolver/"
-    const proofs = (i = findfirst(x -> isdir(x), ARGS)) === nothing ? abspath*"proofs/" : ARGS[i]
+    const _cluster = contains(gethostname(), "dcs.gla.ac.uk")
+    const abspath       = _cluster ? "/users/grad/arthur/"                                                              : "/home/arthur_gla/veriPB/subgraphsolver/"
+    const SIPgraphpath  = _cluster ? "/users/grad/arthur/newSIPbenchmarks/"                                            : "/home/arthur_gla/veriPB/newSIPbenchmarks/"
+    const sipsolverpath = _cluster ? "/users/grad/arthur/glasgow-subgraph-solver/build/glasgow_subgraph_solver"        : "/home/arthur_gla/veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+    const _defaultproofs = _cluster ? "/users/grad/arthur/proofs/" : abspath*"proofs/"
+    const proofs = (i = findfirst(x -> isdir(x), ARGS)) === nothing ? _defaultproofs : ARGS[i]
     const inst   = (i = findfirst(x -> isfile(proofs*x*pbp) && isfile(proofs*x*opb), ARGS)) !== nothing ? ARGS[i] : nothing # search for proof
     const BFS    = "bfs"    in ARGS  # BFS propagation: best-reason selection across same-level constraints
     const CLIT   = "clit"   in ARGS  # Clit mode: cone-first conflict analysis with two-pass filter (see conflicttrail(::Clit))
@@ -28,8 +32,6 @@ julia --threads 196 GlasgowTrimnalyser.jl solve resolv verif allgraphs maxnodes=
         i = findfirst(x -> startswith(x, "maxnodes="), ARGS)
         i !== nothing ? parse(Int, ARGS[i][10:end]) : typemax(Int)
     end
-    const SIPgraphpath  = "/home/arthur_gla/veriPB/newSIPbenchmarks/"
-    const sipsolverpath = "/home/arthur_gla/veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
     const solvertimeout = begin i = findfirst(x -> startswith(x, "st="), ARGS); i !== nothing ? parse(Int, ARGS[i][4:end]) : 5   end  # st=N
     const trimtimeout   = begin i = findfirst(x -> startswith(x, "tt="), ARGS); i !== nothing ? parse(Int, ARGS[i][4:end]) : 45  end  # tt=N
     using Random,DataStructures
