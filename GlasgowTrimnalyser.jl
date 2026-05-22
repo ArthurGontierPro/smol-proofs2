@@ -89,7 +89,7 @@ julia --threads 196 GlasgowTrimnalyser.jl solve resolv verif allgraphs maxnodes=
         end
         list = ALLGRAPHS ? allgraphinstances() : getinstancesfromdir(proofs)
         println("%Running ", length(list), " instances on ", Threads.nthreads(), " thread(s)")
-        Threads.@threads :greedy for ins in list
+        wall = @elapsed Threads.@threads :greedy for ins in list
             try
                 trimnalyseandcie(ins)
             catch e
@@ -97,7 +97,10 @@ julia --threads 196 GlasgowTrimnalyser.jl solve resolv verif allgraphs maxnodes=
                 printstyled("  ERROR $ins: $msg\n"; color=:red)
                 open(proofs*ins*".err", "a") do f; println(f, msg) end
             end
-        end end
+        end
+        println("%Wall time: ", round(wall; digits=1), "s")
+        open(proofs*"wall.txt", "w") do f; println(f, wall) end
+        end
 
     function getinstancesfromdir(proofs)
         list = onlyname.(filter(x -> ext(x)==opb && isfile(noext(x)*pbp), readdir(proofs, join=true)))
@@ -181,6 +184,11 @@ julia --threads 196 GlasgowTrimnalyser.jl solve resolv verif allgraphs maxnodes=
                 if c == "SAT" || c == "NONE"
                     printstyled("  $ins $c — skipping\n"; color=:yellow); return
                 end
+                if isempty(c)
+                    printstyled("  $ins: no conclusion (truncated proof) — skipping\n"; color=:red)
+                    open(proofs*ins*".err", "a") do f; println(f, "proof truncated: no conclusion") end
+                    return
+                end
             end
             if !NONORM
                 printabline(ins)
@@ -232,6 +240,11 @@ julia --threads 196 GlasgowTrimnalyser.jl solve resolv verif allgraphs maxnodes=
         # @label skiped
         varmap_inv = Vector{String}(undef, length(varmap))
         for (k, v) in varmap; varmap_inv[v] = k; end
+        if isempty(output)
+            printstyled("  $ins: proof truncated (no output line) — skipping write\n"; color=:red)
+            open(proofs*ins*".err", "a") do f; println(f, "proof truncated: output line missing") end
+            return trunc(Int,t1),trunc(Int,t2),0,cs
+        end
         mode isa Grim && (CORE || RESOLV) && writeunsatcore(ins, sys, cone, conelits, varmap_inv, nbopb)
         t3 = @elapsed begin
             writeconedel(proofs,file,sys,cone,conelits,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap_inv,ctrmap,output,conclusion,obj,prism)
@@ -458,6 +471,13 @@ julia --threads 196 GlasgowTrimnalyser.jl solve resolv verif allgraphs maxnodes=
             end
             maxins = [t[1] for t in table if !occursin(".core", t[1]) && countresolveiters(t[1]) == maxiters]
             println("  max instances: ", join(maxins, ", "))
+            println()
+        end
+        walltxt = proofs * "wall.txt"
+        if isfile(walltxt)
+            wall = parse(Float64, readline(walltxt))
+            println("── Wall time ──")
+            println("  ", round(wall; digits=1), "s")
             println()
         end end
 
