@@ -1,5 +1,9 @@
-# This is a PB trimmer made to analyse proofs. If problem, ask arthur.pro.gontier@gmail.com
-# julia GlasgowTrimnalyser.jl [options] [instance name or directory of instances]   options: atable sort rand clean verif profile bfs
+#= This is a PB trimmer made to analyse proofs. If problem, ask arthur.pro.gontier@gmail.com
+julia GlasgowTrimnalyser.jl [options] [instance name or directory of instances]   options: atable sort rand clean verif profile bfs
+julia --threads 196 GlasgowTrimnalyser.jl solve resolv allgraphs maxnodes=50 
+julia --threads 6 GlasgowTrimnalyser.jl solve resolv verif allgraphs maxnodes=50 
+julia --threads 196 GlasgowTrimnalyser.jl solve resolv verif allgraphs maxnodes=30 st=5 tt=70
+=#
     const opb = ".opb"
     const pbp = ".pbp"
     const smol = ".smol"
@@ -16,15 +20,22 @@
     const VERIF  = "verif"  in ARGS  # run VeriPB on trimmed output after each instance
     const PROFILE = "profile" in ARGS  # enable StatProfilerHTML profiling
     const NONORM  = "no"     in ARGS  # does not run normal (not official)
-    const CORE    = "core"   in ARGS  # write unsat core graph files and reduced LAD files
-    const SOLVE   = "solve"  in ARGS  # run SIP solver on original graphs before trimming
-    const RESOLV  = "resolv" in ARGS  # re-solve on core reduced graphs after trimming (implies CORE)
+    const CORE      = "core"      in ARGS  # write unsat core graph files and reduced LAD files
+    const SOLVE     = "solve"     in ARGS  # run SIP solver on original graphs before trimming
+    const RESOLV    = "resolv"    in ARGS  # re-solve on core reduced graphs after trimming (implies CORE)
+    const ALLGRAPHS = "allgraphs" in ARGS  # enumerate all instances from benchmark graph directories
+    const MAXNODES  = begin
+        i = findfirst(x -> startswith(x, "maxnodes="), ARGS)
+        i !== nothing ? parse(Int, ARGS[i][10:end]) : typemax(Int)
+    end
     const SIPgraphpath  = "/home/arthur_gla/veriPB/newSIPbenchmarks/"
     const sipsolverpath = "/home/arthur_gla/veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
-    const solvertimeout = 300  # seconds
+    const solvertimeout = begin i = findfirst(x -> startswith(x, "st="), ARGS); i !== nothing ? parse(Int, ARGS[i][4:end]) : 5   end  # st=N
+    const trimtimeout   = begin i = findfirst(x -> startswith(x, "tt="), ARGS); i !== nothing ? parse(Int, ARGS[i][4:end]) : 45  end  # tt=N
     using Random,DataStructures
 # =============== main stuff =============
-    const argflags = Set(["bfs","clit","core","verif","no","rand","sort","clean","atable","profile","solve","resolv"])
+    const argflags = Set(["bfs","clit","core","verif","no","rand","sort","clean","atable",
+                          "profile","solve","resolv","allgraphs"])
 
     function main()
         if ATABLE plotresultstable(); return
@@ -37,7 +48,7 @@
             return
         elseif inst !== nothing
             trimnalyseandcie(inst); return
-        elseif SOLVE || RESOLV
+        elseif (SOLVE || RESOLV) && !ALLGRAPHS
             # proof files don't exist yet: find instance name by bio/LV prefix in ARGS
             j = findfirst(x -> x ∉ argflags && !isdir(x) &&
                                (startswith(x,"LV") || startswith(x,"bio")), ARGS)
@@ -45,11 +56,17 @@
                 trimnalyseandcie(ARGS[j]); return
             end
         end
-        println(tabhead)
-        for ins in getinstancesfromdir(proofs)
-            trimnalyseandcie(ins)
-        end
-        println(tabfoot) end
+        list = ALLGRAPHS ? allgraphinstances() : getinstancesfromdir(proofs)
+        println("%Running ", length(list), " instances on ", Threads.nthreads(), " thread(s)")
+        Threads.@threads :greedy for ins in list
+            try
+                trimnalyseandcie(ins)
+            catch e
+                msg = sprint(showerror, e, catch_backtrace())
+                printstyled("  ERROR $ins: $msg\n"; color=:red)
+                open(proofs*ins*".err", "a") do f; println(f, msg) end
+            end
+        end end
 
     function getinstancesfromdir(proofs)
         list = onlyname.(filter(x -> ext(x)==opb && isfile(noext(x)*pbp), readdir(proofs, join=true)))
@@ -57,9 +74,60 @@
         elseif SORT sort!(list, by = x -> inssize(x)) end
         println("%Found ", length(list), " instances in ", proofs)
         return list end
+
+    # Returns (node_count, path) for a LAD file, or nothing if unreadable.
+    function ladnodes(path)
+        isfile(path) || return nothing
+        n = tryparse(Int, readline(path))
+        n === nothing && return nothing
+        return n
+    end
+
+    # Enumerates all (pattern, target) instance names from the benchmark graph directories.
+    # Filters pairs where both graphs have <= MAXNODES nodes and pattern_size <= target_size.
+    function allgraphinstances()
+        list = String[]
+        mkpath(proofs)
+        for (dir, pre, ext, fmt) in [
+                (SIPgraphpath*"LV/",                    "g",  "",     (p,t) -> "LVg$(p)g$(t)"),
+                (SIPgraphpath*"biochemicalReactions/",  "",   ".txt", (p,t) -> "bio$(p)$(t)") ]
+            isdir(dir) || continue
+            files = readdir(dir)
+            # strip prefix and extension to get the numeric identifier
+            ids = [f[length(pre)+1 : end-length(ext)] for f in files
+                   if startswith(f, pre) && endswith(f, ext) && !isdir(dir*f)]
+            # read node counts, filter by MAXNODES
+            sizes = Dict{String,Int}()
+            for id in ids
+                n = ladnodes(dir * pre * id * ext)
+                n !== nothing && n <= MAXNODES && (sizes[id] = n)
+            end
+            valid = collect(keys(sizes))
+            RAND ? shuffle!(valid) : sort!(valid)
+            for p in valid, t in valid
+                p == t && continue
+                sizes[p] > sizes[t] && continue  # only embed smaller into larger
+                push!(list, fmt(p, t))
+            end
+        end
+        println("%Generated ", length(list), " instances from benchmark graphs (maxnodes=", MAXNODES, ")")
+        return list
+    end
         
+    function pbpconclusion(ins)
+        f = proofs*ins*pbp
+        isfile(f) || return ""
+        sz = filesize(f)
+        open(f) do io
+            seek(io, max(0, sz - 500))
+            tail = read(io, String)
+            m = match(r"conclusion\s+(\w+)", tail)
+            m === nothing ? "" : m.captures[1]
+        end end
+
     function trimnalyseandcie(ins)
             tryrm(proofs*ins*".out")
+            tryrm(proofs*ins*".err")
             if SOLVE
                 patfile, tarfile = parsegraphfiles(ins)
                 if patfile === nothing
@@ -68,31 +136,41 @@
                 end
                 t = @elapsed ok = runsipsolver(ins, patfile, tarfile)
                 if !ok
-                    printstyled("  solve failed or timed out for $ins ($(round(t;digits=1))s)\n"; color=:red)
+                    out_content = isfile(proofs*ins*".out") ? read(proofs*ins*".out", String) : ""
+                    if occursin("SATISFIABLE", out_content) && !occursin("UNSATISFIABLE", out_content)
+                        printstyled("  $ins SAT — skipping\n"; color=:yellow)
+                    else
+                        printstyled("  $ins solve failed or timed out ($(round(t;digits=1))s)\n"; color=:red)
+                    end
                     return
                 end
-                printstyled("  solved $(round(t;digits=1))s\n"; color=:cyan)
+                printstyled("  $ins solved $(round(t;digits=1))s\n"; color=:cyan)
+            end
+            let c = pbpconclusion(ins)
+                if c == "SAT" || c == "NONE"
+                    printstyled("  $ins $c — skipping\n"; color=:yellow); return
+                end
             end
             if !NONORM
                 printabline(ins)
-                t1,t2,t3 = trimnalyse(ins; mode=Grim())
+                t1,t2,t3,cs = trimnalyse(ins; mode=Grim())
                 t4,t5 = VERIF ? verify(ins) : (-1,-1)
-                printabline2(ins,t1,t2,t3,t4,t5)
+                printabline2(ins,t1,t2,t3,t4,t5,cs)
                 writeout_verif(ins,t4,t5)
                 RESOLV && resolvecore(ins)
             end
             if CLIT
                 printabline(ins)
-                tc1,tc2,tc3 = trimnalyse(ins; mode=Clit())
+                tc1,tc2,tc3,tcs = trimnalyse(ins; mode=Clit())
                 tc4,tc5 = VERIF ? verify(ins) : (-1,-1)
-                printabline2(ins,tc1,tc2,tc3,tc4,tc5)
+                printabline2(ins,tc1,tc2,tc3,tc4,tc5,tcs)
                 writeout_verif(ins,tc4,tc5)
             end
             if BFS
                 printabline(ins)
-                tb1,tb2,tb3 = trimnalyse(ins; mode=Bfs())
+                tb1,tb2,tb3,tbs = trimnalyse(ins; mode=Bfs())
                 tb4,tb5 = VERIF ? verify(ins) : (-1,-1)
-                printabline2(ins,tb1,tb2,tb3,tb4,tb5)
+                printabline2(ins,tb1,tb2,tb3,tb4,tb5,tbs)
                 writeout_verif(ins,tb4,tb5)
             end end
 
@@ -118,7 +196,8 @@
         # end
         writeout_trim(ins, t2, cone, nbopb, prefix)
         writeout_conelits(ins, sys, cone, conelits, prefix)
-        printconestat(cone, sys, conelits)
+        cs = conelits_stats(sys, cone, conelits)
+        printconestat(cone, cs)
         # @label skiped
         varmap_inv = Vector{String}(undef, length(varmap))
         for (k, v) in varmap; varmap_inv[v] = k; end
@@ -127,7 +206,7 @@
             writeconedel(proofs,file,sys,cone,conelits,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap_inv,ctrmap,output,conclusion,obj,prism)
         end
         writeout_write(ins, t1, t2, t3, prefix)
-        return trunc(Int,t1),trunc(Int,t2),trunc(Int,t3) end
+        return trunc(Int,t1),trunc(Int,t2),trunc(Int,t3),cs end
 
     function writeout_parse(ins, t1, nbopb, n_pbp, inp_lits, inp_vars, prefix)
         opb_sz = filesize(proofs*ins*opb)
@@ -256,6 +335,24 @@
         const T_GCLT_CVAR  = 45  # distinct variables in union of clit conelits
         const T_NCOLS      = 45
 
+    # Counts how many resolv iterations ran for ins by checking coreN .out files.
+    function countresolveiters(ins)
+        n = 0
+        while isfile(proofs * ins * ".core$(n+1)" * ".out"); n += 1 end
+        return n end
+
+    # Parses solver-written fields from the top of ins.out (appended by runsipsolver).
+    function parsesolverstats(ins)
+        outfile = proofs * ins * ".out"
+        isfile(outfile) || return nothing
+        content = read(outfile, String)
+        gi(r) = (m = match(r, content)) !== nothing ? parse(Int, m.captures[1]) : nothing
+        gs(r) = (m = match(r, content)) !== nothing ? m.captures[1] : nothing
+        (pat_vertices = gi(r"pattern_vertices\s*=\s*(\d+)"),
+         tar_vertices = gi(r"target_vertices\s*=\s*(\d+)"),
+         runtime_ms   = gi(r"runtime\s*=\s*(\d+)"),
+         status       = gs(r"status\s*=\s*(\w+)")) end
+
     function plotresultstable()
         list = filter(x -> ext(x)==".out" && !endswith(x,".smolverif.out") && !endswith(x,".verif.out"), readdir(proofs))
         list = onlyname.(list)
@@ -311,8 +408,23 @@
             end
             push!(table,res)
         end
-        printpoints2Dlog(table, T_GRIM_CONE, T_GBFS_CONE, "grim CONE", "gbfs CONE")
-        printratios(table) end
+        printpoints2Dlog(table, T_GRIM_CONE, T_GRIM_NBEQ, "grim CONE", "grim NBEQ")
+        printratios(table)
+        # resolv iteration counts — inferred from coreN .out file existence
+        iters = [countresolveiters(t[1]) for t in table if !occursin(".core", t[1])]
+        if any(i -> i > 0, iters)
+            println("── Resolv iterations ──")
+            println("  max   : ", maximum(iters))
+            println("  mean  : ", round(sum(iters) / length(iters); digits=2))
+            maxiters = maximum(iters)
+            for k in 0:maxiters
+                c = count(==(k), iters)
+                c > 0 && println("  iter=", k, " : ", c, " instance(s)")
+            end
+            maxins = [t[1] for t in table if !occursin(".core", t[1]) && countresolveiters(t[1]) == maxiters]
+            println("  max instances: ", join(maxins, ", "))
+            println()
+        end end
 
         # 1-shifted geometric mean of a column: exp(mean(log(v + 1))) - 1.
     function col_sgm(table, col)
@@ -418,14 +530,27 @@
         carriage = string(c-length(s))
         return "\r\033["*carriage*"G"*s end
 
+    par() = Threads.nthreads() > 1
+
     function printabline(f)
+        par() && return  # parallel: skip placeholder, full line printed atomically in printabline2
         printgray("         &          &          &          &      (                   ) &      & ")
         printyellow(f)
         printgray(" \\\\\\hline")
-        printcyan(leftcarriage(9,prettybytes(filesize(proofs*f*opb))))
+        printcyan(leftcarriage(9, prettybytes(filesize(proofs*f*opb))))
         printcyan(leftcarriage(20,prettybytes(filesize(proofs*f*pbp)))) end
 
-    function printabline2(f,t1,t2,t3,t4,t5)
+    function printabline2(f,t1,t2,t3,t4,t5,cs=nothing)
+        if par()
+            pb(file) = isfile(file) ? prettybytes(filesize(file)) : "?"
+            cone_s = cs !== nothing ? " $(cs.lits_smol)/$(cs.lits_cone) $(cs.vars_used)/$(cs.vars_total)" : ""
+            println(rpad(pb(proofs*f*opb),8),           " & ", rpad(pb(proofs*f*pbp),9),
+                    " & ", rpad(pb(proofs*f*opb*smol),9)," & ", rpad(pb(proofs*f*pbp*smol),9),
+                    " & ", rpad(t1+t2+t3+max(0,t4),5),
+                    " (", rpad(t1,4), rpad(t2,4), rpad(t3,4), rpad(t4,5), ")",
+                    " & ", rpad(t5,5), " & ", f, " \\\\\\hline%", cone_s)
+            return
+        end
         printgreen(leftcarriage(31,prettybytes(filesize(proofs*f*opb*smol))))
         printgreen(leftcarriage(42,prettybytes(filesize(proofs*f*pbp*smol))))
         printgreen(leftcarriage(49,string(t1+t2+t3+max(0,t4))))
@@ -435,10 +560,11 @@
         printcyan(leftcarriage(69,string(t4)))
         printcyan(leftcarriage(78,string(t5)))
         println() end
-    function printconestat(cone, sys, conelits)
-        s = conelits_stats(sys, cone, conelits)
+
+    function printconestat(cone, cs)
+        par() && return  # cursor-based stat doesn't compose with parallel output
         printgray("\r\033[99G% "*string(sum(cone))*"/"*string(length(cone))*" "
-                                *string(s.vars_used)*"/"*string(s.vars_total)) end
+                                *string(cs.vars_used)*"/"*string(cs.vars_total)*"\n") end
 
     function prettybytes(b)
         if b>=10^9
@@ -951,11 +1077,11 @@ end; # using .Dumping # to save the import un comment this.
 
     function findfullassi(system,st,init,varmap,prism)
         lits = Vector{Lit}(undef,length(st)-2)
-        for i in 2:length(st) # sol var var var ;
-            _ = readvar(st[i],varmap)# add the new vars in the varmap
+        for i in 2:length(st)-1 # sol var var var ; — stop before ";"
+            _ = readvar(st[i],varmap)
         end
         assi = zeros(Int8,length(varmap))
-        for i in 2:length(st)
+        for i in 2:length(st)-1
             sign = st[i][1]!='~'
             var = readvar(st[i],varmap)
             lits[i-1] = Lit(1,!sign,var)
@@ -1175,7 +1301,8 @@ end; # using .Dumping # to save the import un comment this.
         end
         return c - sys.rhs[e] end
 
-    inprism(n, prism::BitVector) = n <= length(prism) && prism[n]
+    inprism(n, prism::BitVector)             = n <= length(prism) && prism[n]
+    inprism(n, prism::Vector{UnitRange{Int64}}) = any(n in r for r in prism)
     @inline function setconelits(conelits, v, id)
         push!(get!(Set{Int}, conelits, id), v) end
 
@@ -2262,7 +2389,8 @@ end; # using .Dumping # to save the import un comment this.
     function parsegraphfiles(ins)
         m = match(r"^(.+)\.core(\d+)$", ins)
         if m !== nothing
-            prev_ins = m.captures[1]
+            base, n = m.captures[1], parse(Int, m.captures[2])
+            prev_ins = n == 1 ? base : base * ".core$(n-1)"
             return proofs * "vis/" * prev_ins * ".core.pat.lad",
                    proofs * "vis/" * prev_ins * ".core.tar.lad"
         end
@@ -2366,12 +2494,22 @@ end; # using .Dumping # to save the import un comment this.
     end
 
     # Runs the Glasgow SIP solver on pat_lad/tar_lad, writing proof to proofs/out_prefix.{opb,pbp}.
+    # Solver stdout/stderr are appended to out_prefix.{out,err} (tryrm clears them beforehand for the original instance).
     # Returns true if both output files were produced.
     function runsipsolver(out_prefix, pat_lad, tar_lad)
         isfile(sipsolverpath) || (printstyled("  solver not found: $sipsolverpath\n"; color=:red); return false)
-        redirect_stdio(stdout=devnull, stderr=devnull) do
-            run(ignorestatus(`timeout $solvertimeout $sipsolverpath
-                --prove $(proofs*out_prefix) --no-clique-detection --format lad $pat_lad $tar_lad`))
+        errfile = proofs*out_prefix*".err"
+        open(proofs*out_prefix*".out", "a") do fout
+            open(errfile, "a") do ferr
+                run(pipeline(
+                    ignorestatus(`timeout $solvertimeout $sipsolverpath
+                        --prove $(proofs*out_prefix) --no-clique-detection --format lad $pat_lad $tar_lad`),
+                    stdout=fout, stderr=ferr))
+            end
+        end
+        if isfile(errfile)
+            err = read(errfile, String)
+            !isempty(strip(err)) && printstyled("  $out_prefix solver stderr: $err"; color=:red)
         end
         return isfile(proofs*out_prefix*opb) && isfile(proofs*out_prefix*pbp)
     end
@@ -2392,19 +2530,23 @@ end; # using .Dumping # to save the import un comment this.
             np = parse(Int, readline(cur_pat))
             nt = parse(Int, readline(cur_tar))
             if np == prev_np && nt == prev_nt
-                printstyled("  resolv: fixpoint after $(iter-1) iteration(s) ($np pat, $nt tar nodes)\n"; color=:green); return
+                tryrm(cur_pat); tryrm(cur_tar)
+                printstyled("  $ins resolv: fixpoint after $(iter-1) iteration(s) ($np pat, $nt tar nodes)\n"; color=:green); return
             end
             prev_np, prev_nt = np, nt
             core_ins = ins * ".core$iter"
+            tryrm(proofs*core_ins*".out")
+            tryrm(proofs*core_ins*".err")
             t = @elapsed ok = runsipsolver(core_ins, cur_pat, cur_tar)
             if !ok
+                tryrm(cur_pat); tryrm(cur_tar)
                 printstyled("  resolv: solver failed/timeout at iter $iter ($(round(t;digits=1))s)\n"; color=:red); return
             end
-            printstyled("  resolv iter $iter: $np pat / $nt tar → solved $(round(t;digits=1))s\n"; color=:cyan)
+            printstyled("  $ins resolv iter $iter: $np pat / $nt tar → solved $(round(t;digits=1))s\n"; color=:cyan)
             printabline(core_ins)
-            tr1,tr2,tr3 = trimnalyse(core_ins; mode=Grim())
+            tr1,tr2,tr3,trs = trimnalyse(core_ins; mode=Grim())
             tr4,tr5 = VERIF ? verify(core_ins) : (-1,-1)
-            printabline2(core_ins, tr1, tr2, tr3, tr4, tr5)
+            printabline2(core_ins, tr1, tr2, tr3, tr4, tr5, trs)
             writeout_verif(core_ins, tr4, tr5)
             cur_pat = proofs * "vis/" * core_ins * ".core.pat.lad"
             cur_tar = proofs * "vis/" * core_ins * ".core.tar.lad"
@@ -2420,7 +2562,7 @@ end; # using .Dumping # to save the import un comment this.
         adj_p = readlad(patfile)
         adj_t = readlad(tarfile)
         dir = proofs * "vis/"
-        isdir(dir) || mkdir(dir)
+        mkpath(dir)
         P_set = Set(P); T_set = Set(T)
         writedot(dir * ins * ".pat.dot",  adj_p, P_set)
         writedot(dir * ins * ".tar.dot",  adj_t, T_set)
@@ -2431,7 +2573,7 @@ end; # using .Dumping # to save the import un comment this.
             svg = dir * base * ".svg"
             run(ignorestatus(`neato -Tsvg -K$layout -o$svg $dot`))
         end
-        println("\ncore: $(length(P))/$(length(adj_p)) pat nodes, $(length(T))/$(length(adj_t)) tar nodes → $dir")
+        println("  $ins core: $(length(P))/$(length(adj_p)) pat nodes, $(length(T))/$(length(adj_t)) tar nodes")
     end
 
 # ======================================= main code ======================================= #
