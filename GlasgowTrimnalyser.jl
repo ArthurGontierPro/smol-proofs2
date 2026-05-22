@@ -300,8 +300,9 @@ julia --threads 196 GlasgowTrimnalyser.jl solve resolv verif allgraphs maxnodes=
             t5 >= 0 && println(f, "veri TIME ",      t5)
         end end
 
-    const veripbpath = _cluster ? "/users/grad/arthur/veripb-dev/target/release/veripb"
-                                 : "/home/arthur_gla/veriPB/trim/VeriPB/target/release/veripb"
+    const veripbpath = _cluster ?
+        "/users/grad/arthur/veripb-dev/target/release/veripb" :
+        "/home/arthur_gla/veriPB/trim/VeriPB/target/release/veripb"
 
     function verify(ins)
         t4 = t5 = 0
