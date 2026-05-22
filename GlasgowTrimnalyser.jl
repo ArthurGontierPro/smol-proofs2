@@ -28,6 +28,8 @@ julia --threads 196 GlasgowTrimnalyser.jl solve resolv verif allgraphs maxnodes=
     const SOLVE     = "solve"     in ARGS  # run SIP solver on original graphs before trimming
     const RESOLV    = "resolv"    in ARGS  # re-solve on core reduced graphs after trimming (implies CORE)
     const ALLGRAPHS = "allgraphs" in ARGS  # enumerate all instances from benchmark graph directories
+    const PACK      = "pack"      in ARGS  # tar.gz all .dot files in vis/ → vis.tar.gz (for cluster transfer)
+    const RENDER    = "render"    in ARGS  # extract vis.tar.gz and render all .dot → .svg with neato
     const MAXNODES  = begin
         i = findfirst(x -> startswith(x, "maxnodes="), ARGS)
         i !== nothing ? parse(Int, ARGS[i][10:end]) : typemax(Int)
@@ -39,8 +41,35 @@ julia --threads 196 GlasgowTrimnalyser.jl solve resolv verif allgraphs maxnodes=
     const argflags = Set(["bfs","clit","core","verif","no","rand","sort","clean","atable",
                           "profile","solve","resolv","allgraphs"])
 
+    function packdots()
+        visdir = proofs * "vis/"
+        archive = proofs * "vis.tar.gz"
+        dots = filter(f -> endswith(f, ".dot"), readdir(visdir; join=true))
+        isempty(dots) && (println("No .dot files to pack."); return)
+        run(`tar -czf $archive -C $visdir .`)
+        println("Packed $(length(dots)) .dot files → $archive") end
+
+    function renderdots()
+        archive = proofs * "vis.tar.gz"
+        visdir  = proofs * "vis/"
+        isfile(archive) && run(`tar -xzf $archive -C $visdir`)
+        dots = filter(f -> endswith(f, ".dot"), readdir(visdir; join=true))
+        isempty(dots) && (println("No .dot files to render."); return)
+        for dot in dots
+            svg = dot[1:end-4] * ".svg"
+            content = read(dot, String)
+            m = match(r"layout=(\w+)", content)
+            layout = m !== nothing ? m.captures[1] : "neato"
+            try run(ignorestatus(`neato -Tsvg -K$layout -o$svg $dot`))
+            catch; printstyled("  neato not found — install graphviz\n"; color=:yellow); return
+            end
+        end
+        println("Rendered $(length(dots)) SVGs in $visdir") end
+
     function main()
-        if ATABLE plotresultstable(); return
+        if PACK   packdots();   return
+        elseif RENDER renderdots(); return
+        elseif ATABLE plotresultstable(); return
         elseif CLEAN
             rm.(filter(f -> endswith(f, ".out") || endswith(f, ".err"), readdir(proofs; join=true)))
             visdir = proofs * "vis/"
@@ -271,20 +300,21 @@ julia --threads 196 GlasgowTrimnalyser.jl solve resolv verif allgraphs maxnodes=
             t5 >= 0 && println(f, "veri TIME ",      t5)
         end end
 
+    const veripbpath = _cluster ? "/users/grad/arthur/veripb-dev/target/release/veripb"
+                                 : "/home/arthur_gla/veriPB/trim/VeriPB/target/release/veripb"
+
     function verify(ins)
         t4 = t5 = 0
-        veripb = "/home/arthur_gla/veriPB/trim/VeriPB/target/release/veripb"
+        isfile(veripbpath) || (printstyled("  veripb not found at $veripbpath — skipping verif\n"; color=:yellow); return t4,t5)
         ins2 = proofs*ins
         ins3 = ins2*".smolverif"
         ins4 = ins2*".verif"
-        ins31 = ins3*".out"
-        ins32 = ins3*".err"
-        ins41 = ins4*".out"
-        ins42 = ins4*".err"
+        ins31 = ins3*".out"; ins32 = ins3*".err"
+        ins41 = ins4*".out"; ins42 = ins4*".err"
         tryrm(ins31); tryrm(ins32)
-        t4 = @elapsed try run(pipeline(`$veripb $ins2$opb$smol $ins2$pbp$smol`,stdout=ins31,stderr=ins32)) catch e println("\nerr ",ins32) end
+        t4 = @elapsed try run(pipeline(`$veripbpath $ins2$opb$smol $ins2$pbp$smol`,stdout=ins31,stderr=ins32)) catch e println("\nerr ",ins32) end
         tryrm(ins41); tryrm(ins42)
-        t5 = @elapsed try run(pipeline(`$veripb $ins2$opb $ins2$pbp`,stdout=ins41,stderr=ins42)) catch e println("\nerr ",ins42) end
+        t5 = @elapsed try run(pipeline(`$veripbpath $ins2$opb $ins2$pbp`,stdout=ins41,stderr=ins42)) catch e println("\nerr ",ins42) end
         return trunc(Int,t4),trunc(Int,t5) end
 
 
