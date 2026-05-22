@@ -10,8 +10,8 @@ julia --threads 188 trimnalyser.jl solve resolv verif allgraphs maxnodes=300 st=
     const version = "3.0"
     const _cluster = contains(gethostname(), "dcs.gla.ac.uk") || startswith(gethostname(), "fataepyc")
     const abspath       = _cluster ? "/users/grad/arthur/"                                                              : "/home/arthur_gla/veriPB/subgraphsolver/"
-    const SIPgraphpath  = _cluster ? "/users/grad/arthur/newSIPbenchmarks/"                                            : "/home/arthur_gla/veriPB/newSIPbenchmarks/"
-    const sipsolverpath = _cluster ? "/users/grad/arthur/glasgow-subgraph-solver/build/glasgow_subgraph_solver"        : "/home/arthur_gla/veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
+    const SIPgraphpath  = _cluster ? "/scratch/arthur/newSIPbenchmarks/"                                               : "/home/arthur_gla/veriPB/newSIPbenchmarks/"
+    const sipsolverpath = _cluster ? "/scratch/arthur/glasgow_subgraph_solver"                                         : "/home/arthur_gla/veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
     const _defaultproofs = _cluster ? "/scratch/arthur/proofs/" : abspath*"proofs/"
     const proofs = (i = findfirst(x -> isdir(x), ARGS)) === nothing ? _defaultproofs : ARGS[i]
     const inst   = (i = findfirst(x -> isfile(proofs*x*pbp) && isfile(proofs*x*opb), ARGS)) !== nothing ? ARGS[i] : nothing # search for proof
@@ -314,7 +314,7 @@ julia --threads 188 trimnalyser.jl solve resolv verif allgraphs maxnodes=300 st=
         end end
 
     const veripbpath = _cluster ?
-        "/users/grad/arthur/veripb-dev/target/release/veripb" :
+        "/scratch/arthur/veripb" :
         "/home/arthur_gla/veriPB/trim/VeriPB/target/release/veripb"
 
     function verify(ins)
