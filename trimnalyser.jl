@@ -2,7 +2,7 @@
 julia trimnalyser.jl [options] [instance name or directory of instances]   options: atable sort rand clean verif profile bfs
 julia --threads 196 trimnalyser.jl solve resolv allgraphs maxnodes=50 
 julia --threads 6 trimnalyser.jl solve resolv verif allgraphs maxnodes=50 
-julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=300 st=6 tt=60 rand
+julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=6000 rand
 =#
     const opb = ".opb"
     const pbp = ".pbp"
@@ -158,6 +158,7 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=300 st=
                 push!(list, fmt(p, t))
             end
         end
+        RAND && shuffle!(list)
         println("%Generated ", length(list), " instances from benchmark graphs (maxnodes=", MAXNODES, ")")
         return list
     end
