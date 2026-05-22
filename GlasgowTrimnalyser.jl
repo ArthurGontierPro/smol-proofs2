@@ -2573,7 +2573,8 @@ end; # using .Dumping # to save the import un comment this.
         for (base, layout) in [(ins*".pat", "circo"), (ins*".tar", "neato")]
             dot = dir * base * ".dot"
             svg = dir * base * ".svg"
-            run(ignorestatus(`neato -Tsvg -K$layout -o$svg $dot`))
+            try run(ignorestatus(`neato -Tsvg -K$layout -o$svg $dot`))
+            catch; printstyled("  neato not found — install graphviz to render $svg\n"; color=:yellow) end
         end
         println("  $ins core: $(length(P))/$(length(adj_p)) pat nodes, $(length(T))/$(length(adj_t)) tar nodes")
     end
