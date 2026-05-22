@@ -313,8 +313,10 @@ julia --threads 196 GlasgowTrimnalyser.jl solve resolv verif allgraphs maxnodes=
         ins41 = ins4*".out"; ins42 = ins4*".err"
         tryrm(ins31); tryrm(ins32)
         t4 = @elapsed try run(pipeline(`$veripbpath $ins2$opb$smol $ins2$pbp$smol`,stdout=ins31,stderr=ins32)) catch e println("\nerr ",ins32) end
+        isfile(ins32) && isempty(strip(read(ins32,String))) && tryrm(ins32)
         tryrm(ins41); tryrm(ins42)
         t5 = @elapsed try run(pipeline(`$veripbpath $ins2$opb $ins2$pbp`,stdout=ins41,stderr=ins42)) catch e println("\nerr ",ins42) end
+        isfile(ins42) && isempty(strip(read(ins42,String))) && tryrm(ins42)
         return trunc(Int,t4),trunc(Int,t5) end
 
 
@@ -2541,7 +2543,11 @@ end; # using .Dumping # to save the import un comment this.
         end
         if isfile(errfile)
             err = read(errfile, String)
-            !isempty(strip(err)) && printstyled("  $out_prefix solver stderr: $err"; color=:red)
+            if !isempty(strip(err))
+                printstyled("  $out_prefix solver stderr: $err"; color=:red)
+            else
+                tryrm(errfile)
+            end
         end
         return isfile(proofs*out_prefix*opb) && isfile(proofs*out_prefix*pbp)
     end
