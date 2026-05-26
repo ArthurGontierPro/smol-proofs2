@@ -322,22 +322,23 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
         end
         if !NONORM
             printabline(ins)
-            t1,t2,t3,cs = trimnalyse(ins; mode=Grim())
+            t1,t2,t3,cs,coremsg = trimnalyse(ins; mode=Grim())
             ph_enter!(_ph_verif); t4,t5 = VERIF ? verify(ins) : (-1,-1); ph_exit!(_ph_verif)
             printabline2(ins,t1,t2,t3,t4,t5,cs)
+            !isempty(coremsg) && println(coremsg)
             writeout_verif(ins,t4,t5)
             RESOLV && resolvecore(ins)
         end
         if CLIT
             printabline(ins)
-            tc1,tc2,tc3,tcs = trimnalyse(ins; mode=Clit())
+            tc1,tc2,tc3,tcs,_ = trimnalyse(ins; mode=Clit())
             ph_enter!(_ph_verif); tc4,tc5 = VERIF ? verify(ins) : (-1,-1); ph_exit!(_ph_verif)
             printabline2(ins,tc1,tc2,tc3,tc4,tc5,tcs)
             writeout_verif(ins,tc4,tc5)
         end
         if BFS
             printabline(ins)
-            tb1,tb2,tb3,tbs = trimnalyse(ins; mode=Bfs())
+            tb1,tb2,tb3,tbs,_ = trimnalyse(ins; mode=Bfs())
             tb4,tb5 = VERIF ? verify(ins) : (-1,-1)
             printabline2(ins,tb1,tb2,tb3,tb4,tb5,tbs)
             writeout_verif(ins,tb4,tb5)
@@ -346,7 +347,7 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
         # mode: Grim(), Clit(), or Bfs() — see mode structs
     function trimnalyse(ins; mode=Grim())
         prefix = mode isa Bfs ? "gbfs" : mode isa Clit ? "gclt" : "grim"
-        t1 = t2 = t3 = 0 ; file = ins
+        t1 = t2 = t3 = 0 ; file = ins ; cs = nothing
         # if "load" in ARGS file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index = loadsys(file); @goto skiped end # using goto because I was told not to
         Base.acquire(_parse_sem)
         ph_enter!(_ph_parsing)
@@ -368,7 +369,7 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
         ph_exit!(_ph_trimming)
         if cone_timeout
             open(proofs*ins*".err", "a") do f; println(f, "getcone timeout after $(trimtimeout)s") end
-            return trunc(Int,t1),trunc(Int,t2),0,cs
+            return trunc(Int,t1),trunc(Int,t2),0,cs,""
         end
         # for (i,_) in conelits # nullify the conelits
         #     conelits[i] = Set{Int}(Int(sys.vars[k]) for k in eqrange(sys, i))
@@ -383,9 +384,9 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
         if isempty(output)
             printstyled("  $ins: proof truncated (no output line) — skipping write\n"; color=:red)
             open(proofs*ins*".err", "a") do f; println(f, "proof truncated: output line missing") end
-            return trunc(Int,t1),trunc(Int,t2),0,cs
+            return trunc(Int,t1),trunc(Int,t2),0,cs,""
         end
-        mode isa Grim && (CORE || RESOLV) && writeunsatcore(ins, sys, cone, conelits, varmap_inv, nbopb)
+        coremsg = (mode isa Grim && (CORE || RESOLV)) ? writeunsatcore(ins, sys, cone, conelits, varmap_inv, nbopb) : ""
         let expected = nbopb + length(systemlink), actual = length(sys.rhs)
             if expected != actual
                 printstyled("  SYNC ERROR $ins: nbopb=$nbopb + systemlink=$(length(systemlink)) = $expected but sys.rhs=$actual (diff=$(expected-actual))\n"; color=:red)
@@ -397,7 +398,7 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
         end
         ph_exit!(_ph_writing)
         writeout_write(ins, t1, t2, t3, prefix)
-        return trunc(Int,t1),trunc(Int,t2),trunc(Int,t3),cs end
+        return trunc(Int,t1),trunc(Int,t2),trunc(Int,t3),cs,coremsg end
 
     function writeout_parse(ins, t1, nbopb, n_pbp, inp_lits, inp_vars, prefix)
         opb_sz = filesize(proofs*ins*opb)
@@ -766,7 +767,7 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
     function printconestat(cone, cs)
         par() && return  # cursor-based stat doesn't compose with parallel output
         printgray("\r\033[99G% "*string(sum(cone))*"/"*string(length(cone))*" "
-                                *string(cs.vars_used)*"/"*string(cs.vars_total)*"\n") end
+                                *string(cs.vars_used)*"/"*string(cs.vars_total)*"") end
 
     function prettybytes(b)
         if b>=10^9
@@ -1022,7 +1023,7 @@ end; # using .Dumping # to save the import un comment this.
                         throw("SAT Not supported..")
                     end
                 elseif !(type in ["%","*","wiplvl","w","setlvl","#","f","d","del","end","pseudo-Boolean"])
-                    printstyled("unknown line head (skiped): ",ss; color=:red)
+                    printstyled("  [warn] unknown line head (skipped): $ss\n"; color=:yellow)
                 end
                 pushed && (c+=1)
             end
@@ -1236,7 +1237,7 @@ end; # using .Dumping # to save the import un comment this.
         col = length(st)-1
         if st[end-1] != ":" # coef lit coef lit >= b : id
             eq = Eq([],0)
-            printstyled("missing ia ID: ctr will be ignored";color = :red)
+            printstyled("  [warn] missing ia ID: constraint will be ignored\n"; color=:yellow)
         else
             eq = readeq(st,varmap,2:2:length(st)-3)
             l = st[end]
@@ -1419,9 +1420,7 @@ end; # using .Dumping # to save the import un comment this.
                     eq = get_eq(store,i)
                     s = slack(eq,assi)
                     if s<0
-                        printstyled(" sol propagated assignement to contradiction "; color = :red)
-                        print(" ",i," ")
-                        println(st)
+                        printstyled("  [warn] sol propagated assignment to contradiction at ctr $i: $st\n"; color=:yellow)
                         printeq(eq)
                         lits = [Lit(l.coef,!l.sign,l.var) for l in lits]
                         return assi
@@ -1731,7 +1730,7 @@ end; # using .Dumping # to save the import un comment this.
             istrivial(sys, i, conelits) || continue   # antecedent became trivial after lit trimming
             j = findfirst(x -> x == i, link)
             if j === nothing
-                println("antecedant $i not found in link $link")
+                printstyled("  [warn] antecedent $i not found in link $link\n"; color=:yellow)
                 continue
             end
             k0 = findfirst(x -> x == -1, @view link[j+1:end])  # find the '+' following this antecedent in the pol link
@@ -1742,7 +1741,7 @@ end; # using .Dumping # to save the import un comment this.
                     ante.flags[jj] || continue
                     printeqconelit(sys, jj, conelits)
                 end
-                println("antecedant $i's addition not found in link $link")
+                printstyled("  [warn] antecedent $i's addition not found in link $link\n"; color=:yellow)
                 deleteat!(link, j)
                 ante_remove!(ante, i)
                 continue
@@ -1810,7 +1809,7 @@ end; # using .Dumping # to save the import un comment this.
                 somme -= coef
             end
             if somme >= b
-                printstyled("conflicttrail: could not explain var $v in eq $eq\n"; color = :red)
+                printstyled("  [error] conflicttrail: could not explain var $v in eq $eq\n"; color=:red)
                 printeq(sys, eq); printeqconelit(sys, eq, conelits)
                 throw(ErrorException("conflicttrail: could not explain $v with eq $eq"))
             end
@@ -1876,7 +1875,7 @@ end; # using .Dumping # to save the import un comment this.
                 somme -= coef
             end
             if somme >= b
-                printstyled("conflicttrail: could not explain var $v in eq $eq\n"; color = :red)
+                printstyled("  [error] conflicttrail: could not explain var $v in eq $eq\n"; color=:red)
                 printeq(sys, eq); printeqconelit(sys, eq, conelits)
                 throw(ErrorException("conflicttrail: could not explain $v with eq $eq"))
             end
@@ -1957,7 +1956,7 @@ end; # using .Dumping # to save the import un comment this.
                 somme -= coef
             end
             if somme >= b
-                printstyled("conflicttrail: could not explain var $v in eq $eq\n"; color = :red)
+                printstyled("  [error] conflicttrail: could not explain var $v in eq $eq\n"; color=:red)
                 printeq(sys, eq); printeqconelit(sys, eq, conelits)
                 throw(ErrorException("conflicttrail: could not explain $v with eq $eq"))
             end
@@ -1995,7 +1994,7 @@ end; # using .Dumping # to save the import un comment this.
                 i += 1
             end
         end
-        printstyled("propagate! found no conflict\n"; color = :red) end
+        printstyled("  [error] propagate! found no conflict\n"; color=:red) end
 
         # Linear-scan RUP (kept for comparison). Two rewind pointers (r0/r1) + que BitVector guard.
     function deprecated_ruptrail(sys::PBSystem, init::Int, t::Trail,
@@ -2246,7 +2245,7 @@ end; # using .Dumping # to save the import un comment this.
             firstcontradiction = getfirstboundeq(sys, obj, conclusion, cone)
         end
         if firstcontradiction == 0
-            conclusion == "UNSAT" && printstyled("\nUNSAT contradiction not found\n"; color = :red)
+            conclusion == "UNSAT" && printstyled("  [error] UNSAT contradiction not found\n"; color=:red)
             return
         end
 
@@ -2273,7 +2272,7 @@ end; # using .Dumping # to save the import un comment this.
             if conclusion == "UNSAT" || conclusion == "NONE"
                 propagate!(sys, trail, prism_bv, ante, conelits, rs, cone)
             elseif occursin("BOUNDS", conclusion)
-                if !do_rup!(firstcontradiction, 0:0) printstyled("initial rup for bound contradiction failed\n"; color = :red) end
+                if !do_rup!(firstcontradiction, 0:0) printstyled("  [error] initial rup for bound contradiction failed\n"; color=:red) end
             end
             ante_into_frontier!(ante, frontier, on_frontier, cone, systemlink[firstcontradiction - nbopb])
         end
@@ -2298,7 +2297,7 @@ end; # using .Dumping # to save the import un comment this.
                             ante_remove!(ante, i)              # i itself is not its own antecedent
                             ante_into_frontier!(ante, frontier, on_frontier, cone, systemlink[i - nbopb])
                         else
-                            printstyled("rup failed at $i\n"; color = :red)
+                            printstyled("  [error] rup failed at $i\n"; color=:red)
                             return
                         end
                     elseif tlink >= -3 || (tlink == -30 && length(systemlink[i - nbopb]) > 1)  # pol / ia / assumption with hints
@@ -2324,7 +2323,7 @@ end; # using .Dumping # to save the import un comment this.
                             ante_remove!(ante, i)
                             ante_into_frontier!(ante, frontier, on_frontier, cone, systemlink[i - nbopb])
                         else
-                            printstyled("subproof rup failed\n"; color = :red)
+                            printstyled("  [error] subproof rup failed\n"; color=:red)
                         end
                     elseif tlink == -6 || tlink == -8           # subproof pol / proofgoal ref
                         ante_clear!(ante)
@@ -2538,8 +2537,7 @@ end; # using .Dumping # to save the import un comment this.
                     end
                     dels[p] = true
                     if index[p] == 0
-                        println(p, " in ", systemlink[p - nbopb])
-                        printstyled(string("del index is 0 for ", p, " => ", index[p], "\n"); color = :red)
+                        printstyled("  [error] del index is 0 for $p (link: $(systemlink[p - nbopb]))\n"; color=:red)
                     else
                         write(f, string(index[p], " "))
                     end
@@ -2686,7 +2684,7 @@ end; # using .Dumping # to save the import un comment this.
                             print(f, "a "); writeeq(f, sys, i, varmap)
                         end
                     else
-                        println("ERROR tlink = ", tlink)
+                        printstyled("  [error] unknown tlink=$tlink\n"; color=:red)
                         lastindex -= 1
                     end
                 end
@@ -2869,9 +2867,10 @@ end; # using .Dumping # to save the import un comment this.
             end
             printstyled("  $ins resolv iter $iter: $np pat / $nt tar → solved $(round(t;digits=1))s\n"; color=:cyan)
             printabline(core_ins)
-            tr1,tr2,tr3,trs = trimnalyse(core_ins; mode=Grim())
+            tr1,tr2,tr3,trs,coremsg = trimnalyse(core_ins; mode=Grim())
             tr4,tr5 = VERIF ? verify(core_ins) : (-1,-1)
             printabline2(core_ins, tr1, tr2, tr3, tr4, tr5, trs)
+            !isempty(coremsg) && println(coremsg)
             writeout_verif(core_ins, tr4, tr5)
             cur_pat = proofs * "vis/" * core_ins * ".core.pat.lad"
             cur_tar = proofs * "vis/" * core_ins * ".core.tar.lad"
@@ -2881,9 +2880,9 @@ end; # using .Dumping # to save the import un comment this.
     function writeunsatcore(ins, sys::PBSystem, cone::Vector{Bool},
                             conelits::Dict{Int,Set{Int}}, varmap_inv::Vector{String}, nbopb::Int)
         patfile, tarfile = parsegraphfiles(ins)
-        (patfile === nothing || !isfile(patfile) || !isfile(tarfile)) && return
+        (patfile === nothing || !isfile(patfile) || !isfile(tarfile)) && return ""
         P, T = corenodes(sys, cone, varmap_inv, conelits, nbopb)
-        isempty(P) && return
+        isempty(P) && return ""
         adj_p = readlad(patfile)
         adj_t = readlad(tarfile)
         dir = proofs * "vis/"
@@ -2901,7 +2900,7 @@ end; # using .Dumping # to save the import un comment this.
                 # printstyled("  neato not found — install graphviz to render $svg\n"; color=:yellow) 
             end
         end
-        println("  $ins core: $(length(P))/$(length(adj_p)) pat nodes, $(length(T))/$(length(adj_t)) tar nodes")
+        return "  $ins core: $(length(P))/$(length(adj_p)) pat nodes, $(length(T))/$(length(adj_t)) tar nodes"
     end
 
 # ======================================= main code ======================================= #
