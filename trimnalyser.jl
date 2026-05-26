@@ -57,6 +57,31 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
     const _ph_verif     = Threads.Atomic{Int}(0)  # threads inside verify
     ph_enter!(c) = Threads.atomic_add!(c, 1)
     ph_exit!(c)  = Threads.atomic_sub!(c, 1)
+
+    # Zero-allocation line tokenizer. Replaces split(ss, keepempty=false) in the hot parse loops.
+    # Uses task_local_storage so the buffer persists across all iterations on the same task
+    # (safe with @threads :greedy — each task owns its buffer and never shares it).
+    # The input ss must already have ';' stripped (same contract as split after remove(ss,";"")).
+    # Returns a reference to the task-local buffer — valid only until the next tokenize! call on this task.
+    function tokenize!(ss::String)
+        buf = get!(task_local_storage(), :tokbuf, SubString{String}[])
+        empty!(buf)
+        i = 1
+        n = ncodeunits(ss)
+        while i <= n
+            while i <= n && (codeunit(ss, i) == UInt8(' ') || codeunit(ss, i) == UInt8('\t'))
+                i += 1
+            end
+            i > n && break
+            j = i
+            while j <= n && codeunit(ss, j) != UInt8(' ') && codeunit(ss, j) != UInt8('\t')
+                j += 1
+            end
+            push!(buf, SubString(ss, i, j - 1))
+            i = j
+        end
+        return buf
+    end
     const minfreemem    = begin i = findfirst(x -> startswith(x, "minmem="), ARGS); i !== nothing ? parse(Int, ARGS[i][8:end]) * 1024^3 : (_cluster ? 500 : 4) * 1024^3 end  # minmem=N GB, default 500 on cluster / 4 locally
     const maxparse      = begin i = findfirst(x -> startswith(x, "maxparse="), ARGS); i !== nothing ? parse(Int, ARGS[i][10:end]) : (_cluster ? 16 : 4) end  # maxparse=N, max concurrent parses, default 16 on cluster / 4 locally
     const _parse_sem    = Base.Semaphore(maxparse)
@@ -766,7 +791,7 @@ end; # using .Dumping # to save the import un comment this.
             for ss in eachline(f)
                 if length(ss)==0 || ss[1]=='*' continue end
                 ss = remove(ss,";")
-                st = split(ss,keepempty=false)
+                st = tokenize!(ss)
                 if st[1][1]=='@'
                     ctrmap[st[1][2:end]] = c
                     st = st[2:end]
@@ -915,7 +940,7 @@ end; # using .Dumping # to save the import un comment this.
                     end
                     ss = ss[1:i-1]
                 end
-                st = split(ss,keepempty=false)
+                st = tokenize!(ss)
                 if st[1][1]=='@'
                     ctrmap[st[1][2:end]] = c
                     st = st[2:end]
