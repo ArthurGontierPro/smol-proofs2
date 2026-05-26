@@ -40,20 +40,6 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
     const minfreemem    = begin i = findfirst(x -> startswith(x, "minmem="), ARGS); i !== nothing ? parse(Int, ARGS[i][8:end]) * 1024^3 : (_cluster ? 500 : 4) * 1024^3 end  # minmem=N GB, default 500 on cluster / 4 locally
     using Random,DataStructures,Dates
 
-    # Tees all Julia-level stdout/stderr to both the terminal and a log file simultaneously.
-    # Delegates color/isatty queries to the primary (terminal) so printstyled still colours the terminal.
-    # log_lock serialises writes to the file so lines from concurrent threads don't interleave in the log.
-    # The terminal (primary) is not locked — it already interleaves, matching pre-existing behaviour.
-    struct TeeIO <: IO
-        primary   :: IO
-        secondary :: IO
-        log_lock  :: ReentrantLock
-    end
-    TeeIO(primary, secondary) = TeeIO(primary, secondary, ReentrantLock())
-    Base.write(t::TeeIO, b::UInt8)           = (write(t.primary, b); lock(t.log_lock) do; write(t.secondary, b); end; 1)
-    Base.write(t::TeeIO, b::Vector{UInt8})   = (write(t.primary, b); lock(t.log_lock) do; write(t.secondary, b); end; length(b))
-    Base.flush(t::TeeIO)                     = (flush(t.primary); flush(t.secondary))
-    Base.get(t::TeeIO, key::Symbol, default) = get(t.primary, key, default)
 
 # =============== main stuff =============
     const argflags = Set(["bfs","clit","core","verif","no","rand","sort","clean","atable",
@@ -2722,13 +2708,27 @@ if PROFILE
 else
     logfile = open(joinpath(@__DIR__, "output.log"), "a")
     println(logfile, "\n% run started ", Dates.now())
-    tee = TeeIO(stdout, logfile)
-    redirect_stdout(tee) do
-        redirect_stderr(tee) do
-            main()
-        end
+    flush(logfile)
+    orig_out = Base.stdout
+    orig_err = Base.stderr
+    rd, wr = redirect_stdout()  # redirects stdout fd to a pipe; returns (read_end, write_end)
+    redirect_stderr(wr)         # stderr goes to the same pipe
+    # single async task drains the pipe → terminal + log; no lock needed (only one writer to logfile)
+    tee_task = @async while !eof(rd)
+        data = readavailable(rd)
+        write(orig_out, data)
+        write(logfile, data)
+        flush(logfile)
     end
-    close(logfile)
+    try
+        main()
+    finally
+        redirect_stdout(orig_out)
+        redirect_stderr(orig_err)
+        close(wr)       # signals EOF to the tee task
+        wait(tee_task)  # drain remaining data before closing
+        close(logfile)
+    end
 end
 
 
