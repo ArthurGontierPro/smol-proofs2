@@ -36,7 +36,8 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
     end
     const solvertimeout = begin i = findfirst(x -> startswith(x, "st="), ARGS); i !== nothing ? parse(Int, ARGS[i][4:end]) : 5   end  # st=N
     const trimtimeout   = begin i = findfirst(x -> startswith(x, "tt="), ARGS); i !== nothing ? parse(Int, ARGS[i][4:end]) : 45  end  # tt=N
-    const minfreemem    = begin i = findfirst(x -> startswith(x, "minmem="), ARGS); i !== nothing ? parse(Int, ARGS[i][8:end]) * 1024^3 : (_cluster ? 100 : 4) * 1024^3 end  # minmem=N GB, default 100 on cluster / 4 locally
+    const _gc_lock      = ReentrantLock()  # at most one thread runs GC at a time to avoid GC storms when many threads back up
+    const minfreemem    = begin i = findfirst(x -> startswith(x, "minmem="), ARGS); i !== nothing ? parse(Int, ARGS[i][8:end]) * 1024^3 : (_cluster ? 500 : 4) * 1024^3 end  # minmem=N GB, default 500 on cluster / 4 locally
     using Random,DataStructures
 # =============== main stuff =============
     const argflags = Set(["bfs","clit","core","verif","no","rand","sort","clean","atable",
@@ -175,8 +176,16 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
         end end
 
     function trimnalyseandcie(ins)
+            # memory backpressure: block until the OS reports enough free RAM before loading a new instance.
+            # GC.gc(false) (incremental, non-full) is called by at most one thread at a time via _gc_lock
+            # to help Julia release unreferenced objects without causing a GC storm when many threads pile up.
+            # sleep(60) keeps polling rare — checking once per minute is plenty given solve times of minutes.
             while Sys.free_memory() < minfreemem
-                sleep(2)
+                if trylock(_gc_lock)
+                    GC.gc(false)
+                    unlock(_gc_lock)
+                end
+                sleep(60)
             end
             tryrm(proofs*ins*".out")
             tryrm(proofs*ins*".err")
@@ -205,6 +214,15 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
                 if isempty(c)
                     printstyled("  $ins: no conclusion (truncated proof) — skipping\n"; color=:red)
                     open(proofs*ins*".err", "a") do f; println(f, "proof truncated: no conclusion") end
+                    return
+                end
+            end
+            # size guard: skip instances whose combined opb+pbp exceeds 50 GB to avoid OOM during parsing.
+            # checked after SOLVE so the size reflects the freshly generated proof, not a stale file.
+            let sz = (isfile(proofs*ins*opb) ? filesize(proofs*ins*opb) : 0) +
+                     (isfile(proofs*ins*pbp) ? filesize(proofs*ins*pbp) : 0)
+                if sz > 50 * 1024^3
+                    printstyled("  $ins too large ($(round(sz/1024^3; digits=1)) GB) — skipping\n"; color=:yellow)
                     return
                 end
             end
@@ -242,6 +260,7 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
         inp_lits = sum(length(eq.t) for eq in system; init=0)
         writeout_parse(ins, t1, nbopb, length(systemlink), inp_lits, length(varmap), prefix)
         sys = PBSystem(system, length(varmap))
+        empty!(system) # PBSystem copied all data into flat arrays; release Eq objects to halve peak constraint memory
         n = length(sys.rhs)
         cone     = zeros(Bool, n)
         conelits = Dict{Int,Set{Int}}()
