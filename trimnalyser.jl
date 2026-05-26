@@ -2720,7 +2720,7 @@ if PROFILE
     throw("uncomment here to enable profiling")
     @profilehtml main()
 else
-    logfile = open(joinpath(dirname(abspath(@__FILE__)), "output.log"), "a")
+    logfile = open(joinpath(@__DIR__, "output.log"), "a")
     println(logfile, "\n% run started ", Dates.now())
     tee = TeeIO(stdout, logfile)
     redirect_stdout(tee) do
