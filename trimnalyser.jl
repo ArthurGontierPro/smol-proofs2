@@ -30,6 +30,7 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
     const ALLGRAPHS = "allgraphs" in ARGS  # enumerate all instances from benchmark graph directories
     const PACK      = "pack"      in ARGS  # tar.gz all .dot files in vis/ → vis.tar.gz (for cluster transfer)
     const RENDER    = "render"    in ARGS  # extract vis.tar.gz and render all .dot → .svg with neato
+    const OVERWRITE = "overwrite" in ARGS  # re-trim even if .smol files are already complete
     const MAXNODES  = begin
         i = findfirst(x -> startswith(x, "maxnodes="), ARGS)
         i !== nothing ? parse(Int, ARGS[i][10:end]) : typemax(Int)
@@ -171,6 +172,7 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
         end
         wall = @elapsed Threads.@threads :greedy for ins in list
             try
+                # run(`julia trimnalyser.jl $ins solve resolv verif`)
                 trimnalyseandcie(ins)
             catch e
                 msg = sprint(showerror, e, catch_backtrace())
@@ -253,93 +255,93 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
     smol_complete(ins) = isfile(proofs*ins*opb*smol) && !isempty(pbpconclusion(ins, smol))
 
     function trimnalyseandcie(ins)
-            # resume: if trimmed output already exists and the pbp tail confirms a complete write, skip entirely.
-            # checked before the memory wait so finished instances never contend for RAM.
-            if smol_complete(ins)
-                printstyled("  $ins already done — skipping\n"; color=:blue)
+        # resume: if trimmed output already exists and the pbp tail confirms a complete write, skip entirely.
+        # checked before the memory wait so finished instances never contend for RAM.
+        if !OVERWRITE && smol_complete(ins)
+            printstyled("  $ins already done — skipping\n"; color=:blue)
+            return
+        end
+        # memory backpressure: block until the OS reports enough free RAM before loading a new instance.
+        # GC.gc(false) (incremental, non-full) is called by at most one thread at a time via _gc_lock
+        # to help Julia release unreferenced objects without causing a GC storm when many threads pile up.
+        # sleep(60) keeps polling rare — checking once per minute is plenty given solve times of minutes.
+        while available_memory() < minfreemem
+            ph_enter!(_ph_memwait)
+            if trylock(_gc_lock)
+                GC.gc(false)
+                unlock(_gc_lock)
+            end
+            sleep(60)
+            ph_exit!(_ph_memwait)
+        end
+        tryrm(proofs*ins*".out")
+        tryrm(proofs*ins*".err")
+        if SOLVE
+            patfile, tarfile = parsegraphfiles(ins)
+            if patfile === nothing
+                printstyled("  solve: cannot parse graph paths for $ins\n"; color=:red)
                 return
             end
-            # memory backpressure: block until the OS reports enough free RAM before loading a new instance.
-            # GC.gc(false) (incremental, non-full) is called by at most one thread at a time via _gc_lock
-            # to help Julia release unreferenced objects without causing a GC storm when many threads pile up.
-            # sleep(60) keeps polling rare — checking once per minute is plenty given solve times of minutes.
-            while available_memory() < minfreemem
-                ph_enter!(_ph_memwait)
-                if trylock(_gc_lock)
-                    GC.gc(false)
-                    unlock(_gc_lock)
-                end
-                sleep(60)
-                ph_exit!(_ph_memwait)
-            end
-            tryrm(proofs*ins*".out")
-            tryrm(proofs*ins*".err")
-            if SOLVE
-                patfile, tarfile = parsegraphfiles(ins)
-                if patfile === nothing
-                    printstyled("  solve: cannot parse graph paths for $ins\n"; color=:red)
-                    return
-                end
-                # resume: proof files already exist and pbp tail confirms a complete write — skip solver.
-                if isfile(proofs*ins*opb) && !isempty(pbpconclusion(ins))
-                    printstyled("  $ins proof exists — skipping solve\n"; color=:blue)
-                else
-                    ph_enter!(_ph_solving)
-                    t = @elapsed ok = runsipsolver(ins, patfile, tarfile)
-                    ph_exit!(_ph_solving)
-                    if !ok
-                        out_content = isfile(proofs*ins*".out") ? read(proofs*ins*".out", String) : ""
-                        if occursin("SATISFIABLE", out_content) && !occursin("UNSATISFIABLE", out_content)
-                            printstyled("  $ins SAT — skipping\n"; color=:yellow)
-                        else
-                            printstyled("  $ins solve failed or timed out ($(round(t;digits=1))s)\n"; color=:red)
-                        end
-                        return
+            # resume: proof files already exist and pbp tail confirms a complete write — skip solver.
+            if isfile(proofs*ins*opb) && !isempty(pbpconclusion(ins))
+                printstyled("  $ins proof exists — skipping solve\n"; color=:blue)
+            else
+                ph_enter!(_ph_solving)
+                t = @elapsed ok = runsipsolver(ins, patfile, tarfile)
+                ph_exit!(_ph_solving)
+                if !ok
+                    out_content = isfile(proofs*ins*".out") ? read(proofs*ins*".out", String) : ""
+                    if occursin("SATISFIABLE", out_content) && !occursin("UNSATISFIABLE", out_content)
+                        printstyled("  $ins SAT — skipping\n"; color=:yellow)
+                    else
+                        printstyled("  $ins solve failed or timed out ($(round(t;digits=1))s)\n"; color=:red)
                     end
-                    printstyled("  $ins solved $(round(t;digits=1))s\n"; color=:cyan)
-                end
-            end
-            let c = pbpconclusion(ins)
-                if c == "SAT" || c == "NONE"
-                    printstyled("  $ins $c — skipping\n"; color=:yellow); return
-                end
-                if isempty(c)
-                    printstyled("  $ins: no conclusion (truncated proof) — skipping\n"; color=:red)
-                    open(proofs*ins*".err", "a") do f; println(f, "proof truncated: no conclusion") end
                     return
                 end
+                printstyled("  $ins solved $(round(t;digits=1))s\n"; color=:cyan)
             end
-            # size guard: skip instances whose combined opb+pbp exceeds 50 GB to avoid OOM during parsing.
-            # checked after SOLVE so the size reflects the freshly generated proof, not a stale file.
-            let sz = (isfile(proofs*ins*opb) ? filesize(proofs*ins*opb) : 0) +
-                     (isfile(proofs*ins*pbp) ? filesize(proofs*ins*pbp) : 0)
-                if sz > 50 * 1024^3
-                    printstyled("  $ins too large ($(round(sz/1024^3; digits=1)) GB) — skipping\n"; color=:yellow)
-                    return
-                end
+        end
+        let c = pbpconclusion(ins)
+            if c == "SAT" || c == "NONE"
+                printstyled("  $ins $c — skipping\n"; color=:yellow); return
             end
-            if !NONORM
-                printabline(ins)
-                t1,t2,t3,cs = trimnalyse(ins; mode=Grim())
-                ph_enter!(_ph_verif); t4,t5 = VERIF ? verify(ins) : (-1,-1); ph_exit!(_ph_verif)
-                printabline2(ins,t1,t2,t3,t4,t5,cs)
-                writeout_verif(ins,t4,t5)
-                RESOLV && resolvecore(ins)
+            if isempty(c)
+                printstyled("  $ins: no conclusion (truncated proof) — skipping\n"; color=:red)
+                open(proofs*ins*".err", "a") do f; println(f, "proof truncated: no conclusion") end
+                return
             end
-            if CLIT
-                printabline(ins)
-                tc1,tc2,tc3,tcs = trimnalyse(ins; mode=Clit())
-                ph_enter!(_ph_verif); tc4,tc5 = VERIF ? verify(ins) : (-1,-1); ph_exit!(_ph_verif)
-                printabline2(ins,tc1,tc2,tc3,tc4,tc5,tcs)
-                writeout_verif(ins,tc4,tc5)
+        end
+        # size guard: skip instances whose combined opb+pbp exceeds 50 GB to avoid OOM during parsing.
+        # checked after SOLVE so the size reflects the freshly generated proof, not a stale file.
+        let sz = (isfile(proofs*ins*opb) ? filesize(proofs*ins*opb) : 0) +
+                    (isfile(proofs*ins*pbp) ? filesize(proofs*ins*pbp) : 0)
+            if sz > 50 * 1024^3
+                printstyled("  $ins too large ($(round(sz/1024^3; digits=1)) GB) — skipping\n"; color=:yellow)
+                return
             end
-            if BFS
-                printabline(ins)
-                tb1,tb2,tb3,tbs = trimnalyse(ins; mode=Bfs())
-                tb4,tb5 = VERIF ? verify(ins) : (-1,-1)
-                printabline2(ins,tb1,tb2,tb3,tb4,tb5,tbs)
-                writeout_verif(ins,tb4,tb5)
-            end end
+        end
+        if !NONORM
+            printabline(ins)
+            t1,t2,t3,cs = trimnalyse(ins; mode=Grim())
+            ph_enter!(_ph_verif); t4,t5 = VERIF ? verify(ins) : (-1,-1); ph_exit!(_ph_verif)
+            printabline2(ins,t1,t2,t3,t4,t5,cs)
+            writeout_verif(ins,t4,t5)
+            RESOLV && resolvecore(ins)
+        end
+        if CLIT
+            printabline(ins)
+            tc1,tc2,tc3,tcs = trimnalyse(ins; mode=Clit())
+            ph_enter!(_ph_verif); tc4,tc5 = VERIF ? verify(ins) : (-1,-1); ph_exit!(_ph_verif)
+            printabline2(ins,tc1,tc2,tc3,tc4,tc5,tcs)
+            writeout_verif(ins,tc4,tc5)
+        end
+        if BFS
+            printabline(ins)
+            tb1,tb2,tb3,tbs = trimnalyse(ins; mode=Bfs())
+            tb4,tb5 = VERIF ? verify(ins) : (-1,-1)
+            printabline2(ins,tb1,tb2,tb3,tb4,tb5,tbs)
+            writeout_verif(ins,tb4,tb5)
+        end end
 
         # mode: Grim(), Clit(), or Bfs() — see mode structs
     function trimnalyse(ins; mode=Grim())
@@ -384,6 +386,11 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
             return trunc(Int,t1),trunc(Int,t2),0,cs
         end
         mode isa Grim && (CORE || RESOLV) && writeunsatcore(ins, sys, cone, conelits, varmap_inv, nbopb)
+        let expected = nbopb + length(systemlink), actual = length(sys.rhs)
+            if expected != actual
+                printstyled("  SYNC ERROR $ins: nbopb=$nbopb + systemlink=$(length(systemlink)) = $expected but sys.rhs=$actual (diff=$(expected-actual))\n"; color=:red)
+            end
+        end
         ph_enter!(_ph_writing)
         t3 = @elapsed begin
             writeconedel(proofs,file,sys,cone,conelits,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap_inv,ctrmap,output,conclusion,obj,prism)
@@ -918,12 +925,15 @@ end; # using .Dumping # to save the import un comment this.
 
     # Like readeq but pushes directly into the store without allocating an Eq.
     # Used in hot paths (readopb, processrup) where the eq is never needed as an object.
-    # Returns true if a non-empty equation was pushed.
+    # Always pushes — an empty equation (no lits) IS the contradiction (e.g. >= 1 with no vars)
+    # and must occupy a slot in the store so that store and systemlink stay in sync.
     function readeq_push!(store::FlatEqStore, st, varmap, r)
         lits = readlits(st, varmap, r.start:r.step:(r.stop-2))
         lits, c = merge(lits)
         b = parse(Int, st[r.start+2length(r)-1]) - c
-        isempty(lits) && b == 0 && return false
+        if isempty(lits) && b != 1
+            printstyled("  warning: unexpected empty eq with b=$b (expected contradiction b=1)\n"; color=:yellow)
+        end
         push_eq_normalized!(store, lits, b)
         return true end
 
@@ -992,18 +1002,17 @@ end; # using .Dumping # to save the import un comment this.
                     st = st[2:end]
                 end
                 type = st[1]
-                # pushed tracks whether an equation was added to the store this iteration.
-                # rup/u push directly (no Eq allocation); other types still return an Eq.
+                # All processX_push! functions push to both systemlink and store atomically,
+                # returning true. c is incremented once per push. red also returns new_c.
                 pushed = false
-                eq = nothing
                     if type == "rup" || type == "u" pushed = processrup_push!(store,st,varmap,systemlink)
                 elseif type == "pol" || type == "p" pushed = processpol_push!(store,st,varmap,systemlink,c,ctrmap,nbopb)
-                elseif type == "a"                  eq = processassumption(st,varmap,systemlink,assertrecord,c)
-                elseif type == "ia"                 eq = processia(st,varmap,ctrmap,c,systemlink)
-                elseif type == "red"                c,eq = processred(store,systemlink,st,varmap,ctrmap,redwitness,c,f,prism)
+                elseif type == "a"                  pushed = processassumption_push!(store,st,varmap,systemlink,assertrecord,c)
+                elseif type == "ia"                 pushed = processia_push!(store,st,varmap,ctrmap,c,systemlink)
+                elseif type == "red"                c,pushed = processred_push!(store,systemlink,st,varmap,ctrmap,redwitness,c,f,prism)
                 elseif type == "sol"                throw("trimmed SAT is the solution")
-                elseif type == "soli"               eq = processsoli(st,varmap,store,systemlink,c,prism,obj,solirecord)
-                elseif type == "solx"               eq = processsolx(st,varmap,store,systemlink,c,prism)
+                elseif type == "soli"               pushed = processsoli_push!(store,st,varmap,systemlink,c,prism,obj,solirecord)
+                elseif type == "solx"               pushed = processsolx_push!(store,st,varmap,systemlink,c,prism)
                 elseif type == "output"             output = remove(st[2],";")
                 elseif type == "conclusion"
                     conclusion = remove(st[2],";")
@@ -1014,11 +1023,6 @@ end; # using .Dumping # to save the import un comment this.
                     end
                 elseif !(type in ["%","*","wiplvl","w","setlvl","#","f","d","del","end","pseudo-Boolean"])
                     printstyled("unknown line head (skiped): ",ss; color=:red)
-                end
-                if !pushed && eq !== nothing && (length(eq.t)!=0 || eq.b!=0)
-                    normcoefeq(eq)
-                    push_eq!(store,eq)
-                    pushed = true
                 end
                 pushed && (c+=1)
             end
@@ -1035,9 +1039,13 @@ end; # using .Dumping # to save the import un comment this.
         return readeq(st,varmap,2:2:length(st)) end
 
     # Hot-path version: pushes directly into the store without allocating an Eq.
+    # Always returns true: every systemlink push must have a matching store push to keep indices in sync.
+    # NOTE: must NOT use _LINK_RUP singleton — getcone! pushes antecedent IDs into rup links in-place,
+    # so every rup entry needs its own vector (otherwise all share one accumulating list of antecedents).
     function processrup_push!(store,st,varmap,systemlink)
-        push!(systemlink, _LINK_RUP)   # shared singleton — safe, rup entries are never mutated
-        return readeq_push!(store, st, varmap, 2:2:length(st)) end
+        push!(systemlink, Int[-1])
+        readeq_push!(store, st, varmap, 2:2:length(st))
+        return true end
 
     function processpol(st,varmap,store,systemlink,c,ctrmap,nbopb)
         push!(systemlink,[-2])
@@ -1203,7 +1211,7 @@ end; # using .Dumping # to save the import un comment this.
         end
         eq.b = b end
 
-    function processassumption(st,varmap,systemlink,assertrecord,c)
+    function processassumption_push!(store,st,varmap,systemlink,assertrecord,c)
         eq = readeq(st,varmap,2:2:length(st))
         if haskey(assertrecord,c)
             hints = split(assertrecord[c],keepempty=false)[2:end]
@@ -1215,12 +1223,14 @@ end; # using .Dumping # to save the import un comment this.
         else
             push!(systemlink,[-30])
         end
-        return eq end
+        normcoefeq(eq); push_eq!(store,eq)
+        return true end
 
-    function processia(st,varmap,ctrmap,c,systemlink)
+    function processia_push!(store,st,varmap,ctrmap,c,systemlink)
         eq,l = readia(st,varmap,ctrmap,Eq([],0),c)
         push!(systemlink,[-3,l])
-        return eq end
+        normcoefeq(eq); push_eq!(store,eq)
+        return true end
 
     function readia(st,varmap,ctrmap,eq,c)
         col = length(st)-1
@@ -1237,6 +1247,13 @@ end; # using .Dumping # to save the import un comment this.
         end
         return eq,l end
 
+    # TODO(red): Glasgow graph proofs never generate red..begin..end blocks.
+    # This code is untested in the current FlatEqStore/processX_push! architecture.
+    # If red blocks are needed, audit store/systemlink sync and all push! functions inside readsubproof.
+    # Returns (new_c, true) to match the push! convention; red manages c internally.
+    function processred_push!(store,systemlink,st,varmap,ctrmap,redwitness,c,f,prism)
+        new_c, _ = processred(store,systemlink,st,varmap,ctrmap,redwitness,c,f,prism)
+        return new_c, true end
     function processred(store,systemlink,st,varmap,ctrmap,redwitness,redid,f,prism)
         i = findfirst(x->x==":",st)
         eq = readeq(st[2:i],varmap)
@@ -1288,6 +1305,8 @@ end; # using .Dumping # to save the import un comment this.
             return readvar(s,varmap)
         end end
             
+        # TODO(red): readsubproof is dead code for Glasgow graph proofs (no red..begin..end blocks generated).
+        # Uses old processrup (not processrup_push!) — store/systemlink sync not guaranteed here.
         # Reads the body of a "red ... begin ... end" block.
         # Each proof goal must derive a contradiction from: formula constraints + ~C (negated red eq) + witness substitutions.
         # proofgoal i  = i-th formula constraint with witness applied
@@ -1354,9 +1373,11 @@ end; # using .Dumping # to save the import un comment this.
         end
         return Eq(t, b) end
 
-    function processsoli(st,varmap,store,systemlink,c,prism,obj,solirecord)
+    function processsoli_push!(store,st,varmap,systemlink,c,prism,obj,solirecord)
         push!(systemlink, _LINK_SOLI)
-        return findbound(store,st,c,varmap,prism,obj,solirecord) end
+        eq = findbound(store,st,c,varmap,prism,obj,solirecord)
+        normcoefeq(eq); push_eq!(store,eq)
+        return true end
 
     function findbound(store,st,c,varmap,prism,obj,solirecord)
         assi = findfullassi(store,st,c,varmap,prism)
@@ -1412,9 +1433,11 @@ end; # using .Dumping # to save the import un comment this.
                             end end end end end end
         return assi end
 
-    function processsolx(st,varmap,store,systemlink,c,prism)
+    function processsolx_push!(store,st,varmap,systemlink,c,prism)
         push!(systemlink, _LINK_SOLX)
-        return solbreakingctr(store,st,c,varmap,prism) end
+        eq = solbreakingctr(store,st,c,varmap,prism)
+        normcoefeq(eq); push_eq!(store,eq)
+        return true end
 
     function solbreakingctr(store,st,init,varmap,prism)
         assi = findfullassi(store,st,init,varmap,prism)
@@ -2590,7 +2613,9 @@ end; # using .Dumping # to save the import un comment this.
                 end
             end
         end
-        succ = Vector{Vector{Int}}(undef, length(sys.rhs))
+        # size by nbopb + all proof steps (including any empty equations) so that
+        # constraint IDs in pol links — which count every systemlink entry — are always in range.
+        succ = Vector{Vector{Int}}(undef, nbopb + length(systemlink))
         dels = zeros(Bool, length(sys.rhs))
         # dels = ones(Bool, length(sys.rhs)); println("nodel mode")
         dels[1:nbopb] .= true
