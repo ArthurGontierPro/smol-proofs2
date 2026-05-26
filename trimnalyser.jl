@@ -1,8 +1,8 @@
 #= This is a PB trimmer made to analyse proofs. If problem, ask arthur.pro.gontier@gmail.com
 julia trimnalyser.jl [options] [instance name or directory of instances]   options: atable sort rand clean verif profile bfs
-julia --threads 196 trimnalyser.jl solve resolv allgraphs maxnodes=50 
-julia --threads 8 trimnalyser.jl solve resolv verif allgraphs maxnodes=30 st=8 tt=60 rand
-julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=6000 rand
+julia --threads 196,1 trimnalyser.jl solve resolv allgraphs maxnodes=50
+julia --threads 8,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=30 st=8 tt=60 rand
+julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=6000 rand
 =#
     const opb = ".opb"
     const pbp = ".pbp"
@@ -36,9 +36,29 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
     end
     const solvertimeout = begin i = findfirst(x -> startswith(x, "st="), ARGS); i !== nothing ? parse(Int, ARGS[i][4:end]) : 5   end  # st=N
     const trimtimeout   = begin i = findfirst(x -> startswith(x, "tt="), ARGS); i !== nothing ? parse(Int, ARGS[i][4:end]) : 45  end  # tt=N
+    # MemAvailable from /proc/meminfo includes reclaimable page cache, unlike Sys.free_memory() (MemFree only).
+    # On a busy cluster reading large proof files, page cache can consume hundreds of GB, making MemFree
+    # appear critically low while the system actually has plenty of usable memory.
+    function available_memory()
+        if isfile("/proc/meminfo")
+            for line in eachline("/proc/meminfo")
+                startswith(line, "MemAvailable:") && return parse(Int, split(line)[2]) * 1024
+            end
+        end
+        return Sys.free_memory()  # fallback for non-Linux
+    end
+
     const _gc_lock      = ReentrantLock()  # at most one thread runs GC at a time to avoid GC storms when many threads back up
+    const _ph_memwait   = Threads.Atomic{Int}(0)  # threads blocked in memory wait loop
+    const _ph_solving   = Threads.Atomic{Int}(0)  # threads inside runsipsolver
+    const _ph_parsing   = Threads.Atomic{Int}(0)  # threads inside readinstance
+    const _ph_trimming  = Threads.Atomic{Int}(0)  # threads inside getcone!
+    const _ph_writing   = Threads.Atomic{Int}(0)  # threads inside writeconedel
+    const _ph_verif     = Threads.Atomic{Int}(0)  # threads inside verify
+    ph_enter!(c) = Threads.atomic_add!(c, 1)
+    ph_exit!(c)  = Threads.atomic_sub!(c, 1)
     const minfreemem    = begin i = findfirst(x -> startswith(x, "minmem="), ARGS); i !== nothing ? parse(Int, ARGS[i][8:end]) * 1024^3 : (_cluster ? 500 : 4) * 1024^3 end  # minmem=N GB, default 500 on cluster / 4 locally
-    using Random,DataStructures,Dates
+    using Random,DataStructures,Dates,Printf
 
 
 # =============== main stuff =============
@@ -97,6 +117,16 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
         println("%Running ", n, " instances on ", Threads.nthreads(), " thread(s)")
         done    = Threads.Atomic{Int}(0)
         t_start = time()
+        stop_monitor = Threads.Atomic{Bool}(false)
+        monitor_task = Threads.@spawn :interactive while !stop_monitor[]
+            sleep(30)
+            stop_monitor[] && break
+            nthreads = Threads.nthreads()
+            free_gb  = round(available_memory() / 1024^3; digits=0)
+            printstyled(@sprintf("  [monitor] solve=%d parse=%d trim=%d write=%d verif=%d memwait=%d | free=%.0fGB | threads=%d\n",
+                _ph_solving[], _ph_parsing[], _ph_trimming[], _ph_writing[], _ph_verif[], _ph_memwait[], free_gb, nthreads);
+                color=:light_black)
+        end
         wall = @elapsed Threads.@threads :greedy for ins in list
             try
                 trimnalyseandcie(ins)
@@ -115,6 +145,7 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
                         round(Int, eta), "min\n\n"; color=:magenta)
             end
         end
+        stop_monitor[] = true; wait(monitor_task)
         println("%Wall time: ", round(wall; digits=1), "s")
         open(proofs*"wall.txt", "w") do f; println(f, wall) end
         end
@@ -190,12 +221,14 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
             # GC.gc(false) (incremental, non-full) is called by at most one thread at a time via _gc_lock
             # to help Julia release unreferenced objects without causing a GC storm when many threads pile up.
             # sleep(60) keeps polling rare — checking once per minute is plenty given solve times of minutes.
-            while Sys.free_memory() < minfreemem
+            while available_memory() < minfreemem
+                ph_enter!(_ph_memwait)
                 if trylock(_gc_lock)
                     GC.gc(false)
                     unlock(_gc_lock)
                 end
                 sleep(60)
+                ph_exit!(_ph_memwait)
             end
             tryrm(proofs*ins*".out")
             tryrm(proofs*ins*".err")
@@ -209,7 +242,9 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
                 if isfile(proofs*ins*opb) && !isempty(pbpconclusion(ins))
                     printstyled("  $ins proof exists — skipping solve\n"; color=:blue)
                 else
+                    ph_enter!(_ph_solving)
                     t = @elapsed ok = runsipsolver(ins, patfile, tarfile)
+                    ph_exit!(_ph_solving)
                     if !ok
                         out_content = isfile(proofs*ins*".out") ? read(proofs*ins*".out", String) : ""
                         if occursin("SATISFIABLE", out_content) && !occursin("UNSATISFIABLE", out_content)
@@ -244,7 +279,7 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
             if !NONORM
                 printabline(ins)
                 t1,t2,t3,cs = trimnalyse(ins; mode=Grim())
-                t4,t5 = VERIF ? verify(ins) : (-1,-1)
+                ph_enter!(_ph_verif); t4,t5 = VERIF ? verify(ins) : (-1,-1); ph_exit!(_ph_verif)
                 printabline2(ins,t1,t2,t3,t4,t5,cs)
                 writeout_verif(ins,t4,t5)
                 RESOLV && resolvecore(ins)
@@ -252,7 +287,7 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
             if CLIT
                 printabline(ins)
                 tc1,tc2,tc3,tcs = trimnalyse(ins; mode=Clit())
-                tc4,tc5 = VERIF ? verify(ins) : (-1,-1)
+                ph_enter!(_ph_verif); tc4,tc5 = VERIF ? verify(ins) : (-1,-1); ph_exit!(_ph_verif)
                 printabline2(ins,tc1,tc2,tc3,tc4,tc5,tcs)
                 writeout_verif(ins,tc4,tc5)
             end
@@ -269,9 +304,11 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
         prefix = mode isa Bfs ? "gbfs" : mode isa Clit ? "gclt" : "grim"
         t1 = t2 = t3 = 0 ; file = ins
         # if "load" in ARGS file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index = loadsys(file); @goto skiped end # using goto because I was told not to
+        ph_enter!(_ph_parsing)
         t1 = @elapsed begin
             system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,prism = readinstance(proofs,file)
         end
+        ph_exit!(_ph_parsing)
         inp_lits = sum(length(eq.t) for eq in system; init=0)
         writeout_parse(ins, t1, nbopb, length(systemlink), inp_lits, length(varmap), prefix)
         sys = PBSystem(system, length(varmap))
@@ -279,9 +316,11 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
         n = length(sys.rhs)
         cone     = zeros(Bool, n)
         conelits = Dict{Int,Set{Int}}()
+        ph_enter!(_ph_trimming)
         t2 = @elapsed begin
             cone_timeout = getcone!(cone, conelits, sys, systemlink, nbopb, prism, redwitness, conclusion, obj, mode) === true
         end
+        ph_exit!(_ph_trimming)
         if cone_timeout
             open(proofs*ins*".err", "a") do f; println(f, "getcone timeout after $(trimtimeout)s") end
             return trunc(Int,t1),trunc(Int,t2),0,cs
@@ -302,9 +341,11 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
             return trunc(Int,t1),trunc(Int,t2),0,cs
         end
         mode isa Grim && (CORE || RESOLV) && writeunsatcore(ins, sys, cone, conelits, varmap_inv, nbopb)
+        ph_enter!(_ph_writing)
         t3 = @elapsed begin
             writeconedel(proofs,file,sys,cone,conelits,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap_inv,ctrmap,output,conclusion,obj,prism)
         end
+        ph_exit!(_ph_writing)
         writeout_write(ins, t1, t2, t3, prefix)
         return trunc(Int,t1),trunc(Int,t2),trunc(Int,t3),cs end
 
@@ -2713,8 +2754,9 @@ else
     orig_err = Base.stderr
     rd, wr = redirect_stdout()  # redirects stdout fd to a pipe; returns (read_end, write_end)
     redirect_stderr(wr)         # stderr goes to the same pipe
-    # single async task drains the pipe → terminal + log; no lock needed (only one writer to logfile)
-    tee_task = @async while !eof(rd)
+    # drain pipe on a dedicated interactive thread so it never competes with compute threads for scheduling.
+    # @async would deadlock: if all compute threads block on pipe writes the async task can never run.
+    tee_task = Threads.@spawn :interactive while !eof(rd)
         data = readavailable(rd)
         write(orig_out, data)
         write(logfile, data)
