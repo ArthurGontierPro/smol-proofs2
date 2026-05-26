@@ -58,10 +58,10 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
     ph_enter!(c) = Threads.atomic_add!(c, 1)
     ph_exit!(c)  = Threads.atomic_sub!(c, 1)
 
-    # Zero-allocation line tokenizer. Replaces split(ss, keepempty=false) in the hot parse loops.
+    # Zero-allocation line tokenizer. Replaces both remove(ss,";") and split(ss,keepempty=false).
+    # Skips ';' characters inline so no intermediate String is allocated for semicolon stripping.
     # Uses task_local_storage so the buffer persists across all iterations on the same task
     # (safe with @threads :greedy — each task owns its buffer and never shares it).
-    # The input ss must already have ';' stripped (same contract as split after remove(ss,";"")).
     # Returns a reference to the task-local buffer — valid only until the next tokenize! call on this task.
     function tokenize!(ss::String)
         buf = get!(task_local_storage(), :tokbuf, SubString{String}[])
@@ -69,13 +69,17 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
         i = 1
         n = ncodeunits(ss)
         while i <= n
-            while i <= n && (codeunit(ss, i) == UInt8(' ') || codeunit(ss, i) == UInt8('\t'))
-                i += 1
+            # skip whitespace and semicolons between tokens
+            while i <= n
+                b = codeunit(ss, i)
+                b == UInt8(' ') || b == UInt8('\t') || b == UInt8(';') ? i += 1 : break
             end
             i > n && break
             j = i
-            while j <= n && codeunit(ss, j) != UInt8(' ') && codeunit(ss, j) != UInt8('\t')
-                j += 1
+            # scan token: stop at whitespace or semicolon
+            while j <= n
+                b = codeunit(ss, j)
+                b == UInt8(' ') || b == UInt8('\t') || b == UInt8(';') ? break : (j += 1)
             end
             push!(buf, SubString(ss, i, j - 1))
             i = j
@@ -790,7 +794,6 @@ end; # using .Dumping # to save the import un comment this.
             c = 1
             for ss in eachline(f)
                 if length(ss)==0 || ss[1]=='*' continue end
-                ss = remove(ss,";")
                 st = tokenize!(ss)
                 if st[1][1]=='@'
                     ctrmap[st[1][2:end]] = c
@@ -799,12 +802,7 @@ end; # using .Dumping # to save the import un comment this.
                 if ss[1] == 'm'
                     obj = readobj(st,varmap)
                 else
-                    eq = readeq(st,varmap)
-                    if length(eq.t)==0 && eq.b==1
-                        printstyled(" !opb"; color = :blue)
-                    end
-                    normcoefeq(eq)
-                    push_eq!(store, eq)
+                    readeq_push!(store, st, varmap, 1:2:length(st))
                     c+=1
                 end
             end
@@ -843,6 +841,25 @@ end; # using .Dumping # to save the import un comment this.
         push!(s.row_ptr, Int32(s.row_ptr[end] + length(eq.t)))
     end
 
+    # Normalises lits in-place (make all coefs positive) and pushes directly into the store.
+    # Replaces the normcoefeq(eq) + push_eq!(store, eq) pair without allocating an Eq object.
+    function push_eq_normalized!(s::FlatEqStore, lits::Vector{Lit}, b::Int)
+        b2 = 0
+        for l in lits
+            if l.coef < 0; b2 += -l.coef; end
+        end
+        b += b2
+        for l in lits
+            if l.coef < 0
+                push!(s.vars, Int32(l.var)); push!(s.coefs, Int32(-l.coef)); push!(s.signs, !l.sign)
+            else
+                push!(s.vars, Int32(l.var)); push!(s.coefs, Int32(l.coef)); push!(s.signs, l.sign)
+            end
+        end
+        push!(s.rhs,     Int64(b))
+        push!(s.row_ptr, Int32(s.row_ptr[end] + length(lits)))
+    end
+
     function get_eq(s::FlatEqStore, i::Int)
         r = Int(s.row_ptr[i]):Int(s.row_ptr[i+1])-1
         Eq([Lit(Int(s.coefs[k]), s.signs[k], Int(s.vars[k])) for k in r], Int(s.rhs[i]))
@@ -855,9 +872,15 @@ end; # using .Dumping # to save the import un comment this.
                                        s.row_ptr[end] == s.row_ptr[end-1] &&
                                        s.rhs[end] == 1
 
-    readobj(st,varmap) = readlits(st,varmap,2:2:length(st))
+    # readobj stores its result permanently (as obj), so it needs its own copy.
+    # All other callers (readeq → normcoefeq → push_eq!) are done with lits before the next readlits call.
+    readobj(st,varmap) = copy(readlits(st,varmap,2:2:length(st)))
+
     function readlits(st,varmap,range)
-        lits = Vector{Lit}(undef,(length(range)))
+        # reuse a task-local buffer — safe because callers consume lits before the next readlits call.
+        lits = get!(task_local_storage(), :litbuf, Lit[])
+        n = length(range)
+        resize!(lits, n)
         for i in range
             coef = parse(Int,st[i])
             sign = st[i+1][1]!='~'
@@ -878,10 +901,20 @@ end; # using .Dumping # to save the import un comment this.
 
     readeq(st,varmap) = readeq(st,varmap,1:2:length(st))
     function readeq(st,varmap,r)
-        lits = readlits(st,varmap,r.start:r.step:(r.stop-2)) # because range should cover: coef lit coef lit >= b
+        lits = readlits(st,varmap,r.start:r.step:(r.stop-2))
         lits,c = merge(lits)
-        eq = Eq(lits,parse(Int,st[r.start+2length(r)-1])-c)     # insupportable theoreme de la fourchette avec ces ranges
-        return eq end
+        return Eq(lits, parse(Int,st[r.start+2length(r)-1])-c) end
+
+    # Like readeq but pushes directly into the store without allocating an Eq.
+    # Used in hot paths (readopb, processrup) where the eq is never needed as an object.
+    # Returns true if a non-empty equation was pushed.
+    function readeq_push!(store::FlatEqStore, st, varmap, r)
+        lits = readlits(st, varmap, r.start:r.step:(r.stop-2))
+        lits, c = merge(lits)
+        b = parse(Int, st[r.start+2length(r)-1]) - c
+        isempty(lits) && b == 0 && return false
+        push_eq_normalized!(store, lits, b)
+        return true end
 
     function merge(lits)
         c=0
@@ -931,7 +964,8 @@ end; # using .Dumping # to save the import un comment this.
         open(path*file*pbp,"r"; lock = false) do f
             for ss in eachline(f)
                 if length(ss)==0 continue end
-                ss = remove(ss,";")
+                # ';' stripping is now handled inside tokenize! — no remove(ss,";") needed.
+                # ss is kept as-is for comment detection ('%') and assertion hint extraction.
                 i = findfirst(x->x=='%',ss)
                 if i !== nothing
                     if i<3 continue end
@@ -946,9 +980,12 @@ end; # using .Dumping # to save the import un comment this.
                     st = st[2:end]
                 end
                 type = st[1]
-                eq = Eq([],0)
-                    if type == "rup" || type == "u" eq = processrup(st,varmap,systemlink)
-                elseif type == "pol" || type == "p" eq = processpol(st,varmap,store,systemlink,c,ctrmap,nbopb)
+                # pushed tracks whether an equation was added to the store this iteration.
+                # rup/u push directly (no Eq allocation); other types still return an Eq.
+                pushed = false
+                eq = nothing
+                    if type == "rup" || type == "u" pushed = processrup_push!(store,st,varmap,systemlink)
+                elseif type == "pol" || type == "p" pushed = processpol_push!(store,st,varmap,systemlink,c,ctrmap,nbopb)
                 elseif type == "a"                  eq = processassumption(st,varmap,systemlink,assertrecord,c)
                 elseif type == "ia"                 eq = processia(st,varmap,ctrmap,c,systemlink)
                 elseif type == "red"                c,eq = processred(store,systemlink,st,varmap,ctrmap,redwitness,c,f,prism)
@@ -966,11 +1003,12 @@ end; # using .Dumping # to save the import un comment this.
                 elseif !(type in ["%","*","wiplvl","w","setlvl","#","f","d","del","end","pseudo-Boolean"])
                     printstyled("unknown line head (skiped): ",ss; color=:red)
                 end
-                if length(eq.t)!=0 || eq.b!=0
+                if !pushed && eq !== nothing && (length(eq.t)!=0 || eq.b!=0)
                     normcoefeq(eq)
                     push_eq!(store,eq)
-                    c+=1
+                    pushed = true
                 end
+                pushed && (c+=1)
             end
         end
         return store,systemlink,redwitness,solirecord,assertrecord,output,conclusion end
@@ -984,11 +1022,24 @@ end; # using .Dumping # to save the import un comment this.
         push!(systemlink,[-1])
         return readeq(st,varmap,2:2:length(st)) end
 
+    # Hot-path version: pushes directly into the store without allocating an Eq.
+    function processrup_push!(store,st,varmap,systemlink)
+        push!(systemlink,[-1])
+        return readeq_push!(store, st, varmap, 2:2:length(st)) end
+
     function processpol(st,varmap,store,systemlink,c,ctrmap,nbopb)
         push!(systemlink,[-2])
-        eq = solvepol(st,store,systemlink[end],c,varmap,ctrmap,nbopb)
-        if !(length(eq.t)!=0 || eq.b!=0) throw("POL empty") end
-        return eq end
+        lits,b = solvepol(st,store,systemlink[end],c,varmap,ctrmap,nbopb)
+        if isempty(lits) && b==0; throw("POL empty"); end
+        return Eq(lits,b) end  # wraps for callers that need an Eq (readsubproof dead code)
+
+    # Hot-path version: pushes directly into the store without allocating a final Eq.
+    function processpol_push!(store,st,varmap,systemlink,c,ctrmap,nbopb)
+        push!(systemlink,[-2])
+        lits,b = solvepol(st,store,systemlink[end],c,varmap,ctrmap,nbopb)
+        if isempty(lits) && b==0; throw("POL empty"); end
+        push_eq_normalized!(store, lits, b)
+        return true end
 
         # Evaluates a pol (polynomial combination) line and records its structure in `link`.
         # link encoding: positive values = constraint ids; negative sentinels below:
@@ -1001,7 +1052,9 @@ end; # using .Dumping # to save the import un comment this.
             id = init+id                               # negative ids are relative to current position
         end
         eq = get_eq(store,id)
-        stack = Vector{Eq}()
+        # reuse a task-local stack vector across pol calls to avoid per-call Vector{Eq} allocation
+        stack = get!(task_local_storage(), :solvestack, Eq[])
+        empty!(stack)
         weakvar = ""
         push!(stack,eq)
         push!(link,id)
@@ -1014,10 +1067,10 @@ end; # using .Dumping # to save the import un comment this.
                 push!(stack,addeq(pop!(stack),pop!(stack)))
                 push!(link,-1)
             elseif i=="*"
-                push!(stack,multiply(pop!(stack),link[end]))
+                multiply!(first(stack),link[end])      # in-place: no new Eq/Vector{Lit} allocation
                 push!(link,-2)
             elseif i=="d"
-                push!(stack,divide(pop!(stack),link[end]))
+                divide!(first(stack),link[end])        # in-place: no new Eq/Vector{Lit} allocation
                 push!(link,-3)
             elseif i=="s"
                 if j == length(st)
@@ -1028,7 +1081,7 @@ end; # using .Dumping # to save the import un comment this.
                 end
                 push!(link,-4)
             elseif i=="w"
-                push!(stack,weaken(pop!(stack),weakvar))
+                weaken!(first(stack),weakvar)          # in-place: no new Eq/Vector{Lit} allocation
                 push!(link,-5)
             elseif !isdigit(i[1]) && i[1]!='@' && i[1]!='-'  # literal axiom: push unit constraint for this var
                 if length(st)>j && st[j+1] == "w"
@@ -1052,17 +1105,22 @@ end; # using .Dumping # to save the import un comment this.
             end
         end
         eq = pop!(stack)
-        lits = eq.t
-        lits2 = removenulllits(lits)
+        lits2 = removenulllits(eq.t)
         if length(link)==2
             link[1] = -3                               # pol with single antecedent and no ops is really an ia
         end
-        res = Eq(lits2,eq.b)
-        if lastsaturate
-            normcoefeq(res)
-            saturate(res)
+        b = eq.b
+        if lastsaturate                                # apply normcoefeq+saturate inline to avoid Eq allocation
+            b2 = 0
+            for i in eachindex(lits2)
+                l = lits2[i]; if l.coef < 0; lits2[i] = Lit(-l.coef,!l.sign,l.var); b2 += -l.coef; end
+            end
+            b += b2
+            for i in eachindex(lits2)
+                l = lits2[i]; l.coef > b && (lits2[i] = Lit(b,l.sign,l.var))
+            end
         end
-        return res end
+        return lits2, b end
 
     copyeq(eq) = Eq([Lit(l.coef,l.sign,l.var) for l in eq.t], eq.b)
     function addeq(eq1, eq2)
@@ -1087,14 +1145,18 @@ end; # using .Dumping # to save the import un comment this.
         return Eq(lits, eq1.b + eq2.b - c) end
 
     removenulllits(lits) = filter!(x->x.coef!=0,lits)
-    function multiply(eq,d)
-        lits = [Lit(l.coef*d, l.sign, l.var) for l in eq.t]
-        return Eq(lits,eq.b*d) end
+    function multiply!(eq,d)
+        for i in eachindex(eq.t)
+            l = eq.t[i]; eq.t[i] = Lit(l.coef*d, l.sign, l.var)
+        end
+        eq.b *= d end
 
-    function divide(eq,d)
+    function divide!(eq,d)
         normcoefeq(eq)
-        lits = [Lit(ceil(Int,l.coef/d), l.sign, l.var) for l in eq.t]
-        return Eq(lits,ceil(Int,eq.b/d)) end
+        for i in eachindex(eq.t)
+            l = eq.t[i]; eq.t[i] = Lit(ceil(Int,l.coef/d), l.sign, l.var)
+        end
+        eq.b = ceil(Int,eq.b/d) end
 
     function saturate(eq)
         for i in eachindex(eq.t)
@@ -1102,17 +1164,15 @@ end; # using .Dumping # to save the import un comment this.
             l.coef > eq.b && (eq.t[i] = Lit(eq.b, l.sign, l.var))
         end end
 
-    function weaken(eq,var)
-        lits = Lit[]
+    function weaken!(eq,var)
         b = eq.b
-        for l in eq.t
-            if l.var==var
-                b -= l.coef
-            else
-                push!(lits, l)
-            end
+        i = 1
+        while i <= length(eq.t)
+            l = eq.t[i]
+            if l.var == var; b -= l.coef; deleteat!(eq.t, i)
+            else i += 1 end
         end
-        return Eq(lits,b) end
+        eq.b = b end
 
     function processassumption(st,varmap,systemlink,assertrecord,c)
         eq = readeq(st,varmap,2:2:length(st))
