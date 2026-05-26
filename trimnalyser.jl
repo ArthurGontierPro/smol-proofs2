@@ -2,7 +2,7 @@
 julia trimnalyser.jl [options] [instance name or directory of instances]   options: atable sort rand clean verif profile bfs
 julia --threads 196,1 trimnalyser.jl solve resolv allgraphs maxnodes=50
 julia --threads 8,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=30 st=8 tt=60 rand
-julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=6000 rand
+julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=6000 rand maxparse=16
 =#
     const opb = ".opb"
     const pbp = ".pbp"
@@ -58,6 +58,8 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
     ph_enter!(c) = Threads.atomic_add!(c, 1)
     ph_exit!(c)  = Threads.atomic_sub!(c, 1)
     const minfreemem    = begin i = findfirst(x -> startswith(x, "minmem="), ARGS); i !== nothing ? parse(Int, ARGS[i][8:end]) * 1024^3 : (_cluster ? 500 : 4) * 1024^3 end  # minmem=N GB, default 500 on cluster / 4 locally
+    const maxparse      = begin i = findfirst(x -> startswith(x, "maxparse="), ARGS); i !== nothing ? parse(Int, ARGS[i][10:end]) : (_cluster ? 16 : 4) end  # maxparse=N, max concurrent parses, default 16 on cluster / 4 locally
+    const _parse_sem    = Base.Semaphore(maxparse)
     using Random,DataStructures,Dates,Printf
 
 
@@ -304,11 +306,13 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
         prefix = mode isa Bfs ? "gbfs" : mode isa Clit ? "gclt" : "grim"
         t1 = t2 = t3 = 0 ; file = ins
         # if "load" in ARGS file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index = loadsys(file); @goto skiped end # using goto because I was told not to
+        Base.acquire(_parse_sem)
         ph_enter!(_ph_parsing)
         t1 = @elapsed begin
             system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,prism = readinstance(proofs,file)
         end
         ph_exit!(_ph_parsing)
+        Base.release(_parse_sem)
         inp_lits = sum(length(eq.t) for eq in system; init=0)
         writeout_parse(ins, t1, nbopb, length(systemlink), inp_lits, length(varmap), prefix)
         sys = PBSystem(system, length(varmap))
