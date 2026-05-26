@@ -308,9 +308,11 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
         # if "load" in ARGS file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index = loadsys(file); @goto skiped end # using goto because I was told not to
         Base.acquire(_parse_sem)
         ph_enter!(_ph_parsing)
+        GC.enable_logging(true)
         t1 = @elapsed begin
             system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,prism = readinstance(proofs,file)
         end
+        GC.enable_logging(false)
         ph_exit!(_ph_parsing)
         Base.release(_parse_sem)
         inp_lits = sum(length(eq.t) for eq in system; init=0)
