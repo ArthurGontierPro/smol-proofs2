@@ -164,8 +164,8 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
         return list
     end
         
-    function pbpconclusion(ins)
-        f = proofs*ins*pbp
+    function pbpconclusion(ins, suffix="")
+        f = proofs*ins*pbp*suffix
         isfile(f) || return ""
         sz = filesize(f)
         open(f) do io
@@ -175,7 +175,15 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
             m === nothing ? "" : m.captures[1]
         end end
 
+    smol_complete(ins) = isfile(proofs*ins*opb*smol) && !isempty(pbpconclusion(ins, smol))
+
     function trimnalyseandcie(ins)
+            # resume: if trimmed output already exists and the pbp tail confirms a complete write, skip entirely.
+            # checked before the memory wait so finished instances never contend for RAM.
+            if smol_complete(ins)
+                printstyled("  $ins already done — skipping\n"; color=:blue)
+                return
+            end
             # memory backpressure: block until the OS reports enough free RAM before loading a new instance.
             # GC.gc(false) (incremental, non-full) is called by at most one thread at a time via _gc_lock
             # to help Julia release unreferenced objects without causing a GC storm when many threads pile up.
@@ -195,17 +203,22 @@ julia --threads 128 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st
                     printstyled("  solve: cannot parse graph paths for $ins\n"; color=:red)
                     return
                 end
-                t = @elapsed ok = runsipsolver(ins, patfile, tarfile)
-                if !ok
-                    out_content = isfile(proofs*ins*".out") ? read(proofs*ins*".out", String) : ""
-                    if occursin("SATISFIABLE", out_content) && !occursin("UNSATISFIABLE", out_content)
-                        printstyled("  $ins SAT — skipping\n"; color=:yellow)
-                    else
-                        printstyled("  $ins solve failed or timed out ($(round(t;digits=1))s)\n"; color=:red)
+                # resume: proof files already exist and pbp tail confirms a complete write — skip solver.
+                if isfile(proofs*ins*opb) && !isempty(pbpconclusion(ins))
+                    printstyled("  $ins proof exists — skipping solve\n"; color=:blue)
+                else
+                    t = @elapsed ok = runsipsolver(ins, patfile, tarfile)
+                    if !ok
+                        out_content = isfile(proofs*ins*".out") ? read(proofs*ins*".out", String) : ""
+                        if occursin("SATISFIABLE", out_content) && !occursin("UNSATISFIABLE", out_content)
+                            printstyled("  $ins SAT — skipping\n"; color=:yellow)
+                        else
+                            printstyled("  $ins solve failed or timed out ($(round(t;digits=1))s)\n"; color=:red)
+                        end
+                        return
                     end
-                    return
+                    printstyled("  $ins solved $(round(t;digits=1))s\n"; color=:cyan)
                 end
-                printstyled("  $ins solved $(round(t;digits=1))s\n"; color=:cyan)
             end
             let c = pbpconclusion(ins)
                 if c == "SAT" || c == "NONE"
