@@ -308,17 +308,14 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
         # if "load" in ARGS file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index = loadsys(file); @goto skiped end # using goto because I was told not to
         Base.acquire(_parse_sem)
         ph_enter!(_ph_parsing)
-        GC.enable_logging(true)
         t1 = @elapsed begin
-            system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,prism = readinstance(proofs,file)
+            store,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,prism = readinstance(proofs,file)
         end
-        GC.enable_logging(false)
         ph_exit!(_ph_parsing)
         Base.release(_parse_sem)
-        inp_lits = sum(length(eq.t) for eq in system; init=0)
+        inp_lits = length(store.vars)
         writeout_parse(ins, t1, nbopb, length(systemlink), inp_lits, length(varmap), prefix)
-        sys = PBSystem(system, length(varmap))
-        empty!(system) # PBSystem copied all data into flat arrays; release Eq objects to halve peak constraint memory
+        sys = PBSystem(store, length(varmap))  # zero-copy: PBSystem reuses FlatEqStore's flat arrays directly
         n = length(sys.rhs)
         cone     = zeros(Bool, n)
         conelits = Dict{Int,Set{Int}}()
@@ -753,29 +750,28 @@ module Dumping # ======================================= mem dump ==============
 end; # using .Dumping # to save the import un comment this.
 # ======================================= parser  ======================================= #
     function readinstance(path,file)
-        system,varmap,ctrmap,obj = readopb(path,file)
-        nbopb = length(system)
-        system,systemlink,redwitness,solirecord,assertrecord,output,conclusion = readproof(path,file,system,varmap,ctrmap,obj)
-        normcoefeq.(system)
+        store,varmap,ctrmap,obj = readopb(path,file)
+        nbopb = length(store)
+        store,systemlink,redwitness,solirecord,assertrecord,output,conclusion = readproof(path,file,store,varmap,ctrmap,obj)
         prism = availableranges(redwitness)
-        return system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,prism end
+        return store,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,prism end
 
     function readopb(path,file)
-        system = Eq[]
+        store = FlatEqStore()
         varmap = Dict{String,Int}()
         ctrmap = Dict{String, Int}()
         obj = ""
         open(path*file*opb,"r"; lock = false) do f
             c = 1
             for ss in eachline(f)
-                if length(ss)==0 || ss[1]=='*' continue end     # do not parse comments
-                ss = remove(ss,";") # I fully rely on lines beeing complete TODO change that eventualy
-                st = split(ss,keepempty=false)              # structure of a line is: int var int var ... >= int ;                 
+                if length(ss)==0 || ss[1]=='*' continue end
+                ss = remove(ss,";")
+                st = split(ss,keepempty=false)
                 if st[1][1]=='@'
                     ctrmap[st[1][2:end]] = c
-                    st = st[2:end] # remove the @label
+                    st = st[2:end]
                 end
-                if ss[1] == 'm'                     # objective function (only minimization is supported)
+                if ss[1] == 'm'
                     obj = readobj(st,varmap)
                 else
                     eq = readeq(st,varmap)
@@ -783,12 +779,12 @@ end; # using .Dumping # to save the import un comment this.
                         printstyled(" !opb"; color = :blue)
                     end
                     normcoefeq(eq)
-                    push!(system, eq)
+                    push_eq!(store, eq)
                     c+=1
                 end
             end
         end
-        return system,varmap,ctrmap,obj end
+        return store,varmap,ctrmap,obj end
 
     struct Lit
         coef::Int
@@ -798,6 +794,41 @@ end; # using .Dumping # to save the import un comment this.
     mutable struct Eq
         t::Vector{Lit}
         b::Int end
+
+    # Growable flat CSR store for equations parsed from .opb and .pbp files.
+    # Replaces Vector{Eq} as the persistent representation, eliminating millions of
+    # Eq/Vector{Lit}/Lit heap allocations. Processing functions (solvepol, processred, etc.)
+    # still use temporary Eq values for arithmetic — those are short-lived and collected quickly.
+    mutable struct FlatEqStore
+        vars    :: Vector{Int32}   # flat literal variable indices
+        coefs   :: Vector{Int32}   # flat literal coefficients
+        signs   :: BitVector       # flat literal signs
+        rhs     :: Vector{Int64}   # one rhs per equation
+        row_ptr :: Vector{Int32}   # CSR row pointers, length = n_eqs+1; row_ptr[i]:row_ptr[i+1]-1 is eq i
+    end
+    FlatEqStore() = FlatEqStore(Int32[], Int32[], BitVector(), Int64[], Int32[1])
+
+    function push_eq!(s::FlatEqStore, eq::Eq)
+        for l in eq.t
+            push!(s.vars,  Int32(l.var))
+            push!(s.coefs, Int32(l.coef))
+            push!(s.signs, l.sign)
+        end
+        push!(s.rhs,     Int64(eq.b))
+        push!(s.row_ptr, Int32(s.row_ptr[end] + length(eq.t)))
+    end
+
+    function get_eq(s::FlatEqStore, i::Int)
+        r = Int(s.row_ptr[i]):Int(s.row_ptr[i+1])-1
+        Eq([Lit(Int(s.coefs[k]), s.signs[k], Int(s.vars[k])) for k in r], Int(s.rhs[i]))
+    end
+
+    Base.length(s::FlatEqStore)      = length(s.rhs)
+    last_eq(s::FlatEqStore)          = get_eq(s, length(s))
+    # replicates isequal(system[end], Eq([],1)): last eq has zero lits and rhs==1
+    store_last_empty(s::FlatEqStore) = length(s) > 0 &&
+                                       s.row_ptr[end] == s.row_ptr[end-1] &&
+                                       s.rhs[end] == 1
 
     readobj(st,varmap) = readlits(st,varmap,2:2:length(st))
     function readlits(st,varmap,range)
@@ -863,61 +894,61 @@ end; # using .Dumping # to save the import un comment this.
         end
         eq.b = c + eq.b end
  
-    function readproof(path,file,system,varmap,ctrmap,obj)
+    function readproof(path,file,store,varmap,ctrmap,obj)
         systemlink = Vector{Vector{Int}}()
         redwitness = Dict{Int, Red}()
         solirecord = Dict{Int, Vector{Lit}}()
         assertrecord = Dict{Int, String}()
-        prism = Vector{UnitRange{Int64}}() # the subproofs should not be available to all
+        prism = Vector{UnitRange{Int64}}()
         output = conclusion = ""
-        c = length(system)+1
-        nbopb = length(system)
+        c = length(store)+1
+        nbopb = length(store)
         open(path*file*pbp,"r"; lock = false) do f
             for ss in eachline(f)
                 if length(ss)==0 continue end
-                ss = remove(ss,";") # I fully rely on lines beeing complete TODO change that eventualy
+                ss = remove(ss,";")
                 i = findfirst(x->x=='%',ss)
-                if i !== nothing # there is a comment
-                    if i<3 continue end # comment is at the start of the line, ignore the line
-                    if ss[1]=='a' # justifyable assertion needs hints that are in comments for the moment.
+                if i !== nothing
+                    if i<3 continue end
+                    if ss[1]=='a'
                         assertrecord[c] = ss[i+1:end]
                     end
-                    ss = ss[1:i-1] # remove the comment
+                    ss = ss[1:i-1]
                 end
                 st = split(ss,keepempty=false)
                 if st[1][1]=='@'
-                    ctrmap[st[1][2:end]] = c # keep track of constraint name
-                    st = st[2:end] # remove the @label
+                    ctrmap[st[1][2:end]] = c
+                    st = st[2:end]
                 end
                 type = st[1]
                 eq = Eq([],0)
                     if type == "rup" || type == "u" eq = processrup(st,varmap,systemlink)
-                elseif type == "pol" || type == "p" eq = processpol(st,varmap,system,systemlink,c,ctrmap,nbopb)
+                elseif type == "pol" || type == "p" eq = processpol(st,varmap,store,systemlink,c,ctrmap,nbopb)
                 elseif type == "a"                  eq = processassumption(st,varmap,systemlink,assertrecord,c)
                 elseif type == "ia"                 eq = processia(st,varmap,ctrmap,c,systemlink)
-                elseif type == "red"                c,eq = processred(system,systemlink,st,varmap,ctrmap,redwitness,c,f,prism)
+                elseif type == "red"                c,eq = processred(store,systemlink,st,varmap,ctrmap,redwitness,c,f,prism)
                 elseif type == "sol"                throw("trimmed SAT is the solution")
-                elseif type == "soli"               eq = processsoli(st,varmap,system,systemlink,c,prism,obj,solirecord)
-                elseif type == "solx"               eq = processsolx(st,varmap,system,systemlink,c,prism)
+                elseif type == "soli"               eq = processsoli(st,varmap,store,systemlink,c,prism,obj,solirecord)
+                elseif type == "solx"               eq = processsolx(st,varmap,store,systemlink,c,prism)
                 elseif type == "output"             output = remove(st[2],";")
                 elseif type == "conclusion"
                     conclusion = remove(st[2],";")
                     if conclusion == "BOUNDS"
                         conclusion = ss
-                    elseif !isequal(system[end],Eq([],1)) && (conclusion == "SAT" || conclusion == "NONE")
+                    elseif !store_last_empty(store) && (conclusion == "SAT" || conclusion == "NONE")
                         throw("SAT Not supported..")
                     end
-                elseif !(type in ["%","*","wiplvl","w","setlvl","#","f","d","del","end","pseudo-Boolean"])#,"de","co","en","ps"])
+                elseif !(type in ["%","*","wiplvl","w","setlvl","#","f","d","del","end","pseudo-Boolean"])
                     printstyled("unknown line head (skiped): ",ss; color=:red)
                 end
-                if length(eq.t)!=0 || eq.b!=0 # the eq is not empty
+                if length(eq.t)!=0 || eq.b!=0
                     normcoefeq(eq)
-                    push!(system,eq)
+                    push_eq!(store,eq)
                     c+=1
                 end
             end
         end
-        return system,systemlink,redwitness,solirecord,assertrecord,output,conclusion end
+        return store,systemlink,redwitness,solirecord,assertrecord,output,conclusion end
 
     mutable struct Red
         w::Vector{Lit}                      # flat pairs: w[2k-1]=source var, w[2k]=target var (var=0 → const-0, var=-1 → const-1)
@@ -928,23 +959,23 @@ end; # using .Dumping # to save the import un comment this.
         push!(systemlink,[-1])
         return readeq(st,varmap,2:2:length(st)) end
 
-    function processpol(st,varmap,system,systemlink,c,ctrmap,nbopb)
+    function processpol(st,varmap,store,systemlink,c,ctrmap,nbopb)
         push!(systemlink,[-2])
-        eq = solvepol(st,system,systemlink[end],c,varmap,ctrmap,nbopb)
+        eq = solvepol(st,store,systemlink[end],c,varmap,ctrmap,nbopb)
         if !(length(eq.t)!=0 || eq.b!=0) throw("POL empty") end
-        return eq end 
+        return eq end
 
         # Evaluates a pol (polynomial combination) line and records its structure in `link`.
         # link encoding: positive values = constraint ids; negative sentinels below:
         #   -1=+  -2=*  -3=d  -4=s  -5=w  -(100v+99)=literal axiom var v positive  -(100v+100)=negative
         # (The -(100v+99/100) scheme reserves negatives ≤ -99 for literals, leaving -1..-5 for operators.)
-    function solvepol(st,system,link,init,varmap,ctrmap,nbopb)
+    function solvepol(st,store,link,init,varmap,ctrmap,nbopb)
         i = st[2]
         id = i[1]=='@' ? ctrmap[i[2:end]] : parse(Int,i)
         if id<0
             id = init+id                               # negative ids are relative to current position
         end
-        eq = copyeq(system[id])
+        eq = get_eq(store,id)
         stack = Vector{Eq}()
         weakvar = ""
         push!(stack,eq)
@@ -991,7 +1022,7 @@ end; # using .Dumping # to save the import un comment this.
                 end
                 push!(link,id)
                 if !(st[j+1] in ["*","d"])
-                    push!(stack,copyeq(system[id]))
+                    push!(stack,get_eq(store,id))
                 end
             end
         end
@@ -1092,7 +1123,7 @@ end; # using .Dumping # to save the import un comment this.
         end
         return eq,l end
 
-    function processred(system,systemlink,st,varmap,ctrmap,redwitness,redid,f,prism)
+    function processred(store,systemlink,st,varmap,ctrmap,redwitness,redid,f,prism)
         i = findfirst(x->x==":",st)
         eq = readeq(st[2:i],varmap)
         j = findlast(x->x==":",st)
@@ -1106,19 +1137,19 @@ end; # using .Dumping # to save the import un comment this.
         if st[end] == "begin"
             rev = reverse(eq)
             normcoefeq(rev)
-            push!(system,rev)                          # slot redid: reversed negation of eq (tlink -9), hidden in prism
+            push_eq!(store,rev)                        # slot redid: reversed negation of eq (tlink -9), hidden in prism
             push!(systemlink,[-9])
             c+=1
-            range,pgranges,c = readsubproof(system,systemlink,eq,w,c,f,varmap,ctrmap)
+            range,pgranges,c = readsubproof(store,systemlink,eq,w,c,f,varmap,ctrmap)
             push!(prism,range)                         # mark entire subproof range as internal (invisible to cone outside)
             push!(systemlink,[-10])                    # slot before conclusion: end-of-subproof marker
         else
             push!(systemlink,[-4])                     # inline red (no subproof)
         end
         normcoefeq(eq)
-        push!(system,eq)                               # final slot: the red conclusion itself
+        push_eq!(store,eq)                             # final slot: the red conclusion itself
         redwitness[redid] = Red(w,range,pgranges)      # keyed at redid (start of block) for subproof lookups
-        redwitness[length(system)] = Red(w,range,pgranges)  # also keyed at conclusion slot (used by getcone via tlink -10)
+        redwitness[length(store)] = Red(w,range,pgranges)  # also keyed at conclusion slot (used by getcone via tlink -10)
         return c+1,Eq([],0) end
 
         # Witness is stored as flat pairs: t[2k-1]=source variable, t[2k]=target variable.
@@ -1148,20 +1179,20 @@ end; # using .Dumping # to save the import un comment this.
         # proofgoal i  = i-th formula constraint with witness applied
         # proofgoal #1 = the red constraint itself with witness applied
         # within a proof goal, id -1 refers to the constraint declared by the proofgoal line (after witness substitution)
-    function readsubproof(system,systemlink,eq,w,c,f,varmap,ctrmap)
-        nbopb = length(system)-length(systemlink)  # invariant: system has nbopb more entries than systemlink (the opb constraints)
+    function readsubproof(store,systemlink,eq,w,c,f,varmap,ctrmap)
+        nbopb = length(store)-length(systemlink)  # invariant: store has nbopb more entries than systemlink (the opb constraints)
         type,st = lparse(f)
         redid = c-1
         pgranges = Vector{UnitRange{Int64}}()
         while type !="end"
             if type == "proofgoal"
                 pgid = c
-                if st[2][1] == '#' 
-                    push!(system,reverse(applywitness(eq,w)))
+                if st[2][1] == '#'
+                    push_eq!(store,reverse(applywitness(eq,w)))
                     push!(systemlink,[-7])
                 else
                     pgref = parse(Int,st[2])
-                    push!(system,reverse(applywitness(system[pgref],w)))
+                    push_eq!(store,reverse(applywitness(get_eq(store,pgref),w)))
                     push!(systemlink,[-8,pgref])
                 end
                 c+=1
@@ -1172,12 +1203,12 @@ end; # using .Dumping # to save the import un comment this.
                         eq = processrup(st,varmap,systemlink)
                         systemlink[end][1] = -5 # in subproof, rup is -5
                     elseif type == "p" || type == "pol"
-                        eq = processpol(st,varmap,system,systemlink,c,ctrmap,nbopb)
-                        systemlink[end][1] = -6 # in subproof, rup is -6
+                        eq = processpol(st,varmap,store,systemlink,c,ctrmap,nbopb)
+                        systemlink[end][1] = -6 # in subproof, pol is -6
                     end
                     if length(eq.t)!=0 || eq.b!=0
                         normcoefeq(eq)
-                        push!(system,eq)
+                        push_eq!(store,eq)
                         c+=1
                     end
                     type,st = lparse(f)
@@ -1209,12 +1240,12 @@ end; # using .Dumping # to save the import un comment this.
         end
         return Eq(t, b) end
 
-    function processsoli(st,varmap,system,systemlink,c,prism,obj,solirecord)
+    function processsoli(st,varmap,store,systemlink,c,prism,obj,solirecord)
         push!(systemlink,[-21])
-        return findbound(system,st,c,varmap,prism,obj,solirecord) end
+        return findbound(store,st,c,varmap,prism,obj,solirecord) end
 
-    function findbound(system,st,c,varmap,prism,obj,solirecord)
-        assi = findfullassi(system,st,c,varmap,prism)
+    function findbound(store,st,c,varmap,prism,obj,solirecord)
+        assi = findfullassi(store,st,c,varmap,prism)
         lits = Vector{Lit}(undef,length(assi))
         for i in eachindex(assi)
             if assi[i]==0
@@ -1233,7 +1264,7 @@ end; # using .Dumping # to save the import un comment this.
         negobj = [Lit(-l.coef,l.sign,l.var) for l in obj] # we negate the objective
         return Eq(negobj,-b+1) end # -b+1 because we want the bound to be strictly lower
 
-    function findfullassi(system,st,init,varmap,prism)
+    function findfullassi(store,st,init,varmap,prism)
         lits = Vector{Lit}(undef,length(st)-2)
         for i in 2:length(st)-1 # sol var var var ; — stop before ";"
             _ = readvar(st[i],varmap)
@@ -1250,7 +1281,7 @@ end; # using .Dumping # to save the import un comment this.
             changes = false
             for i in 1:init-1 # TODO can be replaced with efficient unit propagation
                 if !inprism(i,prism)
-                    eq = system[i]
+                    eq = get_eq(store,i)
                     s = slack(eq,assi)
                     if s<0
                         printstyled(" sol propagated assignement to contradiction "; color = :red)
@@ -1267,12 +1298,12 @@ end; # using .Dumping # to save the import un comment this.
                             end end end end end end
         return assi end
 
-    function processsolx(st,varmap,system,systemlink,c,prism)
+    function processsolx(st,varmap,store,systemlink,c,prism)
         push!(systemlink,[-20])
-        return solbreakingctr(system,st,c,varmap,prism) end
+        return solbreakingctr(store,st,c,varmap,prism) end
 
-    function solbreakingctr(system,st,init,varmap,prism)
-        assi = findfullassi(system,st,init,varmap,prism)
+    function solbreakingctr(store,st,init,varmap,prism)
+        assi = findfullassi(store,st,init,varmap,prism)
         lits = Vector{Lit}(undef,length(assi))
         for i in eachindex(assi)
             if assi[i]==0
@@ -1397,33 +1428,18 @@ end; # using .Dumping # to save the import un comment this.
         @inbounds t.pos[iv] = length(t.var)   # trail index of v (0 = unassigned)
         @inbounds t.assi[iv] = val end
 
-    function PBSystem(system::Vector{Eq}, n_vars::Int)
-        n_eqs  = length(system)
-        n_lits = sum(length(eq.t) for eq in system; init=0)
-
-        vars    = Vector{Int32}(undef, n_lits)
-        coefs   = Vector{Int32}(undef, n_lits)
-        signs   = BitVector(undef, n_lits)
-        rhs     = Vector{Int64}(undef, n_eqs)
-        row_ptr = Vector{Int32}(undef, n_eqs + 1)
-
-        row_ptr[1] = 1
-        k = 1
-        for (e, eq) in enumerate(system)
-            rhs[e] = eq.b
-            for lit in eq.t
-                vars[k]  = lit.var
-                coefs[k] = lit.coef
-                signs[k] = lit.sign
-                k += 1
-            end
-            row_ptr[e+1] = k
-        end
+    function PBSystem(store::FlatEqStore, n_vars::Int)
+        # Forward arrays are reused directly from the store — zero copy.
+        # Only the inverse index (var_ptr, var_eqs) needs to be computed fresh.
+        vars    = store.vars
+        coefs   = store.coefs
+        signs   = store.signs
+        rhs     = store.rhs
+        row_ptr = store.row_ptr
+        n_lits  = length(vars)
 
         var_count = zeros(Int32, n_vars)
-        for eq in system, lit in eq.t
-            var_count[lit.var] += 1
-        end
+        for v in vars; var_count[v] += 1; end
         var_ptr = Vector{Int32}(undef, n_vars + 1)
         var_ptr[1] = 1
         for v in 1:n_vars
@@ -1431,10 +1447,13 @@ end; # using .Dumping # to save the import un comment this.
         end
         var_eqs = Vector{Int32}(undef, n_lits)
         fill!(var_count, 0)
-        for (e, eq) in enumerate(system), lit in eq.t
-            v = lit.var
-            var_eqs[var_ptr[v] + var_count[v]] = e
-            var_count[v] += 1
+        n_eqs = length(rhs)
+        for e in 1:n_eqs
+            for k in Int(row_ptr[e]):Int(row_ptr[e+1])-1
+                v = vars[k]
+                var_eqs[var_ptr[v] + var_count[v]] = e
+                var_count[v] += 1
+            end
         end
 
         return PBSystem(vars, coefs, signs, rhs, row_ptr, var_ptr, var_eqs) end
