@@ -322,69 +322,69 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
         end
         if !NONORM
             printabline(ins)
-            t1,t2,t3,cs,coremsg = trimnalyse(ins; mode=Grim())
-            ph_enter!(_ph_verif); t4,t5 = VERIF ? verify(ins) : (-1,-1); ph_exit!(_ph_verif)
-            printabline2(ins,t1,t2,t3,t4,t5,cs)
+            parse_time,trim_time,write_time,cone_stats,coremsg = trimnalyse(ins; mode=Grim())
+            ph_enter!(_ph_verif); smol_verif_time,full_verif_time = VERIF ? verify(ins) : (-1,-1); ph_exit!(_ph_verif)
+            printabline2(ins,parse_time,trim_time,write_time,smol_verif_time,full_verif_time,cone_stats)
             !isempty(coremsg) && println(coremsg)
-            writeout_verif(ins,t4,t5)
+            writeout_verif(ins,smol_verif_time,full_verif_time)
             RESOLV && resolvecore(ins)
         end
         if CLIT
             printabline(ins)
-            tc1,tc2,tc3,tcs,_ = trimnalyse(ins; mode=Clit())
-            ph_enter!(_ph_verif); tc4,tc5 = VERIF ? verify(ins) : (-1,-1); ph_exit!(_ph_verif)
-            printabline2(ins,tc1,tc2,tc3,tc4,tc5,tcs)
-            writeout_verif(ins,tc4,tc5)
+            parse_time,trim_time,write_time,cone_stats,_ = trimnalyse(ins; mode=Clit())
+            ph_enter!(_ph_verif); smol_verif_time,full_verif_time = VERIF ? verify(ins) : (-1,-1); ph_exit!(_ph_verif)
+            printabline2(ins,parse_time,trim_time,write_time,smol_verif_time,full_verif_time,cone_stats)
+            writeout_verif(ins,smol_verif_time,full_verif_time)
         end
         if BFS
             printabline(ins)
-            tb1,tb2,tb3,tbs,_ = trimnalyse(ins; mode=Bfs())
-            tb4,tb5 = VERIF ? verify(ins) : (-1,-1)
-            printabline2(ins,tb1,tb2,tb3,tb4,tb5,tbs)
-            writeout_verif(ins,tb4,tb5)
+            parse_time,trim_time,write_time,cone_stats,_ = trimnalyse(ins; mode=Bfs())
+            smol_verif_time,full_verif_time = VERIF ? verify(ins) : (-1,-1)
+            printabline2(ins,parse_time,trim_time,write_time,smol_verif_time,full_verif_time,cone_stats)
+            writeout_verif(ins,smol_verif_time,full_verif_time)
         end end
 
         # mode: Grim(), Clit(), or Bfs() — see mode structs
     function trimnalyse(ins; mode=Grim())
         prefix = mode isa Bfs ? "gbfs" : mode isa Clit ? "gclt" : "grim"
-        t1 = t2 = t3 = 0 ; file = ins ; cs = nothing
+        parse_time = trim_time = write_time = 0 ; file = ins ; cone_stats = nothing
         # if "load" in ARGS file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index = loadsys(file); @goto skiped end # using goto because I was told not to
         Base.acquire(_parse_sem)
         ph_enter!(_ph_parsing)
-        t1 = @elapsed begin
+        parse_time = @elapsed begin
             store,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,prism = readinstance(proofs,file)
         end
         ph_exit!(_ph_parsing)
         Base.release(_parse_sem)
         inp_lits = length(store.vars)
-        writeout_parse(ins, t1, nbopb, length(systemlink), inp_lits, length(varmap), prefix)
+        writeout_parse(ins, parse_time, nbopb, length(systemlink), inp_lits, length(varmap), prefix)
         sys = PBSystem(store, length(varmap))  # zero-copy: PBSystem reuses FlatEqStore's flat arrays directly
         n = length(sys.rhs)
         cone     = zeros(Bool, n)
         conelits = Dict{Int,Set{Int}}()
         ph_enter!(_ph_trimming)
-        t2 = @elapsed begin
+        trim_time = @elapsed begin
             cone_timeout = getcone!(cone, conelits, sys, systemlink, nbopb, prism, redwitness, conclusion, obj, mode) === true
         end
         ph_exit!(_ph_trimming)
         if cone_timeout
             open(proofs*ins*".err", "a") do f; println(f, "getcone timeout after $(trimtimeout)s") end
-            return trunc(Int,t1),trunc(Int,t2),0,cs,""
+            return trunc(Int,parse_time),trunc(Int,trim_time),0,cone_stats,""
         end
         # for (i,_) in conelits # nullify the conelits
         #     conelits[i] = Set{Int}(Int(sys.vars[k]) for k in eqrange(sys, i))
         # end
-        writeout_trim(ins, t2, cone, nbopb, prefix)
+        writeout_trim(ins, trim_time, cone, nbopb, prefix)
         writeout_conelits(ins, sys, cone, conelits, prefix)
-        cs = conelits_stats(sys, cone, conelits)
-        printconestat(cone, cs)
+        cone_stats = conelits_stats(sys, cone, conelits)
+        printconestat(cone, cone_stats)
         # @label skiped
         varmap_inv = Vector{String}(undef, length(varmap))
         for (k, v) in varmap; varmap_inv[v] = k; end
         if isempty(output)
             printstyled("  $ins: proof truncated (no output line) — skipping write\n"; color=:red)
             open(proofs*ins*".err", "a") do f; println(f, "proof truncated: output line missing") end
-            return trunc(Int,t1),trunc(Int,t2),0,cs,""
+            return trunc(Int,parse_time),trunc(Int,trim_time),0,cone_stats,""
         end
         coremsg = (mode isa Grim && (CORE || RESOLV)) ? writeunsatcore(ins, sys, cone, conelits, varmap_inv, nbopb) : ""
         let expected = nbopb + length(systemlink), actual = length(sys.rhs)
@@ -393,12 +393,12 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
             end
         end
         ph_enter!(_ph_writing)
-        t3 = @elapsed begin
+        write_time = @elapsed begin
             writeconedel(proofs,file,sys,cone,conelits,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap_inv,ctrmap,output,conclusion,obj,prism)
         end
         ph_exit!(_ph_writing)
-        writeout_write(ins, t1, t2, t3, prefix)
-        return trunc(Int,t1),trunc(Int,t2),trunc(Int,t3),cs,coremsg end
+        writeout_write(ins, parse_time, trim_time, write_time, prefix)
+        return trunc(Int,parse_time),trunc(Int,trim_time),trunc(Int,write_time),cone_stats,coremsg end
 
     function writeout_parse(ins, t1, nbopb, n_pbp, inp_lits, inp_vars, prefix)
         opb_sz = filesize(proofs*ins*opb)
@@ -454,11 +454,11 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
             println(f, prefix, " SIZE ",       filesize(proofs*ins*opb*smol) + filesize(proofs*ins*pbp*smol))
         end end
 
-    function writeout_verif(ins, t4, t5)
-        t4 < 0 && t5 < 0 && return
+    function writeout_verif(ins, smol_verif_time, full_verif_time)
+        smol_verif_time < 0 && full_verif_time < 0 && return
         open(proofs*ins*".out", "a") do f
-            t4 >= 0 && println(f, "veri smol TIME ", t4)
-            t5 >= 0 && println(f, "veri TIME ",      t5)
+            smol_verif_time >= 0 && println(f, "veri smol TIME ", smol_verif_time)
+            full_verif_time >= 0 && println(f, "veri TIME ",      full_verif_time)
         end end
 
     const veripbpath = _cluster ?
@@ -466,20 +466,20 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
         "/home/arthur_gla/veriPB/trim/VeriPB/target/release/veripb"
 
     function verify(ins)
-        t4 = t5 = 0
-        isfile(veripbpath) || (printstyled("  veripb not found at $veripbpath — skipping verif\n"; color=:yellow); return t4,t5)
+        smol_verif_time = full_verif_time = 0
+        isfile(veripbpath) || (printstyled("  veripb not found at $veripbpath — skipping verif\n"; color=:yellow); return smol_verif_time,full_verif_time)
         ins2 = proofs*ins
         ins3 = ins2*".smolverif"
         ins4 = ins2*".verif"
         ins31 = ins3*".out"; ins32 = ins3*".err"
         ins41 = ins4*".out"; ins42 = ins4*".err"
         tryrm(ins31); tryrm(ins32)
-        t4 = @elapsed try run(pipeline(ignorestatus(`timeout $trimtimeout $veripbpath $ins2$opb$smol $ins2$pbp$smol`),stdout=ins31,stderr=ins32)) catch e println("\nerr ",ins32) end
+        smol_verif_time = @elapsed try run(pipeline(ignorestatus(`timeout $trimtimeout $veripbpath $ins2$opb$smol $ins2$pbp$smol`),stdout=ins31,stderr=ins32)) catch e println("\nerr ",ins32) end
         isfile(ins32) && isempty(strip(read(ins32,String))) && tryrm(ins32)
         tryrm(ins41); tryrm(ins42)
-        t5 = @elapsed try run(pipeline(ignorestatus(`timeout $trimtimeout $veripbpath $ins2$opb $ins2$pbp`),stdout=ins41,stderr=ins42)) catch e println("\nerr ",ins42) end
+        full_verif_time = @elapsed try run(pipeline(ignorestatus(`timeout $trimtimeout $veripbpath $ins2$opb $ins2$pbp`),stdout=ins41,stderr=ins42)) catch e println("\nerr ",ins42) end
         isfile(ins42) && isempty(strip(read(ins42,String))) && tryrm(ins42)
-        return trunc(Int,t4),trunc(Int,t5) end
+        return trunc(Int,smol_verif_time),trunc(Int,full_verif_time) end
 
 
 # ======================================= plotting  ======================================= #
@@ -743,31 +743,31 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
         printcyan(leftcarriage(9, prettybytes(filesize(proofs*f*opb))))
         printcyan(leftcarriage(20,prettybytes(filesize(proofs*f*pbp)))) end
 
-    function printabline2(f,t1,t2,t3,t4,t5,cs=nothing)
+    function printabline2(f, parse_time, trim_time, write_time, smol_verif_time, full_verif_time, cone_stats=nothing)
         if par()
             pb(file) = isfile(file) ? prettybytes(filesize(file)) : "?"
-            cone_s = cs !== nothing ? " $(cs.lits_smol)/$(cs.lits_cone) $(cs.vars_used)/$(cs.vars_total)" : ""
+            cone_s = cone_stats !== nothing ? " $(cone_stats.lits_smol)/$(cone_stats.lits_cone) $(cone_stats.vars_used)/$(cone_stats.vars_total)" : ""
             println(rpad(pb(proofs*f*opb),8),           " & ", rpad(pb(proofs*f*pbp),9),
                     " & ", rpad(pb(proofs*f*opb*smol),9)," & ", rpad(pb(proofs*f*pbp*smol),9),
-                    " & ", rpad(t1+t2+t3+max(0,t4),5),
-                    " (", rpad(t1,4), rpad(t2,4), rpad(t3,4), rpad(t4,5), ")",
-                    " & ", rpad(t5,5), " & ", f, " \\\\\\hline%", cone_s)
+                    " & ", rpad(parse_time+trim_time+write_time+max(0,smol_verif_time),5),
+                    " (", rpad(parse_time,4), rpad(trim_time,4), rpad(write_time,4), rpad(smol_verif_time,5), ")",
+                    " & ", rpad(full_verif_time,5), " & ", f, " \\\\\\hline%", cone_s)
             return
         end
         printgreen(leftcarriage(31,prettybytes(filesize(proofs*f*opb*smol))))
         printgreen(leftcarriage(42,prettybytes(filesize(proofs*f*pbp*smol))))
-        printgreen(leftcarriage(49,string(t1+t2+t3+max(0,t4))))
-        printblue(leftcarriage(54,string(t1)))
-        printgreen(leftcarriage(59,string(t2)))
-        printblue(leftcarriage(64,string(t3)))
-        printcyan(leftcarriage(69,string(t4)))
-        printcyan(leftcarriage(78,string(t5)))
+        printgreen(leftcarriage(49,string(parse_time+trim_time+write_time+max(0,smol_verif_time))))
+        printblue(leftcarriage(54,string(parse_time)))
+        printgreen(leftcarriage(59,string(trim_time)))
+        printblue(leftcarriage(64,string(write_time)))
+        printcyan(leftcarriage(69,string(smol_verif_time)))
+        printcyan(leftcarriage(78,string(full_verif_time)))
         println() end
 
-    function printconestat(cone, cs)
+    function printconestat(cone, cone_stats)
         par() && return  # cursor-based stat doesn't compose with parallel output
         printgray("\r\033[99G% "*string(sum(cone))*"/"*string(length(cone))*" "
-                                *string(cs.vars_used)*"/"*string(cs.vars_total)*"") end
+                                *string(cone_stats.vars_used)*"/"*string(cone_stats.vars_total)*"\n") end
 
     function prettybytes(b)
         if b>=10^9
@@ -834,8 +834,8 @@ end; # using .Dumping # to save the import un comment this.
         var::Int end
 
     mutable struct Eq
-        t::Vector{Lit}
-        b::Int end
+        lits::Vector{Lit}   # literals (coef, sign, var triples), sorted by var
+        rhs::Int end        # right-hand side constant (sum of satisfied lits >= rhs)
 
     # Growable flat CSR store for equations parsed from .opb and .pbp files.
     # Replaces Vector{Eq} as the persistent representation, eliminating millions of
@@ -851,13 +851,13 @@ end; # using .Dumping # to save the import un comment this.
     FlatEqStore() = FlatEqStore(Int32[], Int32[], BitVector(), Int64[], Int32[1])
 
     function push_eq!(s::FlatEqStore, eq::Eq)
-        for l in eq.t
+        for l in eq.lits
             push!(s.vars,  Int32(l.var))
             push!(s.coefs, Int32(l.coef))
             push!(s.signs, l.sign)
         end
-        push!(s.rhs,     Int64(eq.b))
-        push!(s.row_ptr, Int32(s.row_ptr[end] + length(eq.t)))
+        push!(s.rhs,     Int64(eq.rhs))
+        push!(s.row_ptr, Int32(s.row_ptr[end] + length(eq.lits)))
     end
 
     # Normalises lits in-place (make all coefs positive) and pushes directly into the store.
@@ -940,8 +940,8 @@ end; # using .Dumping # to save the import un comment this.
 
     function merge(lits)
         c=0
-        del = get!(task_local_storage(), :delbuf, Int[])
-        empty!(del)
+        to_delete = get!(task_local_storage(), :delbuf, Int[])
+        empty!(to_delete)
         i=j=1
         while i<length(lits)
             j = i
@@ -949,12 +949,12 @@ end; # using .Dumping # to save the import un comment this.
                 j+=1
                 lits[i],cc = add(lits[i],lits[j])
                 c+=cc
-                push!(del,j)
+                push!(to_delete,j)
             end
             i = j+1
         end
-        if !isempty(del)
-            deleteat!(lits,del)
+        if !isempty(to_delete)
+            deleteat!(lits,to_delete)
         end
         return lits,c end
 
@@ -966,14 +966,14 @@ end; # using .Dumping # to save the import un comment this.
     normlit(l) = !l.sign ? (Lit(-l.coef,true,l.var),l.coef) : (l,0)
     function normcoefeq(eq)
         c = 0
-        for i in eachindex(eq.t)
-            l = eq.t[i]
+        for i in eachindex(eq.lits)
+            l = eq.lits[i]
             if l.coef < 0
-                eq.t[i] = Lit(-l.coef, !l.sign, l.var)
+                eq.lits[i] = Lit(-l.coef, !l.sign, l.var)
                 c += -l.coef
             end
         end
-        eq.b = c + eq.b end
+        eq.rhs = c + eq.rhs end
  
     function readproof(path,file,store,varmap,ctrmap,obj)
         systemlink = Vector{Vector{Int}}()
@@ -1031,9 +1031,9 @@ end; # using .Dumping # to save the import un comment this.
         return store,systemlink,redwitness,solirecord,assertrecord,output,conclusion end
 
     mutable struct Red
-        w::Vector{Lit}                      # flat pairs: w[2k-1]=source var, w[2k]=target var (var=0 → const-0, var=-1 → const-1)
+        witness::Vector{Lit}                # flat pairs: witness[2k-1]=source var, witness[2k]=target var (var=0 → const-0, var=-1 → const-1)
         range::UnitRange{Int64}             # system id range of the entire red block (reversed negation → conclusion)
-        pgranges::Vector{UnitRange{Int64}} end  # id ranges of individual proof goals inside the block
+        proof_goal_ranges::Vector{UnitRange{Int64}} end  # id ranges of individual proof goals inside the block
 
     function processrup(st,varmap,systemlink)
         push!(systemlink,[-1])
@@ -1131,11 +1131,11 @@ end; # using .Dumping # to save the import un comment this.
             end
         end
         eq = pop!(stack)
-        lits2 = removenulllits(eq.t)
+        lits2 = removenulllits(eq.lits)
         if length(link)==2
             link[1] = -3                               # pol with single antecedent and no ops is really an ia
         end
-        b = eq.b
+        b = eq.rhs
         if lastsaturate                                # apply normcoefeq+saturate inline to avoid Eq allocation
             b2 = 0
             for i in eachindex(lits2)
@@ -1148,7 +1148,7 @@ end; # using .Dumping # to save the import un comment this.
         end
         return lits2, b end
 
-    copyeq(eq) = Eq([Lit(l.coef,l.sign,l.var) for l in eq.t], eq.b)
+    copyeq(eq) = Eq([Lit(l.coef,l.sign,l.var) for l in eq.lits], eq.rhs)
 
     # Task-local pool of reusable Lit vectors for addeq intermediate results.
     # After warmup (a few pol steps), the pool holds enough buffers for the max concurrent
@@ -1156,61 +1156,61 @@ end; # using .Dumping # to save the import un comment this.
     get_lit_pool() = get!(task_local_storage(), :lit_pool, Vector{Lit}[])
 
     function addeq(eq1, eq2)
-        pool = get_lit_pool()
-        t1 = eq1.t; t2 = eq2.t
+        lit_pool = get_lit_pool()
+        lits1 = eq1.lits; lits2 = eq2.lits
         # take output buffer from pool (or allocate on first use)
-        out = isempty(pool) ? Lit[] : pop!(pool)
-        empty!(out); sizehint!(out, length(t1) + length(t2))
+        out = isempty(lit_pool) ? Lit[] : pop!(lit_pool)
+        empty!(out); sizehint!(out, length(lits1) + length(lits2))
         c = 0
         i = j = 1
-        while i <= length(t1) && j <= length(t2)
-            if t1[i].var < t2[j].var
-                push!(out, t1[i]); i += 1
-            elseif t1[i].var > t2[j].var
-                push!(out, t2[j]); j += 1
+        while i <= length(lits1) && j <= length(lits2)
+            if lits1[i].var < lits2[j].var
+                push!(out, lits1[i]); i += 1
+            elseif lits1[i].var > lits2[j].var
+                push!(out, lits2[j]); j += 1
             else
-                tmplit, tmpc = add(t1[i], t2[j])
+                tmplit, tmpc = add(lits1[i], lits2[j])
                 c += tmpc
                 tmplit.coef != 0 && push!(out, tmplit)
                 i += 1; j += 1
             end
         end
-        while i <= length(t1); push!(out, t1[i]); i += 1 end
-        while j <= length(t2); push!(out, t2[j]); j += 1 end
+        while i <= length(lits1); push!(out, lits1[i]); i += 1 end
+        while j <= length(lits2); push!(out, lits2[j]); j += 1 end
         # both input Lit vectors are now consumed — return them to the pool
-        push!(pool, t1)
-        push!(pool, t2)
-        return Eq(out, eq1.b + eq2.b - c) end
+        push!(lit_pool, lits1)
+        push!(lit_pool, lits2)
+        return Eq(out, eq1.rhs + eq2.rhs - c) end
 
     removenulllits(lits) = filter!(x->x.coef!=0,lits)
     function multiply!(eq,d)
-        for i in eachindex(eq.t)
-            l = eq.t[i]; eq.t[i] = Lit(l.coef*d, l.sign, l.var)
+        for i in eachindex(eq.lits)
+            l = eq.lits[i]; eq.lits[i] = Lit(l.coef*d, l.sign, l.var)
         end
-        eq.b *= d end
+        eq.rhs *= d end
 
     function divide!(eq,d)
         normcoefeq(eq)
-        for i in eachindex(eq.t)
-            l = eq.t[i]; eq.t[i] = Lit(ceil(Int,l.coef/d), l.sign, l.var)
+        for i in eachindex(eq.lits)
+            l = eq.lits[i]; eq.lits[i] = Lit(ceil(Int,l.coef/d), l.sign, l.var)
         end
-        eq.b = ceil(Int,eq.b/d) end
+        eq.rhs = ceil(Int,eq.rhs/d) end
 
     function saturate(eq)
-        for i in eachindex(eq.t)
-            l = eq.t[i]
-            l.coef > eq.b && (eq.t[i] = Lit(eq.b, l.sign, l.var))
+        for i in eachindex(eq.lits)
+            l = eq.lits[i]
+            l.coef > eq.rhs && (eq.lits[i] = Lit(eq.rhs, l.sign, l.var))
         end end
 
     function weaken!(eq,var)
-        b = eq.b
+        b = eq.rhs
         i = 1
-        while i <= length(eq.t)
-            l = eq.t[i]
-            if l.var == var; b -= l.coef; deleteat!(eq.t, i)
+        while i <= length(eq.lits)
+            l = eq.lits[i]
+            if l.var == var; b -= l.coef; deleteat!(eq.lits, i)
             else i += 1 end
         end
-        eq.b = b end
+        eq.rhs = b end
 
     function processassumption_push!(store,st,varmap,systemlink,assertrecord,c)
         eq = readeq(st,varmap,2:2:length(st))
@@ -1269,7 +1269,7 @@ end; # using .Dumping # to save the import un comment this.
         if st[end] == "begin"
             rev = reverse(eq)
             normcoefeq(rev)
-            push_eq!(store,rev)                        # slot redid: reversed negation of eq (tlink -9), hidden in prism
+            push_eq!(store,rev)                        # slot redid: reversed negation of eq (rule_type -9), hidden in prism
             push!(systemlink,[-9])
             c+=1
             range,pgranges,c = readsubproof(store,systemlink,eq,w,c,f,varmap,ctrmap)
@@ -1281,7 +1281,7 @@ end; # using .Dumping # to save the import un comment this.
         normcoefeq(eq)
         push_eq!(store,eq)                             # final slot: the red conclusion itself
         redwitness[redid] = Red(w,range,pgranges)      # keyed at redid (start of block) for subproof lookups
-        redwitness[length(store)] = Red(w,range,pgranges)  # also keyed at conclusion slot (used by getcone via tlink -10)
+        redwitness[length(store)] = Red(w,range,pgranges)  # also keyed at conclusion slot (used by getcone via rule_type -10)
         return c+1,Eq([],0) end
 
         # Witness is stored as flat pairs: t[2k-1]=source variable, t[2k]=target variable.
@@ -1320,14 +1320,14 @@ end; # using .Dumping # to save the import un comment this.
         pgranges = Vector{UnitRange{Int64}}()
         while type !="end"
             if type == "proofgoal"
-                pgid = c
+                proof_goal_id = c
                 if st[2][1] == '#'
                     push_eq!(store,reverse(applywitness(eq,w)))
                     push!(systemlink,[-7])
                 else
-                    pgref = parse(Int,st[2])
-                    push_eq!(store,reverse(applywitness(get_eq(store,pgref),w)))
-                    push!(systemlink,[-8,pgref])
+                    proof_goal_ref = parse(Int,st[2])
+                    push_eq!(store,reverse(applywitness(get_eq(store,proof_goal_ref),w)))
+                    push!(systemlink,[-8,proof_goal_ref])
                 end
                 c+=1
                 type,st = lparse(f)
@@ -1340,14 +1340,14 @@ end; # using .Dumping # to save the import un comment this.
                         eq = processpol(st,varmap,store,systemlink,c,ctrmap,nbopb)
                         systemlink[end][1] = -6 # in subproof, pol is -6
                     end
-                    if length(eq.t)!=0 || eq.b!=0
+                    if length(eq.lits)!=0 || eq.rhs!=0
                         normcoefeq(eq)
                         push_eq!(store,eq)
                         c+=1
                     end
                     type,st = lparse(f)
                 end
-                push!(pgranges,pgid:c-1)
+                push!(pgranges,proof_goal_id:c-1)
             end
             type,st = lparse(f)
         end
@@ -1359,8 +1359,8 @@ end; # using .Dumping # to save the import un comment this.
     function applywitness(eq, w)
         witness_idx = Dict{Int,Int}(w[i].var => i for i in 1:2:length(w))  # source var → index in w
         t = Lit[]
-        b = eq.b
-        for l in eq.t
+        b = eq.rhs
+        for l in eq.lits
             idx = get(witness_idx, l.var, 0)
             if idx != 0
                 if w[idx+1].var > 0                    # target is a variable: literal survives (sign may flip)
@@ -1425,7 +1425,7 @@ end; # using .Dumping # to save the import un comment this.
                         lits = [Lit(l.coef,!l.sign,l.var) for l in lits]
                         return assi
                     else
-                        for l in eq.t                    
+                        for l in eq.lits                    
                             if l.coef > s && assi[l.var]==0
                                 assi[l.var] = l.sign ? 1 : 2 # assi == 1 if l is true, 2 if l is false 0 if l is not assigned
                                 changes = true
@@ -1598,11 +1598,11 @@ end; # using .Dumping # to save the import un comment this.
     varrange(sys::PBSystem, v) = Int(sys.var_ptr[v]):Int(sys.var_ptr[v+1])-1
     function slack(eq::Eq, assi::Vector{Int8})
         c = 0
-        for l in eq.t
+        for l in eq.lits
             val = assi[l.var]
             (val == 0 || (l.sign && val == 1) || (!l.sign && val == 2)) && (c += l.coef)
         end
-        return c - eq.b end
+        return c - eq.rhs end
 
     @inline function slack(sys::PBSystem, e::Int, assi::Vector{Int8})
         c = zero(Int32)
@@ -1644,11 +1644,11 @@ end; # using .Dumping # to save the import un comment this.
         end end
 
     function printeq(eq::Eq)
-        for l in eq.t
+        for l in eq.lits
             print(" ")
             printlitcolor(l.coef, l.sign, l.var, :green)
         end
-        println(" >= ", eq.b) end
+        println(" >= ", eq.rhs) end
 
     function printeq(sys::PBSystem, e::Int)
         for k in eqrange(sys, e)
@@ -1724,7 +1724,7 @@ end; # using .Dumping # to save the import un comment this.
             conelits[j] = myconelit ∩ eqvars(sys, j)  # propagate back to each antecedent
         end end
 
-    function removetrivialantecedants(sys::PBSystem, ante::Ante, conelits, link, init::Int)
+    function removetrivialantecedents(sys::PBSystem, ante::Ante, conelits, link, init::Int)
         for i in ante.list
             ante.flags[i] || continue
             istrivial(sys, i, conelits) || continue   # antecedent became trivial after lit trimming
@@ -2291,8 +2291,8 @@ end; # using .Dumping # to save the import un comment this.
                 on_frontier[i] || continue             # stale pop guard
                 on_frontier[i] = false                 # remove from queue (cone[i] already true since push)
                 if i > nbopb
-                    tlink = systemlink[i - nbopb][1]   # rule type: -1=rup, -2=pol, -3=ia, -4=red, ...
-                    if tlink == -1                              # rup
+                    rule_type = systemlink[i - nbopb][1]   # rule type: -1=rup, -2=pol, -3=ia, -4=red, ...
+                    if rule_type == -1                              # rup
                         if do_rup!(i, 0:0)
                             ante_remove!(ante, i)              # i itself is not its own antecedent
                             ante_into_frontier!(ante, frontier, on_frontier, cone, systemlink[i - nbopb])
@@ -2300,16 +2300,16 @@ end; # using .Dumping # to save the import un comment this.
                             printstyled("  [error] rup failed at $i\n"; color=:red)
                             return
                         end
-                    elseif tlink >= -3 || (tlink == -30 && length(systemlink[i - nbopb]) > 1)  # pol / ia / assumption with hints
+                    elseif rule_type >= -3 || (rule_type == -30 && length(systemlink[i - nbopb]) > 1)  # pol / ia / assumption with hints
                         ante_clear!(ante)
                         fixante(systemlink, ante, i - nbopb)
                         fixconelits(sys, conelits, i, ante, systemlink[i - nbopb])
-                        removetrivialantecedants(sys, ante, conelits, systemlink[i - nbopb], i)
+                        removetrivialantecedents(sys, ante, conelits, systemlink[i - nbopb], i)
                         ante_into_frontier!(ante, frontier, on_frontier, cone)
-                    elseif tlink == -10                         # end of red subproof
+                    elseif rule_type == -10                         # end of red subproof
                         red = redwitness[i]
                         push_frontier!(frontier, on_frontier, cone, red.range.start)  # red declaration itself
-                        for subr in red.pgranges
+                        for subr in red.proof_goal_ranges
                             if systemlink[subr.start - nbopb][1] == -8 && !cone[subr.start]
                                 push!(pfgl, subr)              # defer: ref constraint not yet in cone
                             else
@@ -2317,19 +2317,19 @@ end; # using .Dumping # to save the import un comment this.
                                 push_frontier!(frontier, on_frontier, cone, subr.stop)
                             end
                         end
-                    elseif tlink == -5                          # subproof rup
-                        subran_idx = findfirst(x -> i in x, red.pgranges)
-                        if do_rup!(i, red.pgranges[subran_idx])
+                    elseif rule_type == -5                          # subproof rup
+                        subran_idx = findfirst(x -> i in x, red.proof_goal_ranges)
+                        if do_rup!(i, red.proof_goal_ranges[subran_idx])
                             ante_remove!(ante, i)
                             ante_into_frontier!(ante, frontier, on_frontier, cone, systemlink[i - nbopb])
                         else
                             printstyled("  [error] subproof rup failed\n"; color=:red)
                         end
-                    elseif tlink == -6 || tlink == -8           # subproof pol / proofgoal ref
+                    elseif rule_type == -6 || rule_type == -8           # subproof pol / proofgoal ref
                         ante_clear!(ante)
                         fixante(systemlink, ante, i - nbopb)
                         ante_into_frontier!(ante, frontier, on_frontier, cone)
-                    elseif tlink == -7                          # proofgoal #1: no external antecedents
+                    elseif rule_type == -7                          # proofgoal #1: no external antecedents
                     end
                 end
             end
@@ -2353,10 +2353,10 @@ end; # using .Dumping # to save the import un comment this.
         return 0 end
 
     function eqmatch(sys::PBSystem, e::Int, eq::Eq)
-        sys.rhs[e] != eq.b && return false
+        sys.rhs[e] != eq.rhs && return false
         r = eqrange(sys, e)
-        length(r) != length(eq.t) && return false
-        for (i, lit) in zip(r, eq.t)
+        length(r) != length(eq.lits) && return false
+        for (i, lit) in zip(r, eq.lits)
             (sys.vars[i] != lit.var || sys.coefs[i] != lit.coef || sys.signs[i] != lit.sign) && return false
         end
         return true end
@@ -2390,17 +2390,17 @@ end; # using .Dumping # to save the import un comment this.
         return lbid end
 
     function negatecoefs(eq::Eq)
-        lits = [Lit(-l.coef, l.sign, l.var) for l in eq.t]
-        return Eq(lits,-eq.b) end
+        lits = [Lit(-l.coef, l.sign, l.var) for l in eq.lits]
+        return Eq(lits,-eq.rhs) end
 
     function isequal(e::Eq,f::Eq) # equality between eq
-        if e.b!=f.b
+        if e.rhs!=f.rhs
             return false
-        elseif length(e.t) != length(f.t)
+        elseif length(e.lits) != length(f.lits)
             return false
         else
-            for i in eachindex(e.t)
-                if !isequal(e.t[i],f.t[i])
+            for i in eachindex(e.lits)
+                if !isequal(e.lits[i],f.lits[i])
                     return false
                 end
             end
@@ -2409,13 +2409,13 @@ end; # using .Dumping # to save the import un comment this.
 
     function isequal(a::Lit,b::Lit) # equality between lits
         return a.coef==b.coef && a.sign==b.sign && a.var==b.var end
-    @inline function fixon_frontier(on_frontier::Vector{Bool}, cone::Vector{Bool}, antecedants::Vector{Bool})
-        for i in eachindex(antecedants)
-            if antecedants[i]; on_frontier[i] = true; cone[i] = true; end
+    @inline function fixon_frontier(on_frontier::Vector{Bool}, cone::Vector{Bool}, antecedents::Vector{Bool})
+        for i in eachindex(antecedents)
+            if antecedents[i]; on_frontier[i] = true; cone[i] = true; end
         end end
 
-    @inline function fixon_frontier(on_frontier::Vector{Bool}, cone::Vector{Bool}, antecedants::Vector{Int})
-        for i in antecedants
+    @inline function fixon_frontier(on_frontier::Vector{Bool}, cone::Vector{Bool}, antecedents::Vector{Int})
+        for i in antecedents
             if i > 0; on_frontier[i] = true; cone[i] = true; end
         end end
 
@@ -2472,8 +2472,8 @@ end; # using .Dumping # to save the import un comment this.
         end
         print(f, ">= ", max(0, Int(sys.rhs[e]) - Int(b)), " : ", index[link], " ;\n") end
 
-    function writewitness(f::IO, witness, varmap)
-        for l in witness.w
+    function writewitness(f::IO, red_block, varmap)
+        for l in red_block.witness
             if l.var > 0; print(f, !l.sign ? " ~" : " ", varmap[l.var])
             else          print(f, " ", -l.var) end
         end end
@@ -2629,40 +2629,40 @@ end; # using .Dumping # to save the import un comment this.
                 if cone[i]
                     lastindex += 1
                     index[i] = lastindex
-                    tlink = systemlink[i - nbopb][1]
-                    if tlink == -1               # rup
+                    rule_type = systemlink[i - nbopb][1]
+                    if rule_type == -1               # rup
                         cl = get(conelits, i, nothing)
                         if cl !== nothing; writeuconelits(f, sys, i, varmap, cl)
                         else              writeu(f, sys, i, varmap) end
                         if !isempty(eqrange(sys, i))
                             writedel(f, systemlink, i, succ, index, nbopb, dels)
                         end
-                    elseif tlink == -2           # pol
+                    elseif rule_type == -2           # pol
                         writepol(f, systemlink[i - nbopb], index, varmap)
                         writedel(f, systemlink, i, succ, index, nbopb, dels)
-                    elseif tlink == -3           # ia
+                    elseif rule_type == -3           # ia
                         cl = get(conelits, i, nothing)
                         if cl !== nothing; writeiaconelits(f, sys, i, systemlink[i - nbopb][2], index, varmap, cl)
                         else              writeia(f, sys, i, systemlink[i - nbopb][2], index, varmap) end
                         writedel(f, systemlink, i, succ, index, nbopb, dels)
-                    elseif tlink == -4           # red alone
+                    elseif rule_type == -4           # red alone
                         writered(f, sys, i, varmap, redwitness[i], "")
                         dels[i] = true
-                    elseif tlink == -5           # rup in subproof
+                    elseif rule_type == -5           # rup in subproof
                         print(f, "    "); writeu(f, sys, i, varmap)
                         push!(todel, i)
-                    elseif tlink == -6           # pol in subproof
+                    elseif rule_type == -6           # pol in subproof
                         print(f, "    "); writepol(f, systemlink[i - nbopb], index, varmap)
                         push!(todel, i)
-                    elseif tlink == -9           # red with begin (reversed initial equation)
+                    elseif rule_type == -9           # red with begin (reversed initial equation)
                         writered(f, sys, i, varmap, redwitness[i], " ; begin"; reversed=true)
                         todel = [i]; dels[i] = true
-                    elseif tlink == -7           # red proofgoal #1
+                    elseif rule_type == -7           # red proofgoal #1
                         write(f, "    proofgoal #1\n")
-                    elseif tlink == -8           # red proofgoal normal
+                    elseif rule_type == -8           # red proofgoal normal
                         print(f, "    proofgoal ", index[systemlink[i - nbopb][2]], "\n")
                         push!(todel, i)
-                    elseif tlink == -10          # red proofgoal end
+                    elseif rule_type == -10          # red proofgoal end
                         lastindex -= 1
                         write(f, "    end -1\n")
                         next = systemlink[i - nbopb][1]
@@ -2673,18 +2673,18 @@ end; # using .Dumping # to save the import un comment this.
                                 writedel(f, systemlink, ii, succ, index, nbopb, dels)
                             end
                         end
-                    elseif tlink == -20          # solx
+                    elseif rule_type == -20          # solx
                         writesolx(f, sys, i, varmap); dels[i] = true
-                    elseif tlink == -21          # soli
+                    elseif rule_type == -21          # soli
                         writesoli(f, solirecord[i], varmap)
-                    elseif tlink == -30          # unchecked assumption
+                    elseif rule_type == -30          # unchecked assumption
                         if haskey(assertrecord, i)
                             lastindex += justify(f, sys, i, assertrecord[i], index, varmap)
                         else
                             print(f, "a "); writeeq(f, sys, i, varmap)
                         end
                     else
-                        printstyled("  [error] unknown tlink=$tlink\n"; color=:red)
+                        printstyled("  [error] unknown rule_type=$rule_type\n"; color=:red)
                         lastindex -= 1
                     end
                 end
@@ -2867,11 +2867,11 @@ end; # using .Dumping # to save the import un comment this.
             end
             printstyled("  $ins resolv iter $iter: $np pat / $nt tar → solved $(round(t;digits=1))s\n"; color=:cyan)
             printabline(core_ins)
-            tr1,tr2,tr3,trs,coremsg = trimnalyse(core_ins; mode=Grim())
-            tr4,tr5 = VERIF ? verify(core_ins) : (-1,-1)
-            printabline2(core_ins, tr1, tr2, tr3, tr4, tr5, trs)
+            parse_time,trim_time,write_time,cone_stats,coremsg = trimnalyse(core_ins; mode=Grim())
+            smol_verif_time,full_verif_time = VERIF ? verify(core_ins) : (-1,-1)
+            printabline2(core_ins, parse_time, trim_time, write_time, smol_verif_time, full_verif_time, cone_stats)
             !isempty(coremsg) && println(coremsg)
-            writeout_verif(core_ins, tr4, tr5)
+            writeout_verif(core_ins, smol_verif_time, full_verif_time)
             cur_pat = proofs * "vis/" * core_ins * ".core.pat.lad"
             cur_tar = proofs * "vis/" * core_ins * ".core.tar.lad"
         end
