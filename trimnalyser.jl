@@ -5,6 +5,7 @@ julia --threads 8,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=30 st=8
 julia --threads 192,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=6000 rand maxparse=192
 julia -t192 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=6000 rand
 julia -t92,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=6000 rand
+julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=6000 rand maxmem=2
 =#
     const opb = ".opb"
     const pbp = ".pbp"
@@ -42,95 +43,12 @@ julia -t92,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt
     end
     const solvertimeout = begin i = findfirst(x -> startswith(x, "st="), ARGS); i !== nothing ? parse(Int, ARGS[i][4:end]) : 5   end  # st=N
     const trimtimeout   = begin i = findfirst(x -> startswith(x, "tt="), ARGS); i !== nothing ? parse(Int, ARGS[i][4:end]) : 45  end  # tt=N
-    # MemAvailable from /proc/meminfo includes reclaimable page cache, unlike Sys.free_memory() (MemFree only).
-    # On a busy cluster reading large proof files, page cache can consume hundreds of GB, making MemFree
-    # appear critically low while the system actually has plenty of usable memory.
-    function available_memory()
-        if isfile("/proc/meminfo")
-            for line in eachline("/proc/meminfo")
-                startswith(line, "MemAvailable:") && return parse(Int, split(line)[2]) * 1024
-            end
-        end
-        return Sys.free_memory()  # fallback for non-Linux
-    end
-
-    # Read the resident set size of a subprocess from /proc/PID/status (Linux only).
-    # Returns GB; 0.0 if the process already exited or on non-Linux.
-    function process_rss_gb(pid::Int)
-        try
-            for line in eachline("/proc/$pid/status")
-                startswith(line, "VmRSS:") && return parse(Int, split(line)[2]) / 1024^2
-            end
-        catch end
-        return 0.0
-    end
-
-
-    # Pre-allocated singleton link vectors for rule types whose systemlink entries need no antecedents.
-    # Singletons are safe to share ONLY if nothing pushes into them. _LINK_RUP is the exception:
-    # ante_into_frontier! lazily replaces a RUP entry with a fresh vector on first cone visit,
-    # so the singleton is only ever observed (never mutated) during parsing.
-    const _LINK_RUP  = Int[-1]   # rup — sentinel; replaced lazily by ante_into_frontier! for cone steps
-    const _LINK_RED  = Int[-4]   # inline red (no subproof)
-    const _LINK_IARES = Int[-3]  # ia (single-antecedent pol) result
-    const _LINK_END  = Int[-10]  # end-of-subproof marker
-    const _LINK_PG7  = Int[-7]   # proofgoal #1
-    const _LINK_SOLI = Int[-21]  # soli
-    const _LINK_SOLX = Int[-20]  # solx
-
-    # Zero-allocation line tokenizer. Replaces both remove(ss,";") and split(ss,keepempty=false).
-    # Skips ';' characters inline so no intermediate String is allocated for semicolon stripping.
-    # Uses task_local_storage so the buffer persists across all iterations on the same task
-    # (safe with @threads :greedy — each task owns its buffer and never shares it).
-    # Returns a reference to the task-local buffer — valid only until the next tokenize! call on this task.
-    # AbstractString (not String) so it accepts SubString{String} from _scan_lines without copying.
-    function tokenize!(ss::AbstractString)
-        buf = get!(task_local_storage(), :tokbuf, SubString{String}[])
-        empty!(buf)
-        i = 1
-        n = ncodeunits(ss)
-        while i <= n
-            # skip whitespace and semicolons between tokens
-            while i <= n
-                b = codeunit(ss, i)
-                b == UInt8(' ') || b == UInt8('\t') || b == UInt8(';') ? i += 1 : break
-            end
-            i > n && break
-            j = i
-            # scan token: stop at whitespace or semicolon
-            while j <= n
-                b = codeunit(ss, j)
-                b == UInt8(' ') || b == UInt8('\t') || b == UInt8(';') ? break : (j += 1)
-            end
-            push!(buf, SubString(ss, i, j - 1))
-            i = j
-        end
-        return buf
-    end
-
-    # Iterate over lines of content as SubString{String} views — zero allocation per line.
-    # Drop-in for `for ss in eachline(io)`. Uses whole-file String to avoid per-line allocations
-    # from readline, which cause stop-the-world GC with multiple threads (45 GC pauses vs 1).
-    function _scan_lines(f, content::String)
-        i = firstindex(content)
-        n = lastindex(content)
-        while i <= n
-            j = findnext('\n', content, i)
-            last = j === nothing ? n : j - 1
-            f(SubString(content, i, last))
-            i = j === nothing ? n + 1 : j + 1
-        end
-    end
-
     const minfreemem    = begin i = findfirst(x -> startswith(x, "minmem="), ARGS); i !== nothing ? parse(Int, ARGS[i][8:end]) * 1024^3 : (_cluster ? 100 : 4) * 1024^3 end  # minmem=N GB, default 500 on cluster / 4 locally
     const maxinstmem_gb = begin i = findfirst(x -> startswith(x, "maxmem="), ARGS); i !== nothing ? parse(Float64, ARGS[i][8:end]) : (_cluster ? 50.0 : 8.0) end  # maxmem=N GB per subprocess, default 100 on cluster / 8 locally
     using Random,DataStructures,Dates,Printf
 
 
-# =============== main stuff =============
-    const argflags = Set(["bfs","clit","core","verif","no","rand","sort","clean","atable",
-                          "profile","solve","resolv","allgraphs"])
-
+# ══ Entry point ══════════════════════════════════════════════════════════════════════════
     function packdots()
         visdir = proofs * "vis/"
         archive = proofs * "vis.tar.gz"
@@ -212,7 +130,7 @@ julia -t92,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt
                     while process_running(proc)
                         sleep(10)
                         process_running(proc) || break
-                        rss = process_rss_gb(proc.pid)
+                        rss = process_rss_gb(getpid(proc))
                         if rss > maxinstmem_gb
                             kill(proc, 9)
                             msg = "OOM killed: $(round(rss; digits=1)) GB > $maxinstmem_gb GB"
@@ -248,14 +166,6 @@ julia -t92,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt
         println("%Found ", length(list), " instances in ", proofs)
         return list end
 
-    # Returns (node_count, path) for a LAD file, or nothing if unreadable.
-    function ladnodes(path)
-        isfile(path) || return nothing
-        n = tryparse(Int, readline(path))
-        n === nothing && return nothing
-        return n
-    end
-
     # Enumerates all (pattern, target) instance names from the benchmark graph directories.
     # Filters pairs where both graphs have <= MAXNODES nodes and pattern_size <= target_size.
     function allgraphinstances()
@@ -287,7 +197,8 @@ julia -t92,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt
         println("%Generated ", length(list), " instances from benchmark graphs (maxnodes=", MAXNODES, ")")
         return list
     end
-        
+
+# ══ Instance pipeline ══════════════════════════════════════════════════════════════════════════
     function pbpconclusion(ins, suffix="")
         f = proofs*ins*pbp*suffix
         isfile(f) || return ""
@@ -404,7 +315,6 @@ julia -t92,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt
     function trimnalyse(ins; mode=Grim())
         prefix = mode isa Bfs ? "gbfs" : mode isa Clit ? "gclt" : "grim"
         parse_time = trim_time = write_time = 0 ; file = ins ; cone_stats = nothing
-        # if "load" in ARGS file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index = loadsys(file); @goto skiped end # using goto because I was told not to
         parse_time = @elapsed begin
             store,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,prism = readinstance(proofs,file)
         end
@@ -421,14 +331,10 @@ julia -t92,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt
             open(proofs*ins*".err", "a") do f; println(f, "getcone timeout after $(trimtimeout)s") end
             return trunc(Int,parse_time),trunc(Int,trim_time),0,cone_stats,""
         end
-        # for (i,_) in conelits # nullify the conelits
-        #     conelits[i] = Set{Int}(Int(sys.vars[k]) for k in eqrange(sys, i))
-        # end
         writeout_trim(ins, trim_time, cone, nbopb, prefix)
         writeout_conelits(ins, sys, cone, conelits, prefix)
         cone_stats = conelits_stats(sys, cone, conelits)
         printconestat(cone, cone_stats)
-        # @label skiped
         varmap_inv = Vector{String}(undef, length(varmap))
         for (k, v) in varmap; varmap_inv[v] = k; end
         if isempty(output)
@@ -448,6 +354,7 @@ julia -t92,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt
         writeout_write(ins, parse_time, trim_time, write_time, prefix)
         return trunc(Int,parse_time),trunc(Int,trim_time),trunc(Int,write_time),cone_stats,coremsg end
 
+# ══ Output & display ══════════════════════════════════════════════════════════════════════════
     function writeout_parse(ins, t1, nbopb, n_pbp, inp_lits, inp_vars, prefix)
         opb_sz = filesize(proofs*ins*opb)
         pbp_sz = filesize(proofs*ins*pbp)
@@ -529,8 +436,66 @@ julia -t92,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt
         isfile(ins42) && isempty(strip(read(ins42,String))) && tryrm(ins42)
         return trunc(Int,smol_verif_time),trunc(Int,full_verif_time) end
 
+    printgray(s)  = printstyled(s, color=:light_black)
+    printyellow(s)= printstyled(s, color=:yellow)
+    printred(s)   = printstyled(s, color=:red)
+    printgreen(s) = printstyled(s, color=:green)
+    printblue(s)  = printstyled(s, color=:blue)
+    printcyan(s)  = printstyled(s, color=:cyan)
+    function leftcarriage(c,s)
+        carriage = string(c-length(s))
+        return "\r\033["*carriage*"G"*s end
 
-# ======================================= plotting  ======================================= #
+    # True when output can't use cursor positioning: either multiple threads in the same process
+    # (would interleave), or a single-threaded subprocess handling one instance in a batch run.
+    par() = Threads.nthreads() > 1 || inst !== nothing
+
+    function printabline(f)
+        par() && return  # parallel: skip placeholder, full line printed atomically in printabline2
+        printgray("         &          &          &          &      (                   ) &      & ")
+        printyellow(f)
+        printgray(" \\\\\\hline")
+        printcyan(leftcarriage(9, prettybytes(filesize(proofs*f*opb))))
+        printcyan(leftcarriage(20,prettybytes(filesize(proofs*f*pbp)))) end
+
+    function printabline2(f, parse_time, trim_time, write_time, smol_verif_time, full_verif_time, cone_stats=nothing)
+        if par()
+            pb(file) = isfile(file) ? prettybytes(filesize(file)) : "?"
+            cone_s = cone_stats !== nothing ? " $(cone_stats.lits_smol)/$(cone_stats.lits_cone) $(cone_stats.vars_used)/$(cone_stats.vars_total)" : ""
+            println(rpad(pb(proofs*f*opb),8),           " & ", rpad(pb(proofs*f*pbp),9),
+                    " & ", rpad(pb(proofs*f*opb*smol),9)," & ", rpad(pb(proofs*f*pbp*smol),9),
+                    " & ", rpad(parse_time+trim_time+write_time+max(0,smol_verif_time),5),
+                    " (", rpad(parse_time,4), rpad(trim_time,4), rpad(write_time,4), rpad(smol_verif_time,5), ")",
+                    " & ", rpad(full_verif_time,5), " & ", f, " \\\\\\hline%", cone_s)
+            return
+        end
+        printgreen(leftcarriage(31,prettybytes(filesize(proofs*f*opb*smol))))
+        printgreen(leftcarriage(42,prettybytes(filesize(proofs*f*pbp*smol))))
+        printgreen(leftcarriage(49,string(parse_time+trim_time+write_time+max(0,smol_verif_time))))
+        printblue(leftcarriage(54,string(parse_time)))
+        printgreen(leftcarriage(59,string(trim_time)))
+        printblue(leftcarriage(64,string(write_time)))
+        printcyan(leftcarriage(69,string(smol_verif_time)))
+        printcyan(leftcarriage(78,string(full_verif_time)))
+        println() end
+
+    function printconestat(cone, cone_stats)
+        par() && return  # cursor-based stat doesn't compose with parallel output
+        printgray("\r\033[99G% "*string(sum(cone))*"/"*string(length(cone))*" "
+                                *string(cone_stats.vars_used)*"/"*string(cone_stats.vars_total)*"\n") end
+
+    function prettybytes(b)
+        if b>=10^9
+            return string(trunc(Int,b/(10^9))," GB")
+        elseif b>=10^6
+            return string(trunc(Int,b/(10^6))," MB")
+        elseif b>=10^3
+            return string(trunc(Int,b/(10^3))," KB")
+        else
+            return  string(trunc(Int,b)," B")
+        end end
+
+# ══ Statistics ══════════════════════════════════════════════════════════════════════════
     # Column index constants for the results table
         const T_FILE       =  1
         const T_GRIM_TIME  =  2
@@ -761,7 +726,32 @@ julia -t92,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt
     function postfixtikz()
         println("}\\draw (\\x,\\y) node[noeudver] {};\n\\end{tikzpicture}") end
 
-# ======================================= sugar ======================================= #
+# ══ Utilities ══════════════════════════════════════════════════════════════════════════
+    # MemAvailable from /proc/meminfo includes reclaimable page cache, unlike Sys.free_memory() (MemFree only).
+    # On a busy cluster reading large proof files, page cache can consume hundreds of GB, making MemFree
+    # appear critically low while the system actually has plenty of usable memory.
+    function available_memory()
+        if isfile("/proc/meminfo")
+            for line in eachline("/proc/meminfo")
+                startswith(line, "MemAvailable:") && return parse(Int, split(line)[2]) * 1024
+            end
+        end
+        return Sys.free_memory()  # fallback for non-Linux
+    end
+
+    # Read the resident set size of a subprocess from /proc/PID/status (Linux only).
+    # Returns GB; 0.0 if the process already exited or on non-Linux.
+    function process_rss_gb(pid::Int)
+        try
+            for line in eachline("/proc/$pid/status")
+                startswith(line, "VmRSS:") && return parse(Int, split(line)[2]) / 1024^2
+            end
+        catch end
+        return 0.0
+    end
+
+    const argflags = Set(["bfs","clit","core","verif","no","rand","sort","clean","atable",
+                          "profile","solve","resolv","allgraphs"])
     onlyname(x) = splitext(basename(x))[1]
     ext(x) = splitext(basename(x))[2]
     noext(x) = splitext(x)[1]
@@ -771,66 +761,9 @@ julia -t92,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt
     remove(s,c) = replace(s,c=>"")#deleteat!(s,findall(x->x==c,s))
     const tabhead = "\\begin{tabular}{|cc|cc|c|c|c|}\\hline sizes & & &  & times (s) & & Instance\\\\\\hline\nopb & pbp & smol o & smol p & grim time (parse trim write verif) & veri time & \\\\\\hline"
     const tabfoot = "\\end{tabular}\\\\\n"
-    printgray(s)  = printstyled(s, color=:light_black)
-    printyellow(s)= printstyled(s, color=:yellow)
-    printred(s)   = printstyled(s, color=:red)
-    printgreen(s) = printstyled(s, color=:green)
-    printblue(s)  = printstyled(s, color=:blue)
-    printcyan(s)  = printstyled(s, color=:cyan)
-    function leftcarriage(c,s)
-        carriage = string(c-length(s))
-        return "\r\033["*carriage*"G"*s end
 
-    # True when output can't use cursor positioning: either multiple threads in the same process
-    # (would interleave), or a single-threaded subprocess handling one instance in a batch run.
-    par() = Threads.nthreads() > 1 || inst !== nothing
-
-    function printabline(f)
-        par() && return  # parallel: skip placeholder, full line printed atomically in printabline2
-        printgray("         &          &          &          &      (                   ) &      & ")
-        printyellow(f)
-        printgray(" \\\\\\hline")
-        printcyan(leftcarriage(9, prettybytes(filesize(proofs*f*opb))))
-        printcyan(leftcarriage(20,prettybytes(filesize(proofs*f*pbp)))) end
-
-    function printabline2(f, parse_time, trim_time, write_time, smol_verif_time, full_verif_time, cone_stats=nothing)
-        if par()
-            pb(file) = isfile(file) ? prettybytes(filesize(file)) : "?"
-            cone_s = cone_stats !== nothing ? " $(cone_stats.lits_smol)/$(cone_stats.lits_cone) $(cone_stats.vars_used)/$(cone_stats.vars_total)" : ""
-            println(rpad(pb(proofs*f*opb),8),           " & ", rpad(pb(proofs*f*pbp),9),
-                    " & ", rpad(pb(proofs*f*opb*smol),9)," & ", rpad(pb(proofs*f*pbp*smol),9),
-                    " & ", rpad(parse_time+trim_time+write_time+max(0,smol_verif_time),5),
-                    " (", rpad(parse_time,4), rpad(trim_time,4), rpad(write_time,4), rpad(smol_verif_time,5), ")",
-                    " & ", rpad(full_verif_time,5), " & ", f, " \\\\\\hline%", cone_s)
-            return
-        end
-        printgreen(leftcarriage(31,prettybytes(filesize(proofs*f*opb*smol))))
-        printgreen(leftcarriage(42,prettybytes(filesize(proofs*f*pbp*smol))))
-        printgreen(leftcarriage(49,string(parse_time+trim_time+write_time+max(0,smol_verif_time))))
-        printblue(leftcarriage(54,string(parse_time)))
-        printgreen(leftcarriage(59,string(trim_time)))
-        printblue(leftcarriage(64,string(write_time)))
-        printcyan(leftcarriage(69,string(smol_verif_time)))
-        printcyan(leftcarriage(78,string(full_verif_time)))
-        println() end
-
-    function printconestat(cone, cone_stats)
-        par() && return  # cursor-based stat doesn't compose with parallel output
-        printgray("\r\033[99G% "*string(sum(cone))*"/"*string(length(cone))*" "
-                                *string(cone_stats.vars_used)*"/"*string(cone_stats.vars_total)*"\n") end
-
-    function prettybytes(b)
-        if b>=10^9
-            return string(trunc(Int,b/(10^9))," GB")
-        elseif b>=10^6
-            return string(trunc(Int,b/(10^6))," MB")
-        elseif b>=10^3
-            return string(trunc(Int,b/(10^3))," KB")
-        else
-            return  string(trunc(Int,b)," B")
-        end end 
-
-module Dumping # ======================================= mem dump ======================================= #
+# ══ Debug ══════════════════════════════════════════════════════════════════════════════
+module Dumping
     using Serialization
     function dumpsys(file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index)
         println("dumping started")
@@ -846,40 +779,7 @@ module Dumping # ======================================= mem dump ==============
         println("loading ended")
         return file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index end
 end; # using .Dumping # to save the import un comment this.
-# ======================================= parser  ======================================= #
-    function readinstance(path,file)
-        store,varmap,ctrmap,obj = readopb(path,file)
-        nbopb = length(store)
-        store,systemlink,redwitness,solirecord,assertrecord,output,conclusion = readproof(path,file,store,varmap,ctrmap,obj)
-        prism = availableranges(redwitness)
-        return store,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,prism end
-
-    function readopb(path,file)
-        store = FlatEqStore()
-        varmap = Dict{String,Int}()
-        ctrmap = Dict{String, Int}()
-        obj = ""
-        # read whole file as one String: one large allocation vs ~millions of small String objects from
-        # readline. The large allocation fits Julia's large-object pool cleanly; the small ones trigger
-        # stop-the-world GC on every thread whenever any thread allocates. minfreemem already gates this.
-        content_opb = read(path*file*opb, String)
-        c = 1
-        _scan_lines(content_opb) do ss
-            if length(ss)==0 || ss[1]=='*' return end
-            st = tokenize!(ss)
-            if st[1][1]=='@'
-                ctrmap[st[1][2:end]] = c
-                st = st[2:end]
-            end
-            if ss[1] == 'm'
-                obj = readobj(st,varmap)
-            else
-                readeq_push!(store, st, varmap, 1:2:length(st))
-                c+=1
-            end
-        end
-        return store,varmap,ctrmap,obj end
-
+# ══ Data structures ═════════════════════════════════════════════════════════════════════
     struct Lit
         coef::Int
         sign::Bool
@@ -943,6 +843,220 @@ end; # using .Dumping # to save the import un comment this.
                                        s.row_ptr[end] == s.row_ptr[end-1] &&
                                        s.rhs[end] == 1
 
+    mutable struct Red
+        witness::Vector{Lit}                # flat pairs: witness[2k-1]=source var, witness[2k]=target var (var=0 → const-0, var=-1 → const-1)
+        range::UnitRange{Int64}             # system id range of the entire red block (reversed negation → conclusion)
+        proof_goal_ranges::Vector{UnitRange{Int64}} end  # id ranges of individual proof goals inside the block
+
+    struct PBSystem
+        # Forward: equation → terms
+        vars    ::Vector{Int32}
+        coefs   ::Vector{Int32}
+        signs   ::BitVector
+        rhs     ::Vector{Int64}
+        row_ptr ::Vector{Int32}
+        # Inverse: variable → equations containing it
+        var_ptr ::Vector{Int32}     # length = n_vars + 1
+        var_eqs ::Vector{Int32} end # flat list of equation ids
+
+    mutable struct Trail
+        var  ::Vector{Int32}    # variables in propagation order
+        eq   ::Vector{Int32}    # reason equation for each entry
+        pos  ::Vector{Int}      # pos[v] = index in var/eq (0 = unassigned)
+        assi ::Vector{Int8} end # current assignment (1=true, 2=false, 0=unset)
+
+    Trail(n_vars::Int) = Trail(Int32[], Int32[], zeros(Int, n_vars), zeros(Int8, n_vars))
+    @inline function reset!(t::Trail)
+        empty!(t.var); empty!(t.eq)
+        fill!(t.pos, 0); fill!(t.assi, 0) end
+
+        # Reset trail to base state, filtering out entries whose reason >= init.
+        # OPB entries (reason ≤ nbopb ≤ any init) are always included.
+        # PBP entries with reason < init are included; reason == init is excluded because
+        # constraint init is the one being proved (using it as a reason is circular).
+    @inline function reset_to_base!(t::Trail, base::Trail, init::Int)
+        empty!(t.var); empty!(t.eq)
+        fill!(t.pos, 0); fill!(t.assi, 0)
+        for k in 1:length(base.var)
+            Int(base.eq[k]) >= init && continue            # exclude init itself and anything beyond
+            pushtrail!(t, base.var[k], base.eq[k], base.assi[Int(base.var[k])])
+        end end
+
+    struct Ante
+        flags::Vector{Bool}   # O(1) membership
+        list ::Vector{Int} end# O(k) iteration; may contain stale (false) entries
+
+    Ante(n::Int) = Ante(zeros(Bool, n), Int[])
+
+    struct RupState                                    # reusable scratch buffers — allocated once in getcone
+        que           ::BitVector                      # ruptrail equation queue
+        pq_prio       ::BinaryMinHeap{Int}             # priority equations (cone/on_frontier)
+        pq_nonprio    ::BinaryMinHeap{Int}             # non-priority equations
+        to_explain    ::BinaryMaxHeap{Int}             # conflicttrail: trail positions still needing explanation
+        is_to_explain ::BitVector                      # membership guard for to_explain (self-cleaning)
+        falsified_lits::Vector{Tuple{Int,Int,Int,Int32}} # conflicttrail: reused per-iteration buffer
+        essentials    ::Dict{Int,Set{Int}} end           # forward-pass: essential vars per constraint (Clit only)
+
+    # Trimming mode — passed through getcone! → ruptrail → process_eq! → conflicttrail.
+    # To add a new mode: define a new struct + a conflicttrail method. Nothing else changes.
+    struct Grim end        # standard: proof-index sort in conflict analysis
+    struct Clit end        # cone-first sort + essentials-aware filter in conflict analysis
+    struct Bfs  end        # BFS propagation with wave-level reason selection (ruptrail_bfs)
+
+    RupState(n_eqs::Int, n_vars::Int) = RupState(
+        falses(n_eqs),
+        BinaryMinHeap{Int}(),
+        BinaryMinHeap{Int}(),
+        BinaryMaxHeap{Int}(),
+        falses(n_vars + 1),
+        Tuple{Int,Int,Int,Int32}[],
+        Dict{Int,Set{Int}}())
+
+    function PBSystem(store::FlatEqStore, n_vars::Int)
+        # Forward arrays are reused directly from the store — zero copy.
+        # Only the inverse index (var_ptr, var_eqs) needs to be computed fresh.
+        vars    = store.vars
+        coefs   = store.coefs
+        signs   = store.signs
+        rhs     = store.rhs
+        row_ptr = store.row_ptr
+        n_lits  = length(vars)
+
+        var_count = zeros(Int32, n_vars)
+        for v in vars; var_count[v] += 1; end
+        var_ptr = Vector{Int32}(undef, n_vars + 1)
+        var_ptr[1] = 1
+        for v in 1:n_vars
+            var_ptr[v+1] = var_ptr[v] + var_count[v]
+        end
+        var_eqs = Vector{Int32}(undef, n_lits)
+        fill!(var_count, 0)
+        n_eqs = length(rhs)
+        for e in 1:n_eqs
+            for k in Int(row_ptr[e]):Int(row_ptr[e+1])-1
+                v = vars[k]
+                var_eqs[var_ptr[v] + var_count[v]] = e
+                var_count[v] += 1
+            end
+        end
+
+        return PBSystem(vars, coefs, signs, rhs, row_ptr, var_ptr, var_eqs) end
+
+    eqrange(sys::PBSystem, e) = Int(sys.row_ptr[e]):Int(sys.row_ptr[e+1])-1
+    varrange(sys::PBSystem, v) = Int(sys.var_ptr[v]):Int(sys.var_ptr[v+1])-1
+    function slack(eq::Eq, assi::Vector{Int8})
+        c = 0
+        for l in eq.lits
+            val = assi[l.var]
+            (val == 0 || (l.sign && val == 1) || (!l.sign && val == 2)) && (c += l.coef)
+        end
+        return c - eq.rhs end
+
+    @inline function slack(sys::PBSystem, e::Int, assi::Vector{Int8})
+        c = zero(Int32)
+        @inbounds for i in eqrange(sys, e)
+            val  = assi[Int(sys.vars[i])]
+            sign = sys.signs[i]
+            unaffected = (val == 0) | (sign & (val == 1)) | (!sign & (val == 2))
+            c += unaffected ? sys.coefs[i] : zero(Int32)
+        end
+        return c - sys.rhs[e] end
+
+    inprism(n, prism::BitVector)             = n <= length(prism) && prism[n]
+    inprism(n, prism::Vector{UnitRange{Int64}}) = any(n in r for r in prism)
+    @inline function setconelits(conelits, v, id)
+        push!(get!(Set{Int}, conelits, id), v) end
+
+# ══ Parser ══════════════════════════════════════════════════════════════════════════════
+    # Pre-allocated singleton link vectors for rule types whose systemlink entries need no antecedents.
+    # Singletons are safe to share ONLY if nothing pushes into them. _LINK_RUP is the exception:
+    # ante_into_frontier! lazily replaces a RUP entry with a fresh vector on first cone visit,
+    # so the singleton is only ever observed (never mutated) during parsing.
+    const _LINK_RUP  = Int[-1]   # rup — sentinel; replaced lazily by ante_into_frontier! for cone steps
+    const _LINK_RED  = Int[-4]   # inline red (no subproof)
+    const _LINK_IARES = Int[-3]  # ia (single-antecedent pol) result
+    const _LINK_END  = Int[-10]  # end-of-subproof marker
+    const _LINK_PG7  = Int[-7]   # proofgoal #1
+    const _LINK_SOLI = Int[-21]  # soli
+    const _LINK_SOLX = Int[-20]  # solx
+
+    # Zero-allocation line tokenizer. Replaces both remove(ss,";") and split(ss,keepempty=false).
+    # Skips ';' characters inline so no intermediate String is allocated for semicolon stripping.
+    # Uses task_local_storage so the buffer persists across all iterations on the same task
+    # (safe with @threads :greedy — each task owns its buffer and never shares it).
+    # Returns a reference to the task-local buffer — valid only until the next tokenize! call on this task.
+    # AbstractString (not String) so it accepts SubString{String} from _scan_lines without copying.
+    function tokenize!(ss::AbstractString)
+        buf = get!(task_local_storage(), :tokbuf, SubString{String}[])
+        empty!(buf)
+        i = 1
+        n = ncodeunits(ss)
+        while i <= n
+            # skip whitespace and semicolons between tokens
+            while i <= n
+                b = codeunit(ss, i)
+                b == UInt8(' ') || b == UInt8('\t') || b == UInt8(';') ? i += 1 : break
+            end
+            i > n && break
+            j = i
+            # scan token: stop at whitespace or semicolon
+            while j <= n
+                b = codeunit(ss, j)
+                b == UInt8(' ') || b == UInt8('\t') || b == UInt8(';') ? break : (j += 1)
+            end
+            push!(buf, SubString(ss, i, j - 1))
+            i = j
+        end
+        return buf
+    end
+
+    # Iterate over lines of content as SubString{String} views — zero allocation per line.
+    # Drop-in for `for ss in eachline(io)`. Uses whole-file String to avoid per-line allocations
+    # from readline, which cause stop-the-world GC with multiple threads (45 GC pauses vs 1).
+    function _scan_lines(cb, content::String)
+        i = firstindex(content)
+        n = lastindex(content)
+        while i <= n
+            j = findnext('\n', content, i)
+            last = j === nothing ? n : j - 1
+            cb(SubString(content, i, last))
+            i = j === nothing ? n + 1 : j + 1
+        end
+    end
+
+    function readinstance(path,file)
+        store,varmap,ctrmap,obj = readopb(path,file)
+        nbopb = length(store)
+        store,systemlink,redwitness,solirecord,assertrecord,output,conclusion = readproof(path,file,store,varmap,ctrmap,obj)
+        prism = availableranges(redwitness)
+        return store,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,prism end
+
+    function readopb(path,file)
+        store = FlatEqStore()
+        varmap = Dict{String,Int}()
+        ctrmap = Dict{String, Int}()
+        obj = ""
+        # read whole file as one String: one large allocation vs ~millions of small String objects from
+        # readline. The large allocation fits Julia's large-object pool cleanly; the small ones trigger
+        # stop-the-world GC on every thread whenever any thread allocates. minfreemem already gates this.
+        content_opb = read(path*file*opb, String)
+        c = 1
+        _scan_lines(content_opb) do ss
+            if length(ss)==0 || ss[1]=='*' return end
+            st = tokenize!(ss)
+            if st[1][1]=='@'
+                ctrmap[st[1][2:end]] = c
+                st = st[2:end]
+            end
+            if ss[1] == 'm'
+                obj = readobj(st,varmap)
+            else
+                readeq_push!(store, st, varmap, 1:2:length(st))
+                c+=1
+            end
+        end
+        return store,varmap,ctrmap,obj end
+
     # readobj stores its result permanently (as obj), so it needs its own copy.
     # All other callers (readeq → normcoefeq → push_eq!) are done with lits before the next readlits call.
     readobj(st,varmap) = copy(readlits(st,varmap,2:2:length(st)))
@@ -973,17 +1087,17 @@ end; # using .Dumping # to save the import un comment this.
     readeq(st,varmap) = readeq(st,varmap,1:2:length(st))
     function readeq(st,varmap,r)
         lits = readlits(st,varmap,r.start:r.step:(r.stop-2))
-        lits,c = merge(lits)
-        return Eq(lits, parse(Int,st[r.start+2length(r)-1])-c) end
+        lits,b_corr = merge(lits)
+        return Eq(lits, parse(Int,st[r.start+2length(r)-1])-b_corr) end
 
     # Like readeq but pushes directly into the store without allocating an Eq.
-    # Used in hot paths (readopb, processrup) where the eq is never needed as an object.
+    # Used in readopb and hot proof-step paths where the eq is never needed as an object.
     # Always pushes — an empty equation (no lits) IS the contradiction (e.g. >= 1 with no vars)
     # and must occupy a slot in the store so that store and systemlink stay in sync.
     function readeq_push!(store::FlatEqStore, st, varmap, r)
         lits = readlits(st, varmap, r.start:r.step:(r.stop-2))
-        lits, c = merge(lits)
-        b = parse(Int, st[r.start+2length(r)-1]) - c
+        lits, b_corr = merge(lits)
+        b = parse(Int, st[r.start+2length(r)-1]) - b_corr
         if isempty(lits) && b != 1
             printstyled("  warning: unexpected empty eq with b=$b (expected contradiction b=1)\n"; color=:yellow)
         end
@@ -991,7 +1105,7 @@ end; # using .Dumping # to save the import un comment this.
         return true end
 
     function merge(lits)
-        c=0
+        b_corr=0
         to_delete = get!(task_local_storage(), :delbuf, Int[])
         empty!(to_delete)
         i=j=1
@@ -1000,7 +1114,7 @@ end; # using .Dumping # to save the import un comment this.
             while j<length(lits) && lits[i].var==lits[j+1].var
                 j+=1
                 lits[i],cc = add(lits[i],lits[j])
-                c+=cc
+                b_corr+=cc
                 push!(to_delete,j)
             end
             i = j+1
@@ -1008,7 +1122,7 @@ end; # using .Dumping # to save the import un comment this.
         if !isempty(to_delete)
             deleteat!(lits,to_delete)
         end
-        return lits,c end
+        return lits,b_corr end
 
     function add(lit1,lit2)
         lit1,c1 = normlit(lit1)
@@ -1037,8 +1151,7 @@ end; # using .Dumping # to save the import un comment this.
         c = length(store)+1
         nbopb = length(store)
         # Same rationale as readopb: whole-file read avoids per-line String allocations that cause
-        # stop-the-world GC across all threads. f=nothing passed to processred_push! because
-        # readsubproof (which needs a file handle) is dead code for Glasgow graph proofs.
+        # stop-the-world GC across all threads.
         content_pbp = read(path*file*pbp, String)
         _scan_lines(content_pbp) do ss
             if length(ss)==0 return end
@@ -1065,7 +1178,7 @@ end; # using .Dumping # to save the import un comment this.
             elseif type == "pol" || type == "p" pushed = processpol_push!(store,st,varmap,systemlink,c,ctrmap,nbopb)
             elseif type == "a"                  pushed = processassumption_push!(store,st,varmap,systemlink,assertrecord,c)
             elseif type == "ia"                 pushed = processia_push!(store,st,varmap,ctrmap,c,systemlink)
-            elseif type == "red"                c,pushed = processred_push!(store,systemlink,st,varmap,ctrmap,redwitness,c,nothing,prism)  # nothing: readsubproof (needs file handle) is dead code for Glasgow proofs
+            elseif type == "red"                c,_ = processred(store,systemlink,st,varmap,redwitness,c); pushed = true
             elseif type == "sol"                throw("trimmed SAT is the solution")
             elseif type == "soli"               pushed = processsoli_push!(store,st,varmap,systemlink,c,prism,obj,solirecord)
             elseif type == "solx"               pushed = processsolx_push!(store,st,varmap,systemlink,c,prism)
@@ -1084,15 +1197,6 @@ end; # using .Dumping # to save the import un comment this.
         end
         return store,systemlink,redwitness,solirecord,assertrecord,output,conclusion end
 
-    mutable struct Red
-        witness::Vector{Lit}                # flat pairs: witness[2k-1]=source var, witness[2k]=target var (var=0 → const-0, var=-1 → const-1)
-        range::UnitRange{Int64}             # system id range of the entire red block (reversed negation → conclusion)
-        proof_goal_ranges::Vector{UnitRange{Int64}} end  # id ranges of individual proof goals inside the block
-
-    function processrup(st,varmap,systemlink)
-        push!(systemlink,[-1])
-        return readeq(st,varmap,2:2:length(st)) end
-
     # Hot-path version: pushes directly into the store without allocating an Eq.
     # Always returns true: every systemlink push must have a matching store push to keep indices in sync.
     # Uses _LINK_RUP singleton — zero allocation per RUP step during parsing (~millions per large file).
@@ -1101,12 +1205,6 @@ end; # using .Dumping # to save the import un comment this.
         push!(systemlink, _LINK_RUP)
         readeq_push!(store, st, varmap, 2:2:length(st))
         return true end
-
-    function processpol(st,varmap,store,systemlink,c,ctrmap,nbopb)
-        push!(systemlink,[-2])
-        lits,b = solvepol(st,store,systemlink[end],c,varmap,ctrmap,nbopb)
-        if isempty(lits) && b==0; throw("POL empty"); end
-        return Eq(lits,b) end  # wraps for callers that need an Eq (readsubproof dead code)
 
     # Hot-path version: pushes directly into the store without allocating a final Eq.
     # Uses a task-local link buffer so solvepol can extend it without repeated reallocation;
@@ -1201,8 +1299,6 @@ end; # using .Dumping # to save the import un comment this.
             end
         end
         return lits2, b end
-
-    copyeq(eq) = Eq([Lit(l.coef,l.sign,l.var) for l in eq.lits], eq.rhs)
 
     # Task-local pool of reusable Lit vectors for addeq intermediate results.
     # After warmup (a few pol steps), the pool holds enough buffers for the max concurrent
@@ -1302,14 +1398,7 @@ end; # using .Dumping # to save the import un comment this.
         end
         return eq,l end
 
-    # TODO(red): Glasgow graph proofs never generate red..begin..end blocks.
-    # This code is untested in the current FlatEqStore/processX_push! architecture.
-    # If red blocks are needed, audit store/systemlink sync and all push! functions inside readsubproof.
-    # Returns (new_c, true) to match the push! convention; red manages c internally.
-    function processred_push!(store,systemlink,st,varmap,ctrmap,redwitness,c,f,prism)
-        new_c, _ = processred(store,systemlink,st,varmap,ctrmap,redwitness,c,f,prism)
-        return new_c, true end
-    function processred(store,systemlink,st,varmap,ctrmap,redwitness,redid,f,prism)
+    function processred(store,systemlink,st,varmap,redwitness,redid)
         i = findfirst(x->x==":",st)
         eq = readeq(st[2:i],varmap)
         j = findlast(x->x==":",st)
@@ -1317,26 +1406,12 @@ end; # using .Dumping # to save the import un comment this.
             j=length(st)
         end
         w = readwitness(st[i+1:j],varmap)
-        c = redid
-        range = 0:0
-        pgranges = Vector{UnitRange{Int64}}()
-        if st[end] == "begin"
-            rev = reverse(eq)
-            normcoefeq(rev)
-            push_eq!(store,rev)                        # slot redid: reversed negation of eq (rule_type -9), hidden in prism
-            push!(systemlink,[-9])
-            c+=1
-            range,pgranges,c = readsubproof(store,systemlink,eq,w,c,f,varmap,ctrmap)
-            push!(prism,range)                         # mark entire subproof range as internal (invisible to cone outside)
-            push!(systemlink,[-10])                    # slot before conclusion: end-of-subproof marker
-        else
-            push!(systemlink, _LINK_RED)               # inline red (no subproof) — shared singleton
-        end
+        push!(systemlink, _LINK_RED)
         normcoefeq(eq)
-        push_eq!(store,eq)                             # final slot: the red conclusion itself
-        redwitness[redid] = Red(w,range,pgranges)      # keyed at redid (start of block) for subproof lookups
-        redwitness[length(store)] = Red(w,range,pgranges)  # also keyed at conclusion slot (used by getcone via rule_type -10)
-        return c+1,Eq([],0) end
+        push_eq!(store,eq)
+        redwitness[redid] = Red(w,0:0,[])
+        redwitness[length(store)] = Red(w,0:0,[])
+        return redid+1,Eq([],0) end
 
         # Witness is stored as flat pairs: t[2k-1]=source variable, t[2k]=target variable.
         # sign on source encodes polarity of the substitution; sign on target encodes direction.
@@ -1360,73 +1435,6 @@ end; # using .Dumping # to save the import un comment this.
             return readvar(s,varmap)
         end end
             
-        # TODO(red): readsubproof is dead code for Glasgow graph proofs (no red..begin..end blocks generated).
-        # Uses old processrup (not processrup_push!) — store/systemlink sync not guaranteed here.
-        # Reads the body of a "red ... begin ... end" block.
-        # Each proof goal must derive a contradiction from: formula constraints + ~C (negated red eq) + witness substitutions.
-        # proofgoal i  = i-th formula constraint with witness applied
-        # proofgoal #1 = the red constraint itself with witness applied
-        # within a proof goal, id -1 refers to the constraint declared by the proofgoal line (after witness substitution)
-    function readsubproof(store,systemlink,eq,w,c,f,varmap,ctrmap)
-        nbopb = length(store)-length(systemlink)  # invariant: store has nbopb more entries than systemlink (the opb constraints)
-        type,st = lparse(f)
-        redid = c-1
-        pgranges = Vector{UnitRange{Int64}}()
-        while type !="end"
-            if type == "proofgoal"
-                proof_goal_id = c
-                if st[2][1] == '#'
-                    push_eq!(store,reverse(applywitness(eq,w)))
-                    push!(systemlink,[-7])
-                else
-                    proof_goal_ref = parse(Int,st[2])
-                    push_eq!(store,reverse(applywitness(get_eq(store,proof_goal_ref),w)))
-                    push!(systemlink,[-8,proof_goal_ref])
-                end
-                c+=1
-                type,st = lparse(f)
-                while type != "end"
-                    eq = Eq([],0)
-                    if type == "u" || type == "rup"
-                        eq = processrup(st,varmap,systemlink)
-                        systemlink[end][1] = -5 # in subproof, rup is -5
-                    elseif type == "p" || type == "pol"
-                        eq = processpol(st,varmap,store,systemlink,c,ctrmap,nbopb)
-                        systemlink[end][1] = -6 # in subproof, pol is -6
-                    end
-                    if length(eq.lits)!=0 || eq.rhs!=0
-                        normcoefeq(eq)
-                        push_eq!(store,eq)
-                        c+=1
-                    end
-                    type,st = lparse(f)
-                end
-                push!(pgranges,proof_goal_id:c-1)
-            end
-            type,st = lparse(f)
-        end
-        return redid:c-1,pgranges,c end
-
-        # Substitutes witness w into eq: mapped variables are evaluated to 0 or 1 and absorbed into the RHS.
-        # If target var > 0: literal is mapped to a variable (handled elsewhere); here we just adjust b.
-        # If target var ≤ 0: literal is mapped to a constant — subtract coef from b if the literal is satisfied by the constant.
-    function applywitness(eq, w)
-        witness_idx = Dict{Int,Int}(w[i].var => i for i in 1:2:length(w))  # source var → index in w
-        t = Lit[]
-        b = eq.rhs
-        for l in eq.lits
-            idx = get(witness_idx, l.var, 0)
-            if idx != 0
-                if w[idx+1].var > 0                    # target is a variable: literal survives (sign may flip)
-                    l.sign != w[idx].sign && (b -= l.coef)
-                else                                   # target is a constant: evaluate and fold into b
-                    l.sign == w[idx].sign && (b -= l.coef)
-                end
-            else
-                push!(t, l)                            # unmapped variable: keep as-is
-            end
-        end
-        return Eq(t, b) end
 
     function processsoli_push!(store,st,varmap,systemlink,c,prism,obj,solirecord)
         push!(systemlink, _LINK_SOLI)
@@ -1507,30 +1515,7 @@ end; # using .Dumping # to save the import un comment this.
         prism = [a.range for (_,a) in redwitness if a.range!=0:0]
         return prism end
 
-
-# ======================================= data struct ======================================= #
-    struct PBSystem
-        # Forward: equation → terms
-        vars    ::Vector{Int32}
-        coefs   ::Vector{Int32}
-        signs   ::BitVector
-        rhs     ::Vector{Int64}
-        row_ptr ::Vector{Int32}
-        # Inverse: variable → equations containing it
-        var_ptr ::Vector{Int32}     # length = n_vars + 1
-        var_eqs ::Vector{Int32} end # flat list of equation ids
-
-    mutable struct Trail
-        var  ::Vector{Int32}    # variables in propagation order
-        eq   ::Vector{Int32}    # reason equation for each entry
-        pos  ::Vector{Int}      # pos[v] = index in var/eq (0 = unassigned)
-        assi ::Vector{Int8} end # current assignment (1=true, 2=false, 0=unset)
-
-# ======================================== Trimmer =====================================
-    Trail(n_vars::Int) = Trail(Int32[], Int32[], zeros(Int, n_vars), zeros(Int8, n_vars))
-    @inline function reset!(t::Trail)
-        empty!(t.var); empty!(t.eq)
-        fill!(t.pos, 0); fill!(t.assi, 0) end
+# ══ Trimmer ═════════════════════════════════════════════════════════════════════════════
 
         # Level-0 base propagation: single forward pass through all constraints (OPB then PBP).
         # Monotone index order guarantees that if Cⱼ depends on a variable forced by Cᵢ (i<j),
@@ -1550,47 +1535,6 @@ end; # using .Dumping # to save the import un comment this.
             end
         end end
 
-        # Reset trail to base state, filtering out entries whose reason >= init.
-        # OPB entries (reason ≤ nbopb ≤ any init) are always included.
-        # PBP entries with reason < init are included; reason == init is excluded because
-        # constraint init is the one being proved (using it as a reason is circular).
-    @inline function reset_to_base!(t::Trail, base::Trail, init::Int)
-        empty!(t.var); empty!(t.eq)
-        fill!(t.pos, 0); fill!(t.assi, 0)
-        for k in 1:length(base.var)
-            Int(base.eq[k]) >= init && continue            # exclude init itself and anything beyond
-            pushtrail!(t, base.var[k], base.eq[k], base.assi[Int(base.var[k])])
-        end end
-
-    struct Ante
-        flags::Vector{Bool}   # O(1) membership
-        list ::Vector{Int} end# O(k) iteration; may contain stale (false) entries
-
-    Ante(n::Int) = Ante(zeros(Bool, n), Int[])
-
-    struct RupState                                    # reusable scratch buffers — allocated once in getcone
-        que           ::BitVector                      # ruptrail equation queue
-        pq_prio       ::BinaryMinHeap{Int}             # priority equations (cone/on_frontier)
-        pq_nonprio    ::BinaryMinHeap{Int}             # non-priority equations
-        to_explain    ::BinaryMaxHeap{Int}             # conflicttrail: trail positions still needing explanation
-        is_to_explain ::BitVector                      # membership guard for to_explain (self-cleaning)
-        falsified_lits::Vector{Tuple{Int,Int,Int,Int32}} # conflicttrail: reused per-iteration buffer
-        essentials    ::Dict{Int,Set{Int}} end           # forward-pass: essential vars per constraint (Clit only)
-
-    # Trimming mode — passed through getcone! → ruptrail → process_eq! → conflicttrail.
-    # To add a new mode: define a new struct + a conflicttrail method. Nothing else changes.
-    struct Grim end        # standard: proof-index sort in conflict analysis
-    struct Clit end        # cone-first sort + essentials-aware filter in conflict analysis
-    struct Bfs  end        # BFS propagation with wave-level reason selection (ruptrail_bfs)
-
-    RupState(n_eqs::Int, n_vars::Int) = RupState(
-        falses(n_eqs),
-        BinaryMinHeap{Int}(),
-        BinaryMinHeap{Int}(),
-        BinaryMaxHeap{Int}(),
-        falses(n_vars + 1),
-        Tuple{Int,Int,Int,Int32}[],
-        Dict{Int,Set{Int}}())
     # Forward pass: variable w is essential in constraint e if removing it makes e infeasible
     # (total coef - coef_w < rhs[e]). Essential vars must stay in conelits — weakening them out
     # would make the constraint unsatisfiable and break the proof. Only called for Clit mode.
@@ -1617,99 +1561,6 @@ end; # using .Dumping # to save the import un comment this.
         iv = Int(v)
         @inbounds t.pos[iv] = length(t.var)   # trail index of v (0 = unassigned)
         @inbounds t.assi[iv] = val end
-
-    function PBSystem(store::FlatEqStore, n_vars::Int)
-        # Forward arrays are reused directly from the store — zero copy.
-        # Only the inverse index (var_ptr, var_eqs) needs to be computed fresh.
-        vars    = store.vars
-        coefs   = store.coefs
-        signs   = store.signs
-        rhs     = store.rhs
-        row_ptr = store.row_ptr
-        n_lits  = length(vars)
-
-        var_count = zeros(Int32, n_vars)
-        for v in vars; var_count[v] += 1; end
-        var_ptr = Vector{Int32}(undef, n_vars + 1)
-        var_ptr[1] = 1
-        for v in 1:n_vars
-            var_ptr[v+1] = var_ptr[v] + var_count[v]
-        end
-        var_eqs = Vector{Int32}(undef, n_lits)
-        fill!(var_count, 0)
-        n_eqs = length(rhs)
-        for e in 1:n_eqs
-            for k in Int(row_ptr[e]):Int(row_ptr[e+1])-1
-                v = vars[k]
-                var_eqs[var_ptr[v] + var_count[v]] = e
-                var_count[v] += 1
-            end
-        end
-
-        return PBSystem(vars, coefs, signs, rhs, row_ptr, var_ptr, var_eqs) end
-
-    eqrange(sys::PBSystem, e) = Int(sys.row_ptr[e]):Int(sys.row_ptr[e+1])-1
-    varrange(sys::PBSystem, v) = Int(sys.var_ptr[v]):Int(sys.var_ptr[v+1])-1
-    function slack(eq::Eq, assi::Vector{Int8})
-        c = 0
-        for l in eq.lits
-            val = assi[l.var]
-            (val == 0 || (l.sign && val == 1) || (!l.sign && val == 2)) && (c += l.coef)
-        end
-        return c - eq.rhs end
-
-    @inline function slack(sys::PBSystem, e::Int, assi::Vector{Int8})
-        c = zero(Int32)
-        @inbounds for i in eqrange(sys, e)
-            val  = assi[Int(sys.vars[i])]
-            sign = sys.signs[i]
-            unaffected = (val == 0) | (sign & (val == 1)) | (!sign & (val == 2))
-            c += unaffected ? sys.coefs[i] : zero(Int32)
-        end
-        return c - sys.rhs[e] end
-
-    inprism(n, prism::BitVector)             = n <= length(prism) && prism[n]
-    inprism(n, prism::Vector{UnitRange{Int64}}) = any(n in r for r in prism)
-    @inline function setconelits(conelits, v, id)
-        push!(get!(Set{Int}, conelits, id), v) end
-
-    function printlitcolor(coef, sign, var, color)
-        if coef != 1 printstyled(coef; color = :blue) end
-        sign ? print(" ") : printstyled('~'; color = :red)
-        printstyled(var; color = color) end
-
-    function printeqconelit(sys::PBSystem, e::Int, conelits)
-        conelit = get(conelits, e, Set{Int}())
-        s = zero(Int32)
-        for k in eqrange(sys, e)
-            v = Int(sys.vars[k])
-            print(" ")
-            if v in conelit
-                printlitcolor(sys.coefs[k], sys.signs[k], v, :yellow)
-            else
-                printlitcolor(sys.coefs[k], sys.signs[k], v, :magenta)
-                s += sys.coefs[k]
-            end
-        end
-        if s == 0
-            println(" >= ", sys.rhs[e])
-        else
-            println(" >= ", sys.rhs[e], " - ", s, " >= ", sys.rhs[e] - s)
-        end end
-
-    function printeq(eq::Eq)
-        for l in eq.lits
-            print(" ")
-            printlitcolor(l.coef, l.sign, l.var, :green)
-        end
-        println(" >= ", eq.rhs) end
-
-    function printeq(sys::PBSystem, e::Int)
-        for k in eqrange(sys, e)
-            print(" ")
-            printlitcolor(sys.coefs[k], sys.signs[k], Int(sys.vars[k]), :green)
-        end
-        println(" >= ", sys.rhs[e]) end
 
     function fixante(systemlink::Vector{Vector{Int}}, ante::Ante, i)
         for j in eachindex(systemlink[i])
@@ -1839,12 +1690,12 @@ end; # using .Dumping # to save the import un comment this.
             b      = eq_rev ? (sum(sys.coefs[k] for k in eqrange(sys, eq); init=zero(Int32)) - sys.rhs[eq] + 1) :
                               sys.rhs[eq]
             empty!(falsified_lits)
-            somme = zero(Int32)
+            slack_sum = zero(Int32)
             @inbounds for k in eqrange(sys, eq)
                 w = Int(sys.vars[k])
                 w == v && continue
                 coef = sys.coefs[k]
-                somme += coef
+                slack_sum += coef
                 wtp  = t.pos[w]
                 wtp > vtp && continue
                 wval = t.assi[w]; wsign = sys.signs[k]
@@ -1855,14 +1706,14 @@ end; # using .Dumping # to save the import un comment this.
             sort!(falsified_lits; by = x -> x[1])
             v != 0 && setconelits(conelits, v, eq)
             for (_, wtp, w, coef) in falsified_lits
-                somme < b && break
+                slack_sum < b && break
                 if wtp > 0 && !is_to_explain[w+1]
                     push!(to_explain, wtp); is_to_explain[w+1] = true
                 end
                 setconelits(conelits, w, eq)
-                somme -= coef
+                slack_sum -= coef
             end
-            if somme >= b
+            if slack_sum >= b
                 printstyled("  [error] conflicttrail: could not explain var $v in eq $eq\n"; color=:red)
                 printeq(sys, eq); printeqconelit(sys, eq, conelits)
                 throw(ErrorException("conflicttrail: could not explain $v with eq $eq"))
@@ -1896,12 +1747,12 @@ end; # using .Dumping # to save the import un comment this.
             b      = eq_rev ? (sum(sys.coefs[k] for k in eqrange(sys, eq); init=zero(Int32)) - sys.rhs[eq] + 1) :
                               sys.rhs[eq]
             empty!(falsified_lits)
-            somme = zero(Int32)
+            slack_sum = zero(Int32)
             @inbounds for k in eqrange(sys, eq)
                 w = Int(sys.vars[k])
                 w == v && continue
                 coef = sys.coefs[k]
-                somme += coef
+                slack_sum += coef
                 wtp  = t.pos[w]
                 wtp > vtp && continue
                 wval = t.assi[w]; wsign = sys.signs[k]
@@ -1914,21 +1765,21 @@ end; # using .Dumping # to save the import un comment this.
             for (eq_id, _, w, coef) in falsified_lits
                 ((ess_set !== nothing && w in ess_set) || eq_id == 0 || cone[eq_id]) && (prio_sum += coef)
             end
-            if prio_sum > somme - b                            # high-priority vars alone explain the slack
+            if prio_sum > slack_sum - b                            # high-priority vars alone explain the slack
                 filter!(x -> x[1] == 0 || cone[x[1]] || (ess_set !== nothing && x[3] in ess_set), falsified_lits)
             end
             sort!(falsified_lits; by = x -> (ess_set !== nothing && x[3] in ess_set ? 0 : 1,
                                              x[1] == 0 || cone[x[1]] ? 0 : 1, x[1]))
             v != 0 && setconelits(conelits, v, eq)
             for (_, wtp, w, coef) in falsified_lits
-                somme < b && break
+                slack_sum < b && break
                 if wtp > 0 && !is_to_explain[w+1]
                     push!(to_explain, wtp); is_to_explain[w+1] = true
                 end
                 setconelits(conelits, w, eq)
-                somme -= coef
+                slack_sum -= coef
             end
-            if somme >= b
+            if slack_sum >= b
                 printstyled("  [error] conflicttrail: could not explain var $v in eq $eq\n"; color=:red)
                 printeq(sys, eq); printeqconelit(sys, eq, conelits)
                 throw(ErrorException("conflicttrail: could not explain $v with eq $eq"))
@@ -1986,12 +1837,12 @@ end; # using .Dumping # to save the import un comment this.
             b      = eq_rev ? (sum(sys.coefs[k] for k in eqrange(sys, eq); init=zero(Int32)) - sys.rhs[eq] + 1) :
                               sys.rhs[eq]
             empty!(falsified_lits)
-            somme = zero(Int32)
+            slack_sum = zero(Int32)
             @inbounds for k in eqrange(sys, eq)
                 w = Int(sys.vars[k])
                 w == v && continue
                 coef = sys.coefs[k]
-                somme += coef
+                slack_sum += coef
                 wtp  = t.pos[w]
                 wtp > vtp && continue
                 wval = t.assi[w]; wsign = sys.signs[k]
@@ -2002,14 +1853,14 @@ end; # using .Dumping # to save the import un comment this.
             sort!(falsified_lits; by = x -> (cone[x[1]] ? 0 : 1, x[1]))
             v != 0 && setconelits(conelits, v, eq)
             for (_, wtp, w, coef) in falsified_lits
-                somme < b && break
+                slack_sum < b && break
                 if wtp > 0 && !is_to_explain[w+1]
                     push!(to_explain, wtp); is_to_explain[w+1] = true
                 end
                 setconelits(conelits, w, eq)
-                somme -= coef
+                slack_sum -= coef
             end
-            if somme >= b
+            if slack_sum >= b
                 printstyled("  [error] conflicttrail: could not explain var $v in eq $eq\n"; color=:red)
                 printeq(sys, eq); printeqconelit(sys, eq, conelits)
                 throw(ErrorException("conflicttrail: could not explain $v with eq $eq"))
@@ -2049,93 +1900,6 @@ end; # using .Dumping # to save the import un comment this.
             end
         end
         printstyled("  [error] propagate! found no conflict\n"; color=:red) end
-
-        # Linear-scan RUP (kept for comparison). Two rewind pointers (r0/r1) + que BitVector guard.
-    function deprecated_ruptrail(sys::PBSystem, init::Int, t::Trail,
-                      ante::Ante, on_frontier::Vector{Bool},
-                      cone::Vector{Bool}, conelits, prism, subrange)
-        prio = true
-        r0   = 1           # non-priority rewind; starts at 1 so non-prio pass sweeps from eq 1
-        r1   = init + 1    # priority rewind; init+1 = sentinel "none"
-        i    = 1
-        que  = trues(init)
-        while i <= init
-            in_queue = !inprism(i, prism) || (i in subrange)
-            if que[i] && in_queue && (!prio || cone[i])
-                rev = (i == init)
-                s   = rev ? slack_reversed(sys, i, t.assi) : slack(sys, i, t.assi)
-                if s < 0
-                    conflicttrail(i, sys, t, ante, conelits, rs_placeholder, Grim(); rev_init=init)  # BROKEN: rs not available here — deprecated function, kept for reference only
-                    return true
-                end
-                @inbounds for k in eqrange(sys, i)
-                    v = Int(sys.vars[k])
-                    t.assi[v] != 0 && continue
-                    sys.coefs[k] > s || continue
-                    sign = sys.signs[k]
-                    pushtrail!(t, Int32(v), Int32(i),
-                               rev ? (sign ? Int8(2) : Int8(1)) :
-                                     (sign ? Int8(1) : Int8(2)))
-                    for j in varrange(sys, v)
-                        eid = Int(sys.var_eqs[j])
-                        (eid <= init && eid != i) || continue
-                        que[eid] = true
-                        if cone[eid]; r1 = min(r1, eid)
-                        else         r0 = min(r0, eid)
-                        end
-                    end
-                end
-                que[i] = false
-                i += 1
-                if prio
-                    i  = min(i, r1)
-                    r1 = init + 1
-                else
-                    if r1 < init + 1
-                        prio = true
-                        r0   = min(i, r0)
-                        i    = r1
-                        r1   = init + 1
-                    else
-                        i  = min(i, r0)
-                        r0 = init + 1
-                    end
-                end
-            else
-                i += 1
-            end
-            if prio && i == init + 1
-                prio = false
-                i    = r0
-                r0   = init + 1
-            end
-        end
-        return false end
-
-        # Walk the trail forward and substitute non-cone reasons with cone ones where possible.
-    function deprecated_minimize_reasons!(t::Trail, sys::PBSystem, cone::Vector{Bool}, on_frontier::Vector{Bool}, assi_temp::Vector{Int8}, init::Int)
-        for k in 1:length(t.var)
-            v      = Int(t.var[k])
-            reason = Int(t.eq[k])
-            if !cone[reason]
-                for j in varrange(sys, v)
-                    eid = Int(sys.var_eqs[j])
-                    cone[eid] || continue
-                    eid < init || continue
-                    s = slack(sys, eid, assi_temp)
-                    @inbounds for kk in eqrange(sys, eid)
-                        Int(sys.vars[kk]) == v || continue
-                        if sys.coefs[kk] > s && (sys.signs[kk] ? Int8(1) : Int8(2)) == t.assi[v]
-                            t.eq[k] = Int32(eid)
-                        end
-                        break
-                    end
-                    cone[Int(t.eq[k])] && break
-                end
-            end
-            assi_temp[v] = t.assi[v]
-        end
-        for k in 1:length(t.var); assi_temp[Int(t.var[k])] = Int8(0); end end
 
     # Push eid into the right heap if not already queued.
     @inline function activate!(eid, rs::RupState, cone, on_frontier)
@@ -2455,33 +2219,9 @@ end; # using .Dumping # to save the import un comment this.
         lits = [Lit(-l.coef, l.sign, l.var) for l in eq.lits]
         return Eq(lits,-eq.rhs) end
 
-    function isequal(e::Eq,f::Eq) # equality between eq
-        if e.rhs!=f.rhs
-            return false
-        elseif length(e.lits) != length(f.lits)
-            return false
-        else
-            for i in eachindex(e.lits)
-                if !isequal(e.lits[i],f.lits[i])
-                    return false
-                end
-            end
-            return true
-        end end
 
-    function isequal(a::Lit,b::Lit) # equality between lits
-        return a.coef==b.coef && a.sign==b.sign && a.var==b.var end
-    @inline function fixon_frontier(on_frontier::Vector{Bool}, cone::Vector{Bool}, antecedents::Vector{Bool})
-        for i in eachindex(antecedents)
-            if antecedents[i]; on_frontier[i] = true; cone[i] = true; end
-        end end
 
-    @inline function fixon_frontier(on_frontier::Vector{Bool}, cone::Vector{Bool}, antecedents::Vector{Int})
-        for i in antecedents
-            if i > 0; on_frontier[i] = true; cone[i] = true; end
-        end end
-
-# ======================================= Printer ======================================= #
+# ══ Writer ══════════════════════════════════════════════════════════════════════════════
     function isid(link, k)
         return link[k] > 0 && (k == length(link) || (link[k+1] != -2 && link[k+1] != -3)) end
 
@@ -2677,7 +2417,6 @@ end; # using .Dumping # to save the import un comment this.
         # constraint IDs in pol links — which count every systemlink entry — are always in range.
         succ = Vector{Vector{Int}}(undef, nbopb + length(systemlink))
         dels = zeros(Bool, length(sys.rhs))
-        # dels = ones(Bool, length(sys.rhs)); println("nodel mode")
         dels[1:nbopb] .= true
         for p in prism
             dels[p] .= true
@@ -2762,7 +2501,53 @@ end; # using .Dumping # to save the import un comment this.
             write(f, "end pseudo-Boolean proof ;")
         end end
 
-# ======================================= unsat core graphs ======================================= #
+    function printlitcolor(coef, sign, var, color)
+        if coef != 1 printstyled(coef; color = :blue) end
+        sign ? print(" ") : printstyled('~'; color = :red)
+        printstyled(var; color = color) end
+
+    function printeqconelit(sys::PBSystem, e::Int, conelits)
+        conelit = get(conelits, e, Set{Int}())
+        s = zero(Int32)
+        for k in eqrange(sys, e)
+            v = Int(sys.vars[k])
+            print(" ")
+            if v in conelit
+                printlitcolor(sys.coefs[k], sys.signs[k], v, :yellow)
+            else
+                printlitcolor(sys.coefs[k], sys.signs[k], v, :magenta)
+                s += sys.coefs[k]
+            end
+        end
+        if s == 0
+            println(" >= ", sys.rhs[e])
+        else
+            println(" >= ", sys.rhs[e], " - ", s, " >= ", sys.rhs[e] - s)
+        end end
+
+    function printeq(eq::Eq)
+        for l in eq.lits
+            print(" ")
+            printlitcolor(l.coef, l.sign, l.var, :green)
+        end
+        println(" >= ", eq.rhs) end
+
+    function printeq(sys::PBSystem, e::Int)
+        for k in eqrange(sys, e)
+            print(" ")
+            printlitcolor(sys.coefs[k], sys.signs[k], Int(sys.vars[k]), :green)
+        end
+        println(" >= ", sys.rhs[e]) end
+
+# ══ Solver & UNSAT core ═════════════════════════════════════════════════════════════════
+
+    # Returns (node_count, path) for a LAD file, or nothing if unreadable.
+    function ladnodes(path)
+        isfile(path) || return nothing
+        n = tryparse(Int, readline(path))
+        n === nothing && return nothing
+        return n
+    end
 
     # Returns (pattern_file_path, target_file_path) for an instance name.
     # For ins.coreN, returns the LAD files written by the previous iteration.
@@ -2965,12 +2750,17 @@ end; # using .Dumping # to save the import un comment this.
         return "  $ins core: $(length(P))/$(length(adj_p)) pat nodes, $(length(T))/$(length(adj_t)) tar nodes"
     end
 
-# ======================================= main code ======================================= #
+# ══ Run ══════════════════════════════════════════════════════════════════════════════════
 
 using StatProfilerHTML
 if PROFILE
     throw("uncomment here to enable profiling")
     @profilehtml main()
+elseif inst !== nothing
+    # Subprocess mode: this process was spawned by the batch loop to handle one instance.
+    # Output goes directly to the inherited stdout (parent's pipe → parent's tee → terminal + logfile).
+    # No second tee needed — adding one would double-buffer and prevent output from flushing.
+    main()
 else
     logfile = open(joinpath(@__DIR__, "output.log"), "a")
     println(logfile, "\n% run started ", Dates.now())
