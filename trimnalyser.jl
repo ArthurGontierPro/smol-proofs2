@@ -201,8 +201,8 @@ julia --threads 192,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
                 end
                 ph_enter!(_ph_parsing)
                 try
-                    # println("julia $script $ins $(subargs...)")
-                    run(`julia $script $ins $(subargs...)`)
+                    println("julia $script $ins $(subargs...)")
+                    # run(`julia $script $ins $(subargs...)`)
                 finally
                     ph_exit!(_ph_parsing)
                 end
