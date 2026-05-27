@@ -179,7 +179,7 @@ julia --threads 192,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
         t_start = time()
         stop_monitor = Threads.Atomic{Bool}(false)
         monitor_task = Threads.@spawn :interactive while !stop_monitor[]
-            sleep(30)
+            sleep(10)
             stop_monitor[] && break
             nthreads = Threads.nthreads()
             free_gb  = round(available_memory() / 1024^3; digits=0)
@@ -191,11 +191,9 @@ julia --threads 192,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
         # no stop-the-world across instances. The outer @threads loop provides parallelism.
         # maxparse= and allgraphs are stripped: subprocess handles one instance, not a batch.
         # Directory paths are stripped and proofs_abs is passed explicitly (absolute, cluster-safe).
-        sub_args = filter(a -> a ∉ Set(["allgraphs","atable","clean","pack","render","profile"]) &&
-                               !isdir(a) && !startswith(a,"maxparse="), ARGS)
-        jl       = joinpath(Sys.BINDIR, "julia")
-        script   = Base.abspath(@__FILE__)
-        proofs_abs = Base.abspath(proofs)
+        subargs = filter(a -> a in Set(["solve","resolv","verif","render","profile"]), ARGS)
+        subargs = subargs.*" " # add spaces for command to not be malformed
+        script   = basename(@__FILE__) #Base.abspath(@__FILE__)
         wall = @elapsed Threads.@threads :greedy for ins in list
             try
                 while available_memory() < minfreemem
@@ -203,7 +201,8 @@ julia --threads 192,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
                 end
                 ph_enter!(_ph_parsing)
                 try
-                    run(`$jl -t1 $script $proofs_abs $ins $(sub_args...)`)
+                    # println("julia $script $ins $(subargs...)")
+                    run(`julia $script $ins $(subargs...)`)
                 finally
                     ph_exit!(_ph_parsing)
                 end
@@ -224,7 +223,6 @@ julia --threads 192,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
         end
         stop_monitor[] = true; wait(monitor_task)
         println("%Wall time: ", round(wall; digits=1), "s")
-        open(proofs*"wall.txt", "w") do f; println(f, wall) end
         end
 
     function getinstancesfromdir(proofs)
