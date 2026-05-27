@@ -75,7 +75,8 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
     # Uses task_local_storage so the buffer persists across all iterations on the same task
     # (safe with @threads :greedy — each task owns its buffer and never shares it).
     # Returns a reference to the task-local buffer — valid only until the next tokenize! call on this task.
-    function tokenize!(ss::String)
+    # AbstractString (not String) so it accepts SubString{String} from _scan_lines without copying.
+    function tokenize!(ss::AbstractString)
         buf = get!(task_local_storage(), :tokbuf, SubString{String}[])
         empty!(buf)
         i = 1
@@ -98,6 +99,21 @@ julia --threads 128,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
         end
         return buf
     end
+
+    # Iterate over lines of content as SubString{String} views — zero allocation per line.
+    # Drop-in for `for ss in eachline(io)`. Uses whole-file String to avoid per-line allocations
+    # from readline, which cause stop-the-world GC with multiple threads (45 GC pauses vs 1).
+    function _scan_lines(f, content::String)
+        i = firstindex(content)
+        n = lastindex(content)
+        while i <= n
+            j = findnext('\n', content, i)
+            last = j === nothing ? n : j - 1
+            f(SubString(content, i, last))
+            i = j === nothing ? n + 1 : j + 1
+        end
+    end
+
     const minfreemem    = begin i = findfirst(x -> startswith(x, "minmem="), ARGS); i !== nothing ? parse(Int, ARGS[i][8:end]) * 1024^3 : (_cluster ? 500 : 4) * 1024^3 end  # minmem=N GB, default 500 on cluster / 4 locally
     const maxparse      = begin i = findfirst(x -> startswith(x, "maxparse="), ARGS); i !== nothing ? parse(Int, ARGS[i][10:end]) : (_cluster ? 16 : 4) end  # maxparse=N, max concurrent parses, default 16 on cluster / 4 locally
     const _parse_sem    = Base.Semaphore(maxparse)
@@ -809,21 +825,23 @@ end; # using .Dumping # to save the import un comment this.
         varmap = Dict{String,Int}()
         ctrmap = Dict{String, Int}()
         obj = ""
-        open(path*file*opb,"r"; lock = false) do f
-            c = 1
-            for ss in eachline(f)
-                if length(ss)==0 || ss[1]=='*' continue end
-                st = tokenize!(ss)
-                if st[1][1]=='@'
-                    ctrmap[st[1][2:end]] = c
-                    st = st[2:end]
-                end
-                if ss[1] == 'm'
-                    obj = readobj(st,varmap)
-                else
-                    readeq_push!(store, st, varmap, 1:2:length(st))
-                    c+=1
-                end
+        # read whole file as one String: one large allocation vs ~millions of small String objects from
+        # readline. The large allocation fits Julia's large-object pool cleanly; the small ones trigger
+        # stop-the-world GC on every thread whenever any thread allocates. minfreemem already gates this.
+        content_opb = read(path*file*opb, String)
+        c = 1
+        _scan_lines(content_opb) do ss
+            if length(ss)==0 || ss[1]=='*' return end
+            st = tokenize!(ss)
+            if st[1][1]=='@'
+                ctrmap[st[1][2:end]] = c
+                st = st[2:end]
+            end
+            if ss[1] == 'm'
+                obj = readobj(st,varmap)
+            else
+                readeq_push!(store, st, varmap, 1:2:length(st))
+                c+=1
             end
         end
         return store,varmap,ctrmap,obj end
@@ -984,49 +1002,51 @@ end; # using .Dumping # to save the import un comment this.
         output = conclusion = ""
         c = length(store)+1
         nbopb = length(store)
-        open(path*file*pbp,"r"; lock = false) do f
-            for ss in eachline(f)
-                if length(ss)==0 continue end
-                # ';' stripping is now handled inside tokenize! — no remove(ss,";") needed.
-                # ss is kept as-is for comment detection ('%') and assertion hint extraction.
-                i = findfirst(x->x=='%',ss)
-                if i !== nothing
-                    if i<3 continue end
-                    if ss[1]=='a'
-                        assertrecord[c] = ss[i+1:end]
-                    end
-                    ss = ss[1:i-1]
+        # Same rationale as readopb: whole-file read avoids per-line String allocations that cause
+        # stop-the-world GC across all threads. f=nothing passed to processred_push! because
+        # readsubproof (which needs a file handle) is dead code for Glasgow graph proofs.
+        content_pbp = read(path*file*pbp, String)
+        _scan_lines(content_pbp) do ss
+            if length(ss)==0 return end
+            # ';' stripping is now handled inside tokenize! — no remove(ss,";") needed.
+            # ss is kept as-is for comment detection ('%') and assertion hint extraction.
+            i = findfirst(x->x=='%',ss)
+            if i !== nothing
+                if i<3 return end
+                if ss[1]=='a'
+                    assertrecord[c] = ss[i+1:end]
                 end
-                st = tokenize!(ss)
-                if st[1][1]=='@'
-                    ctrmap[st[1][2:end]] = c
-                    st = st[2:end]
-                end
-                type = st[1]
-                # All processX_push! functions push to both systemlink and store atomically,
-                # returning true. c is incremented once per push. red also returns new_c.
-                pushed = false
-                    if type == "rup" || type == "u" pushed = processrup_push!(store,st,varmap,systemlink)
-                elseif type == "pol" || type == "p" pushed = processpol_push!(store,st,varmap,systemlink,c,ctrmap,nbopb)
-                elseif type == "a"                  pushed = processassumption_push!(store,st,varmap,systemlink,assertrecord,c)
-                elseif type == "ia"                 pushed = processia_push!(store,st,varmap,ctrmap,c,systemlink)
-                elseif type == "red"                c,pushed = processred_push!(store,systemlink,st,varmap,ctrmap,redwitness,c,f,prism)
-                elseif type == "sol"                throw("trimmed SAT is the solution")
-                elseif type == "soli"               pushed = processsoli_push!(store,st,varmap,systemlink,c,prism,obj,solirecord)
-                elseif type == "solx"               pushed = processsolx_push!(store,st,varmap,systemlink,c,prism)
-                elseif type == "output"             output = remove(st[2],";")
-                elseif type == "conclusion"
-                    conclusion = remove(st[2],";")
-                    if conclusion == "BOUNDS"
-                        conclusion = ss
-                    elseif !store_last_empty(store) && (conclusion == "SAT" || conclusion == "NONE")
-                        throw("SAT Not supported..")
-                    end
-                elseif !(type in ["%","*","wiplvl","w","setlvl","#","f","d","del","end","pseudo-Boolean"])
-                    printstyled("  [warn] unknown line head (skipped): $ss\n"; color=:yellow)
-                end
-                pushed && (c+=1)
+                ss = ss[1:i-1]
             end
+            st = tokenize!(ss)
+            if st[1][1]=='@'
+                ctrmap[st[1][2:end]] = c
+                st = st[2:end]
+            end
+            type = st[1]
+            # All processX_push! functions push to both systemlink and store atomically,
+            # returning true. c is incremented once per push. red also returns new_c.
+            pushed = false
+                if type == "rup" || type == "u" pushed = processrup_push!(store,st,varmap,systemlink)
+            elseif type == "pol" || type == "p" pushed = processpol_push!(store,st,varmap,systemlink,c,ctrmap,nbopb)
+            elseif type == "a"                  pushed = processassumption_push!(store,st,varmap,systemlink,assertrecord,c)
+            elseif type == "ia"                 pushed = processia_push!(store,st,varmap,ctrmap,c,systemlink)
+            elseif type == "red"                c,pushed = processred_push!(store,systemlink,st,varmap,ctrmap,redwitness,c,nothing,prism)  # nothing: readsubproof (needs file handle) is dead code for Glasgow proofs
+            elseif type == "sol"                throw("trimmed SAT is the solution")
+            elseif type == "soli"               pushed = processsoli_push!(store,st,varmap,systemlink,c,prism,obj,solirecord)
+            elseif type == "solx"               pushed = processsolx_push!(store,st,varmap,systemlink,c,prism)
+            elseif type == "output"             output = remove(st[2],";")
+            elseif type == "conclusion"
+                conclusion = remove(st[2],";")
+                if conclusion == "BOUNDS"
+                    conclusion = ss
+                elseif !store_last_empty(store) && (conclusion == "SAT" || conclusion == "NONE")
+                    throw("SAT Not supported..")
+                end
+            elseif !(type in ["%","*","wiplvl","w","setlvl","#","f","d","del","end","pseudo-Boolean"])
+                printstyled("  [warn] unknown line head (skipped): $ss\n"; color=:yellow)
+            end
+            pushed && (c+=1)
         end
         return store,systemlink,redwitness,solirecord,assertrecord,output,conclusion end
 
