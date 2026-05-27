@@ -4,6 +4,7 @@ julia --threads 196,1 trimnalyser.jl solve resolv allgraphs maxnodes=50
 julia --threads 8,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=30 st=8 tt=60 rand
 julia --threads 192,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=6000 rand maxparse=192
 julia -t192 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=6000 rand
+julia -t92,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=6000 rand
 =#
     const opb = ".opb"
     const pbp = ".pbp"
@@ -64,15 +65,6 @@ julia -t192 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
         return 0.0
     end
 
-    const _gc_lock      = ReentrantLock()  # at most one thread runs GC at a time to avoid GC storms when many threads back up
-    const _ph_memwait   = Threads.Atomic{Int}(0)  # threads blocked in memory wait loop
-    const _ph_solving   = Threads.Atomic{Int}(0)  # threads inside runsipsolver
-    const _ph_parsing   = Threads.Atomic{Int}(0)  # threads inside readinstance
-    const _ph_trimming  = Threads.Atomic{Int}(0)  # threads inside getcone!
-    const _ph_writing   = Threads.Atomic{Int}(0)  # threads inside writeconedel
-    const _ph_verif     = Threads.Atomic{Int}(0)  # threads inside verify
-    ph_enter!(c) = Threads.atomic_add!(c, 1)
-    ph_exit!(c)  = Threads.atomic_sub!(c, 1)
 
     # Pre-allocated singleton link vectors for rule types whose systemlink entries need no antecedents.
     # Singletons are safe to share ONLY if nothing pushes into them. _LINK_RUP is the exception:
@@ -132,8 +124,6 @@ julia -t192 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
 
     const minfreemem    = begin i = findfirst(x -> startswith(x, "minmem="), ARGS); i !== nothing ? parse(Int, ARGS[i][8:end]) * 1024^3 : (_cluster ? 500 : 4) * 1024^3 end  # minmem=N GB, default 500 on cluster / 4 locally
     const maxinstmem_gb = begin i = findfirst(x -> startswith(x, "maxmem="), ARGS); i !== nothing ? parse(Float64, ARGS[i][8:end]) : (_cluster ? 100.0 : 8.0) end  # maxmem=N GB per subprocess, default 100 on cluster / 8 locally
-    const maxparse      = begin i = findfirst(x -> startswith(x, "maxparse="), ARGS); i !== nothing ? parse(Int, ARGS[i][10:end]) : (_cluster ? 16 : 4) end  # maxparse=N, max concurrent parses, default 16 on cluster / 4 locally
-    const _parse_sem    = Base.Semaphore(maxparse)
     using Random,DataStructures,Dates,Printf
 
 
@@ -208,36 +198,31 @@ julia -t192 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
         wall = @elapsed Threads.@threads :greedy for ins in list
             try
                 while available_memory() < minfreemem
-                    ph_enter!(_ph_memwait); sleep(5); ph_exit!(_ph_memwait)
+                    sleep(5)
                 end
-                ph_enter!(_ph_parsing)
-                try
-                    # -t1,1: 1 worker thread + 1 GC thread. Without ,1, Julia 1.10+ spawns
-                    # nCPUs/4 GC threads by default — 48 per subprocess on a 192-core machine,
-                    # which adds up to ~18k OS threads with 192 concurrent subprocesses.
-                    # addenv overrides JULIA_NUM_THREADS in case -t doesn't fully shadow it.
-                    proc = run(addenv(`julia -t1,1 $script $ins $subargs`,
-                                      "JULIA_NUM_THREADS" => "1"); wait=false)
-                    # Kill the subprocess if it exceeds the per-instance RAM limit.
-                    # @async creates a lightweight task; wait(proc) yields so the task can run.
-                    @async begin
-                        while process_running(proc)
-                            sleep(10)
-                            process_running(proc) || break
-                            rss = process_rss_gb(proc.pid)
-                            if rss > maxinstmem_gb
-                                kill(proc, 9)
-                                msg = "OOM killed: $(round(rss; digits=1)) GB > $maxinstmem_gb GB"
-                                printstyled("  OOM KILL $ins: $msg\n"; color=:red)
-                                open(proofs*ins*".err", "a") do f; println(f, msg) end
-                                break
-                            end
+                # -t1,1: 1 worker thread + 1 GC thread. Without ,1, Julia 1.10+ spawns
+                # nCPUs/4 GC threads by default — 48 per subprocess on a 192-core machine,
+                # which adds up to ~18k OS threads with 192 concurrent subprocesses.
+                # addenv overrides JULIA_NUM_THREADS in case -t doesn't fully shadow it.
+                proc = run(addenv(`julia -t1,1 $script $ins $subargs`,
+                                  "JULIA_NUM_THREADS" => "1"); wait=false)
+                # Kill the subprocess if it exceeds the per-instance RAM limit.
+                # @async creates a lightweight task; wait(proc) yields so the task can run.
+                @async begin
+                    while process_running(proc)
+                        sleep(10)
+                        process_running(proc) || break
+                        rss = process_rss_gb(proc.pid)
+                        if rss > maxinstmem_gb
+                            kill(proc, 9)
+                            msg = "OOM killed: $(round(rss; digits=1)) GB > $maxinstmem_gb GB"
+                            printstyled("  OOM KILL $ins: $msg\n"; color=:red)
+                            open(proofs*ins*".err", "a") do f; println(f, msg) end
+                            break
                         end
                     end
-                    wait(proc)
-                finally
-                    ph_exit!(_ph_parsing)
                 end
+                wait(proc)
             catch e
                 msg = sprint(showerror, e, catch_backtrace())
                 printstyled("  ERROR $ins: $msg\n"; color=:red)
@@ -347,19 +332,6 @@ julia -t192 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
             printstyled("  $ins already done — skipping\n"; color=:blue)
             return
         end
-        # memory backpressure: block until the OS reports enough free RAM before loading a new instance.
-        # GC.gc(false) (incremental, non-full) is called by at most one thread at a time via _gc_lock
-        # to help Julia release unreferenced objects without causing a GC storm when many threads pile up.
-        # sleep(60) keeps polling rare — checking once per minute is plenty given solve times of minutes.
-        while available_memory() < minfreemem
-            ph_enter!(_ph_memwait)
-            if trylock(_gc_lock)
-                GC.gc(false)
-                unlock(_gc_lock)
-            end
-            sleep(60)
-            ph_exit!(_ph_memwait)
-        end
         tryrm(proofs*ins*".out")
         tryrm(proofs*ins*".err")
         if SOLVE
@@ -372,9 +344,7 @@ julia -t192 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
             if isfile(proofs*ins*opb) && !isempty(pbpconclusion(ins))
                 printstyled("  $ins proof exists — skipping solve\n"; color=:blue)
             else
-                ph_enter!(_ph_solving)
                 t = @elapsed ok = runsipsolver(ins, patfile, tarfile)
-                ph_exit!(_ph_solving)
                 if !ok
                     out_content = isfile(proofs*ins*".out") ? read(proofs*ins*".out", String) : ""
                     if occursin("SATISFIABLE", out_content) && !occursin("UNSATISFIABLE", out_content)
@@ -409,7 +379,7 @@ julia -t192 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
         if !NONORM
             printabline(ins)
             parse_time,trim_time,write_time,cone_stats,coremsg = trimnalyse(ins; mode=Grim())
-            ph_enter!(_ph_verif); smol_verif_time,full_verif_time = VERIF ? verify(ins) : (-1,-1); ph_exit!(_ph_verif)
+            smol_verif_time,full_verif_time = VERIF ? verify(ins) : (-1,-1)
             printabline2(ins,parse_time,trim_time,write_time,smol_verif_time,full_verif_time,cone_stats)
             !isempty(coremsg) && println(coremsg)
             writeout_verif(ins,smol_verif_time,full_verif_time)
@@ -418,7 +388,7 @@ julia -t192 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
         if CLIT
             printabline(ins)
             parse_time,trim_time,write_time,cone_stats,_ = trimnalyse(ins; mode=Clit())
-            ph_enter!(_ph_verif); smol_verif_time,full_verif_time = VERIF ? verify(ins) : (-1,-1); ph_exit!(_ph_verif)
+            smol_verif_time,full_verif_time = VERIF ? verify(ins) : (-1,-1)
             printabline2(ins,parse_time,trim_time,write_time,smol_verif_time,full_verif_time,cone_stats)
             writeout_verif(ins,smol_verif_time,full_verif_time)
         end
@@ -435,24 +405,18 @@ julia -t192 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
         prefix = mode isa Bfs ? "gbfs" : mode isa Clit ? "gclt" : "grim"
         parse_time = trim_time = write_time = 0 ; file = ins ; cone_stats = nothing
         # if "load" in ARGS file,system,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,invsys,prism,cone,conelits,invctrmap,succ,index = loadsys(file); @goto skiped end # using goto because I was told not to
-        Base.acquire(_parse_sem)
-        ph_enter!(_ph_parsing)
         parse_time = @elapsed begin
             store,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap,ctrmap,output,conclusion,obj,prism = readinstance(proofs,file)
         end
-        ph_exit!(_ph_parsing)
-        Base.release(_parse_sem)
         inp_lits = length(store.vars)
         writeout_parse(ins, parse_time, nbopb, length(systemlink), inp_lits, length(varmap), prefix)
         sys = PBSystem(store, length(varmap))  # zero-copy: PBSystem reuses FlatEqStore's flat arrays directly
         n = length(sys.rhs)
         cone     = zeros(Bool, n)
         conelits = Dict{Int,Set{Int}}()
-        ph_enter!(_ph_trimming)
         trim_time = @elapsed begin
             cone_timeout = getcone!(cone, conelits, sys, systemlink, nbopb, prism, redwitness, conclusion, obj, mode) === true
         end
-        ph_exit!(_ph_trimming)
         if cone_timeout
             open(proofs*ins*".err", "a") do f; println(f, "getcone timeout after $(trimtimeout)s") end
             return trunc(Int,parse_time),trunc(Int,trim_time),0,cone_stats,""
@@ -478,11 +442,9 @@ julia -t192 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
                 printstyled("  SYNC ERROR $ins: nbopb=$nbopb + systemlink=$(length(systemlink)) = $expected but sys.rhs=$actual (diff=$(expected-actual))\n"; color=:red)
             end
         end
-        ph_enter!(_ph_writing)
         write_time = @elapsed begin
             writeconedel(proofs,file,sys,cone,conelits,systemlink,redwitness,solirecord,assertrecord,nbopb,varmap_inv,ctrmap,output,conclusion,obj,prism)
         end
-        ph_exit!(_ph_writing)
         writeout_write(ins, parse_time, trim_time, write_time, prefix)
         return trunc(Int,parse_time),trunc(Int,trim_time),trunc(Int,write_time),cone_stats,coremsg end
 
@@ -819,7 +781,9 @@ julia -t192 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
         carriage = string(c-length(s))
         return "\r\033["*carriage*"G"*s end
 
-    par() = Threads.nthreads() > 1
+    # True when output can't use cursor positioning: either multiple threads in the same process
+    # (would interleave), or a single-threaded subprocess handling one instance in a batch run.
+    par() = Threads.nthreads() > 1 || inst !== nothing
 
     function printabline(f)
         par() && return  # parallel: skip placeholder, full line printed atomically in printabline2
