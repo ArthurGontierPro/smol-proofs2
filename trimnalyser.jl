@@ -187,10 +187,26 @@ julia --threads 192,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
                 _ph_solving[], _ph_parsing[], _ph_trimming[], _ph_writing[], _ph_verif[], _ph_memwait[], free_gb, nthreads);
                 color=:light_black)
         end
+        # Each instance runs in its own julia subprocess (single-threaded) so GC heaps are isolated:
+        # no stop-the-world across instances. The outer @threads loop provides parallelism.
+        # maxparse= and allgraphs are stripped: subprocess handles one instance, not a batch.
+        # Directory paths are stripped and proofs_abs is passed explicitly (absolute, cluster-safe).
+        sub_args = filter(a -> a ∉ Set(["allgraphs","atable","clean","pack","render","profile"]) &&
+                               !isdir(a) && !startswith(a,"maxparse="), ARGS)
+        jl       = joinpath(Sys.BINDIR, "julia")
+        script   = Base.abspath(@__FILE__)
+        proofs_abs = Base.abspath(proofs)
         wall = @elapsed Threads.@threads :greedy for ins in list
             try
-                # run(`julia trimnalyser.jl $ins solve resolv verif`)
-                trimnalyseandcie(ins)
+                while available_memory() < minfreemem
+                    ph_enter!(_ph_memwait); sleep(5); ph_exit!(_ph_memwait)
+                end
+                ph_enter!(_ph_parsing)
+                try
+                    run(`$jl -t1 $script $proofs_abs $ins $(sub_args...)`)
+                finally
+                    ph_exit!(_ph_parsing)
+                end
             catch e
                 msg = sprint(showerror, e, catch_backtrace())
                 printstyled("  ERROR $ins: $msg\n"; color=:red)
