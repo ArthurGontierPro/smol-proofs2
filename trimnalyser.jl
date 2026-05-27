@@ -14,7 +14,10 @@ julia --threads 192,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
     const sipsolverpath = _cluster ? "/scratch/arthur/glasgow_subgraph_solver"                                         : "/home/arthur_gla/veriPB/subgraphsolver/glasgow-subgraph-solver/build/glasgow_subgraph_solver"
     const _defaultproofs = _cluster ? "/scratch/arthur/proofs/" : abspath*"proofs/"
     const proofs = (i = findfirst(x -> isdir(x), ARGS)) === nothing ? _defaultproofs : ARGS[i]
-    const inst   = (i = findfirst(x -> isfile(proofs*x*pbp) && isfile(proofs*x*opb), ARGS)) !== nothing ? ARGS[i] : nothing # search for proof
+    const inst   = begin  # prefer proof-file match; fall back to LV/bio name pattern for solve mode (no files yet)
+        i = findfirst(x -> isfile(proofs*x*pbp) && isfile(proofs*x*opb), ARGS)
+        i === nothing && (i = findfirst(x -> !isdir(x) && (startswith(x,"LV") || startswith(x,"bio")), ARGS))
+        i !== nothing ? ARGS[i] : nothing end
     const BFS    = "bfs"    in ARGS  # BFS propagation: best-reason selection across same-level constraints
     const CLIT   = "clit"   in ARGS  # Clit mode: cone-first conflict analysis with two-pass filter (see conflicttrail(::Clit))
     const ATABLE = "atable" in ARGS  # print TikZ scatter plot from existing .out files
@@ -177,22 +180,11 @@ julia --threads 192,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
         println("%Running ", n, " instances on ", Threads.nthreads(), " thread(s)")
         done    = Threads.Atomic{Int}(0)
         t_start = time()
-        stop_monitor = Threads.Atomic{Bool}(false)
-        monitor_task = Threads.@spawn :interactive while !stop_monitor[]
-            sleep(10)
-            stop_monitor[] && break
-            nthreads = Threads.nthreads()
-            free_gb  = round(available_memory() / 1024^3; digits=0)
-            printstyled(@sprintf("  [monitor] solve=%d parse=%d trim=%d write=%d verif=%d memwait=%d | free=%.0fGB | threads=%d\n",
-                _ph_solving[], _ph_parsing[], _ph_trimming[], _ph_writing[], _ph_verif[], _ph_memwait[], free_gb, nthreads);
-                color=:light_black)
-        end
         # Each instance runs in its own julia subprocess (single-threaded) so GC heaps are isolated:
         # no stop-the-world across instances. The outer @threads loop provides parallelism.
         # maxparse= and allgraphs are stripped: subprocess handles one instance, not a batch.
         # Directory paths are stripped and proofs_abs is passed explicitly (absolute, cluster-safe).
         subargs = filter(a -> a in Set(["solve","resolv","verif","render","profile"]), ARGS)
-        subargs = subargs.*" " # add spaces for command to not be malformed
         script   = basename(@__FILE__) #Base.abspath(@__FILE__)
         wall = @elapsed Threads.@threads :greedy for ins in list
             try
@@ -201,8 +193,7 @@ julia --threads 192,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
                 end
                 ph_enter!(_ph_parsing)
                 try
-                    println("julia $script $ins $(subargs...)")
-                    # run(`julia $script $ins $(subargs...)`)
+                    run(`julia $script $ins $subargs`)
                 finally
                     ph_exit!(_ph_parsing)
                 end
@@ -221,7 +212,6 @@ julia --threads 192,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
                         round(Int, eta), "min\n\n"; color=:magenta)
             end
         end
-        stop_monitor[] = true; wait(monitor_task)
         println("%Wall time: ", round(wall; digits=1), "s")
         end
 
