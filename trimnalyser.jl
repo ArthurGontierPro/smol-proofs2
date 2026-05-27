@@ -122,8 +122,8 @@ julia -t92,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt
         end
     end
 
-    const minfreemem    = begin i = findfirst(x -> startswith(x, "minmem="), ARGS); i !== nothing ? parse(Int, ARGS[i][8:end]) * 1024^3 : (_cluster ? 500 : 4) * 1024^3 end  # minmem=N GB, default 500 on cluster / 4 locally
-    const maxinstmem_gb = begin i = findfirst(x -> startswith(x, "maxmem="), ARGS); i !== nothing ? parse(Float64, ARGS[i][8:end]) : (_cluster ? 100.0 : 8.0) end  # maxmem=N GB per subprocess, default 100 on cluster / 8 locally
+    const minfreemem    = begin i = findfirst(x -> startswith(x, "minmem="), ARGS); i !== nothing ? parse(Int, ARGS[i][8:end]) * 1024^3 : (_cluster ? 100 : 4) * 1024^3 end  # minmem=N GB, default 500 on cluster / 4 locally
+    const maxinstmem_gb = begin i = findfirst(x -> startswith(x, "maxmem="), ARGS); i !== nothing ? parse(Float64, ARGS[i][8:end]) : (_cluster ? 50.0 : 8.0) end  # maxmem=N GB per subprocess, default 100 on cluster / 8 locally
     using Random,DataStructures,Dates,Printf
 
 
