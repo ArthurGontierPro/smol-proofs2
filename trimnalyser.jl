@@ -3,6 +3,7 @@ julia trimnalyser.jl [options] [instance name or directory of instances]   optio
 julia --threads 196,1 trimnalyser.jl solve resolv allgraphs maxnodes=50
 julia --threads 8,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=30 st=8 tt=60 rand
 julia --threads 192,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=6000 rand maxparse=192
+julia -t192 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=6000 rand
 =#
     const opb = ".opb"
     const pbp = ".pbp"
@@ -50,6 +51,17 @@ julia --threads 192,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
             end
         end
         return Sys.free_memory()  # fallback for non-Linux
+    end
+
+    # Read the resident set size of a subprocess from /proc/PID/status (Linux only).
+    # Returns GB; 0.0 if the process already exited or on non-Linux.
+    function process_rss_gb(pid::Int)
+        try
+            for line in eachline("/proc/$pid/status")
+                startswith(line, "VmRSS:") && return parse(Int, split(line)[2]) / 1024^2
+            end
+        catch end
+        return 0.0
     end
 
     const _gc_lock      = ReentrantLock()  # at most one thread runs GC at a time to avoid GC storms when many threads back up
@@ -119,6 +131,7 @@ julia --threads 192,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
     end
 
     const minfreemem    = begin i = findfirst(x -> startswith(x, "minmem="), ARGS); i !== nothing ? parse(Int, ARGS[i][8:end]) * 1024^3 : (_cluster ? 500 : 4) * 1024^3 end  # minmem=N GB, default 500 on cluster / 4 locally
+    const maxinstmem_gb = begin i = findfirst(x -> startswith(x, "maxmem="), ARGS); i !== nothing ? parse(Float64, ARGS[i][8:end]) : (_cluster ? 100.0 : 8.0) end  # maxmem=N GB per subprocess, default 100 on cluster / 8 locally
     const maxparse      = begin i = findfirst(x -> startswith(x, "maxparse="), ARGS); i !== nothing ? parse(Int, ARGS[i][10:end]) : (_cluster ? 16 : 4) end  # maxparse=N, max concurrent parses, default 16 on cluster / 4 locally
     const _parse_sem    = Base.Semaphore(maxparse)
     using Random,DataStructures,Dates,Printf
@@ -166,6 +179,12 @@ julia --threads 192,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
             end
             return
         elseif inst !== nothing
+            # Each subprocess starts with a cold JIT. Without warmup, JIT compilation time
+            # is charged to the first instance's parse/trim phases, skewing measurements.
+            # We skip warmup when the instance is already done — no real work, no point.
+            if !smol_complete(inst) || OVERWRITE
+                warmup_jit()
+            end
             trimnalyseandcie(inst); return
         elseif (SOLVE || RESOLV) && !ALLGRAPHS
             # proof files don't exist yet: find instance name by bio/LV prefix in ARGS
@@ -193,7 +212,29 @@ julia --threads 192,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
                 end
                 ph_enter!(_ph_parsing)
                 try
-                    run(`julia -t1 $script $ins $subargs`)
+                    # -t1,1: 1 worker thread + 1 GC thread. Without ,1, Julia 1.10+ spawns
+                    # nCPUs/4 GC threads by default — 48 per subprocess on a 192-core machine,
+                    # which adds up to ~18k OS threads with 192 concurrent subprocesses.
+                    # addenv overrides JULIA_NUM_THREADS in case -t doesn't fully shadow it.
+                    proc = run(addenv(`julia -t1,1 $script $ins $subargs`,
+                                      "JULIA_NUM_THREADS" => "1"); wait=false)
+                    # Kill the subprocess if it exceeds the per-instance RAM limit.
+                    # @async creates a lightweight task; wait(proc) yields so the task can run.
+                    @async begin
+                        while process_running(proc)
+                            sleep(10)
+                            process_running(proc) || break
+                            rss = process_rss_gb(proc.pid)
+                            if rss > maxinstmem_gb
+                                kill(proc, 9)
+                                msg = "OOM killed: $(round(rss; digits=1)) GB > $maxinstmem_gb GB"
+                                printstyled("  OOM KILL $ins: $msg\n"; color=:red)
+                                open(proofs*ins*".err", "a") do f; println(f, msg) end
+                                break
+                            end
+                        end
+                    end
+                    wait(proc)
                 finally
                     ph_exit!(_ph_parsing)
                 end
@@ -274,6 +315,30 @@ julia --threads 192,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 
         end end
 
     smol_complete(ins) = isfile(proofs*ins*opb*smol) && !isempty(pbpconclusion(ins, smol))
+
+    # Parse and trim a small proof to trigger JIT compilation of all hot paths before the
+    # real instance runs. Without this, JIT time is charged to the first instance's timings.
+    # Uses the smallest available opb+pbp pair; skips silently if none exists or if warmup fails.
+    # .smol files count as valid warmup targets — they are tiny and exercise the same code paths.
+    function warmup_jit()
+        candidates = filter(f -> ext(f)==opb && isfile(noext(f)*pbp), readdir(proofs, join=true))
+        isempty(candidates) && return
+        sort!(candidates, by=f -> filesize(f) + filesize(noext(f)*pbp))
+        warm = onlyname(first(candidates))
+        # don't warm up on the real instance — its timings would include warmup parse time
+        if warm == inst
+            length(candidates) < 2 && return
+            warm = onlyname(candidates[2])
+        end
+        try
+            store,systemlink,redwitness,_,_,nbopb,varmap,_,_,conclusion,obj,prism = readinstance(proofs, warm)
+            sys = PBSystem(store, length(varmap))
+            getcone!(zeros(Bool,length(sys.rhs)), Dict{Int,Set{Int}}(), sys, systemlink,
+                     nbopb, prism, redwitness, conclusion, obj, Grim())
+        catch
+            # warmup failure is silent; real work proceeds regardless
+        end
+    end
 
     function trimnalyseandcie(ins)
         # resume: if trimmed output already exists and the pbp tail confirms a complete write, skip entirely.
