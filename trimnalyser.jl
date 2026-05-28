@@ -342,7 +342,7 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
         cone_stats = conelits_stats(sys, cone, conelits)
         printconestat(cone, cone_stats)
         varmap_inv = Vector{String}(undef, length(varmap))
-        for (k, v) in varmap; varmap_inv[v] = k; end
+        for (k, v) in varmap; varmap_inv[v] = String(copy(k)); end
         if isempty(output)
             printstyled("  $ins: proof truncated (no output line) — skipping write\n"; color=:red)
             open(proofs*ins*".err", "a") do f; println(f, "proof truncated: output line missing") end
@@ -974,6 +974,64 @@ end; # using .Dumping # to save the import un comment this.
     @inline function setconelits(conelits, v, id)
         push!(get!(Set{Int}, conelits, id), v) end
 
+    # CSR storage for proof step link data — zero allocation per step during parsing.
+    # idx[i] encodes entry type:  k>0 → flat data at ptr[k]:ptr[k+1]-1
+    #                              k<0 → singleton rule type (shared const, never mutated)
+    #                              k=0 → mutable entry in extra (RUP cone + RED with refs)
+    mutable struct SystemLink
+        data::Vector{Int}             # flat concatenated link payloads for non-singleton steps
+        ptr::Vector{Int}              # ptr[k]:ptr[k+1]-1 = k-th flat entry range in data
+        idx::Vector{Int}              # one per proof step — see encoding above
+        extra::Dict{Int,Vector{Int}}  # mutable per-step vectors (RUP cone-visited, RED refs)
+    end
+    SystemLink() = SystemLink(Int[], Int[1], Int[], Dict{Int,Vector{Int}}())
+    Base.length(sl::SystemLink) = length(sl.idx)
+    Base.eachindex(sl::SystemLink) = 1:length(sl.idx)
+    Base.isassigned(sl::SystemLink, i::Int) = 1 <= i <= length(sl.idx)
+
+    @inline function _sl_singleton(t::Int)
+        t == -1  ? _LINK_RUP  :
+        t == -4  ? _LINK_RED  :
+        t == -3  ? _LINK_IARES :
+        t == -10 ? _LINK_END  :
+        t == -7  ? _LINK_PG7  :
+        t == -21 ? _LINK_SOLI :
+        t == -20 ? _LINK_SOLX : error("unknown singleton type $t") end
+
+    # Read: zero allocation — returns a view into flat data or a shared singleton const.
+    function Base.getindex(sl::SystemLink, i::Int)
+        k = @inbounds sl.idx[i]
+        k > 0 ? (@inbounds @view sl.data[sl.ptr[k]:sl.ptr[k+1]-1]) :
+        k < 0 ? _sl_singleton(k) :
+                 sl.extra[i] end
+
+    # Push singleton (RUP, RED, SOLI, SOLX, …): one Int stored, no heap allocation.
+    sl_push_singleton!(sl::SystemLink, type::Int) = push!(sl.idx, type)
+
+    # Push non-singleton link with pre-built data vector (POL, IA, assumption-with-hints).
+    # Appends the data in-place — no copy of the source vector.
+    function sl_push_data!(sl::SystemLink, link::AbstractVector{Int})
+        k = length(sl.ptr)
+        append!(sl.data, link)
+        push!(sl.ptr, length(sl.data) + 1)
+        push!(sl.idx, k) end
+
+    # Specialised two-element push (IA: [-3, antecedent]) — avoids a temp Vector{Int}.
+    function sl_push_2!(sl::SystemLink, a::Int, b::Int)
+        k = length(sl.ptr)
+        push!(sl.data, a, b)
+        push!(sl.ptr, length(sl.data) + 1)
+        push!(sl.idx, k) end
+
+    # Return (creating if needed) the mutable Vector for step i (RUP cone / RED refs).
+    function sl_get_mut!(sl::SystemLink, i::Int)
+        k = sl.idx[i]
+        k == 0 && return sl.extra[i]
+        vec = k < 0 ? Int[k] : collect(@inbounds @view sl.data[sl.ptr[k]:sl.ptr[k+1]-1])
+        sl.extra[i] = vec
+        sl.idx[i] = 0
+        return vec end
+
 # ══ Parser ══════════════════════════════════════════════════════════════════════════════
     # Pre-allocated singleton link vectors for rule types whose systemlink entries need no antecedents.
     # Singletons are safe to share ONLY if nothing pushes into them. _LINK_RUP is the exception:
@@ -1065,7 +1123,7 @@ end; # using .Dumping # to save the import un comment this.
 
     function readopb(path,file)
         store = FlatEqStore()
-        varmap = Dict{String,Int}()
+        varmap = Dict{Vector{UInt8},Int}()
         ctrmap = Dict{String, Int}()
         obj = ""
         # mmap the file: maps OS page cache directly into virtual address space — zero memcpy.
@@ -1108,12 +1166,13 @@ end; # using .Dumping # to save the import un comment this.
 
     function readvar(s,varmap)
         if s[1]==UInt8(';') throw("; added as variable") end
-        # String(view) needed for Dict{String,Int} key — one allocation per unique variable name.
-        tmp = s[1]==UInt8('~') ? String(view(s,2:length(s))) : String(s)
+        # Strip '~' prefix; both branches stay as AbstractVector{UInt8} — zero allocation.
+        # Dict{Vector{UInt8},Int} lookup with ByteSpan key works via generic array hash/isequal.
+        tmp = s[1]==UInt8('~') ? @view(s[2:end]) : s
         if haskey(varmap,tmp)
             return varmap[tmp]
         end
-        varmap[tmp] = length(varmap)+1
+        varmap[copy(tmp)] = length(varmap)+1   # copy once per unique variable name
         return length(varmap) end
 
     readeq(st,varmap) = readeq(st,varmap,1:2:length(st))
@@ -1174,7 +1233,7 @@ end; # using .Dumping # to save the import un comment this.
         eq.rhs = c + eq.rhs end
  
     function readproof(path,file,store,varmap,ctrmap,obj)
-        systemlink = Vector{Vector{Int}}()
+        systemlink = SystemLink()
         redwitness = Dict{Int, Red}()
         solirecord = Dict{Int, Vector{Lit}}()
         assertrecord = Dict{Int, String}()
@@ -1229,7 +1288,7 @@ end; # using .Dumping # to save the import un comment this.
     # Uses _LINK_RUP singleton — zero allocation per RUP step during parsing (~millions per large file).
     # ante_into_frontier! replaces the singleton with a fresh vector on first cone visit (lazy allocation).
     function processrup_push!(store,st,varmap,systemlink)
-        push!(systemlink, _LINK_RUP)
+        sl_push_singleton!(systemlink, -1)
         readeq_push!(store, st, varmap, 2:2:length(st))
         return true end
 
@@ -1241,7 +1300,7 @@ end; # using .Dumping # to save the import un comment this.
         empty!(linkbuf); push!(linkbuf, -2)
         lits,b = solvepol(st,store,linkbuf,c,varmap,ctrmap,nbopb)
         if isempty(lits) && b==0; throw("POL empty"); end
-        push!(systemlink, copy(linkbuf))   # single allocation after solvepol is done filling the link
+        sl_push_data!(systemlink, linkbuf)  # append in-place: no copy of linkbuf needed
         push_eq_normalized!(store, lits, b)
         push!(get_lit_pool(), lits)        # return final lits buffer to pool for reuse by next pol step
         return true end
@@ -1397,16 +1456,16 @@ end; # using .Dumping # to save the import un comment this.
             for i in eachindex(hints)
                 push!(link,parse(Int,hints[i]))
             end
-            push!(systemlink,link)
+            sl_push_data!(systemlink,link)
         else
-            push!(systemlink,[-30])
+            sl_push_singleton!(systemlink,-30)
         end
         normcoefeq(eq); push_eq!(store,eq)
         return true end
 
     function processia_push!(store,st,varmap,ctrmap,c,systemlink)
         eq,l = readia(st,varmap,ctrmap,Eq([],0),c)
-        push!(systemlink,[-3,l])
+        sl_push_2!(systemlink,-3,l)
         normcoefeq(eq); push_eq!(store,eq)
         return true end
 
@@ -1432,7 +1491,7 @@ end; # using .Dumping # to save the import un comment this.
             j=length(st)
         end
         w = readwitness(st[i+1:j],varmap)
-        push!(systemlink, _LINK_RED)
+        sl_push_singleton!(systemlink, -4)
         normcoefeq(eq)
         push_eq!(store,eq)
         redwitness[redid] = Red(w,0:0,[])
@@ -1462,7 +1521,7 @@ end; # using .Dumping # to save the import un comment this.
             
 
     function processsoli_push!(store,st,varmap,systemlink,c,prism,obj,solirecord)
-        push!(systemlink, _LINK_SOLI)
+        sl_push_singleton!(systemlink, -21)
         eq = findbound(store,st,c,varmap,prism,obj,solirecord)
         normcoefeq(eq); push_eq!(store,eq)
         return true end
@@ -1520,7 +1579,7 @@ end; # using .Dumping # to save the import un comment this.
         return assi end
 
     function processsolx_push!(store,st,varmap,systemlink,c,prism)
-        push!(systemlink, _LINK_SOLX)
+        sl_push_singleton!(systemlink, -20)
         eq = solbreakingctr(store,st,c,varmap,prism)
         normcoefeq(eq); push_eq!(store,eq)
         return true end
@@ -1587,7 +1646,7 @@ end; # using .Dumping # to save the import un comment this.
         @inbounds t.pos[iv] = length(t.var)   # trail index of v (0 = unassigned)
         @inbounds t.assi[iv] = val end
 
-    function fixante(systemlink::Vector{Vector{Int}}, ante::Ante, i)
+    function fixante(systemlink::SystemLink, ante::Ante, i)
         for j in eachindex(systemlink[i])
             t = systemlink[i][j]
             if t > 0 && !(j < length(systemlink[i]) && systemlink[i][j+1] in (-2,-3))  # skip multiplicands/divisors (not constraint refs)
@@ -1600,17 +1659,19 @@ end; # using .Dumping # to save the import un comment this.
         # to the red declaration's systemlink so the writer emits them as del targets correctly.
     function fixredsystemlink(systemlink, cone, prism, nbopb)
         for range in prism
+            red_link = sl_get_mut!(systemlink, range.start-nbopb)
             for i in range
                 if cone[i]
-                    for j in eachindex(systemlink[i-nbopb])
-                        k = systemlink[i-nbopb][j]
-                        if k > 0 && !(k in systemlink[range.start-nbopb]) && k < range.start - nbopb
-                            push!(systemlink[range.start-nbopb], k)  # bubble external ref up to red declaration
+                    inner = systemlink[i-nbopb]
+                    for j in eachindex(inner)
+                        k = inner[j]
+                        if k > 0 && !(k in red_link) && k < range.start - nbopb
+                            push!(red_link, k)   # bubble external ref up to red declaration
                         end
                     end
                 end
             end
-            sort!(systemlink[range.start-nbopb])  # keep link sorted so writedel processes ids in order
+            sort!(red_link)
         end end
 
     function eqvars(sys::PBSystem, e::Int)
@@ -2064,14 +2125,10 @@ end; # using .Dumping # to save the import un comment this.
     @inline function ante_into_frontier!(ante::Ante, frontier, on_frontier, cone)
         for j in ante.list; ante.flags[j] || continue; push_frontier!(frontier, on_frontier, cone, j); end end
     # Variant that records antecedents in systemlink[idx] for the writer.
-    # Lazily replaces the shared _LINK_RUP sentinel with a fresh vector on first cone visit,
+    # sl_get_mut! lazily upgrades the singleton idx entry to a mutable extra vector on first visit,
     # so parsing pays zero allocation per RUP step and only cone steps (a tiny fraction) allocate.
     @inline function ante_into_frontier!(ante::Ante, frontier, on_frontier, cone, systemlink, idx)
-        link = systemlink[idx]
-        if link === _LINK_RUP
-            link = Int[-1]          # fresh vector for this cone step; -1 stays as the rule-type header
-            systemlink[idx] = link
-        end
+        link = sl_get_mut!(systemlink, idx)
         for j in ante.list; ante.flags[j] || continue; push!(link, j); push_frontier!(frontier, on_frontier, cone, j); end end
 
     function getcone!(cone, conelits, sys::PBSystem, systemlink, nbopb::Int,
@@ -2154,8 +2211,10 @@ end; # using .Dumping # to save the import un comment this.
                     elseif rule_type >= -3 || (rule_type == -30 && length(systemlink[i - nbopb]) > 1)  # pol / ia / assumption with hints
                         ante_clear!(ante)
                         fixante(systemlink, ante, i - nbopb)
-                        fixconelits(sys, conelits, i, ante, systemlink[i - nbopb])
-                        removetrivialantecedents(sys, ante, conelits, systemlink[i - nbopb], i)
+                        let lnk = sl_get_mut!(systemlink, i - nbopb)
+                            fixconelits(sys, conelits, i, ante, lnk)
+                            removetrivialantecedents(sys, ante, conelits, lnk, i)
+                        end
                         ante_into_frontier!(ante, frontier, on_frontier, cone)
                     elseif rule_type == -10                         # end of red subproof
                         red = redwitness[i]
@@ -2375,18 +2434,16 @@ end; # using .Dumping # to save the import un comment this.
 
     function invlink(systemlink, succ::Vector{Vector{Int}}, cone, nbopb)
         for i in eachindex(systemlink)
-            if isassigned(systemlink, i)
-                link = systemlink[i]
-                for k in eachindex(link)
-                    j = link[k]
-                    if isid(link, k) && cone[i + nbopb]
-                        if isassigned(succ, j)
-                            if !(i + nbopb in succ[j])
-                                push!(succ[j], i + nbopb)
-                            end
-                        else
-                            succ[j] = [i + nbopb]
+            link = systemlink[i]
+            for k in eachindex(link)
+                j = link[k]
+                if isid(link, k) && cone[i + nbopb]
+                    if isassigned(succ, j)
+                        if !(i + nbopb in succ[j])
+                            push!(succ[j], i + nbopb)
                         end
+                    else
+                        succ[j] = [i + nbopb]
                     end
                 end
             end
