@@ -1,6 +1,7 @@
 
 Instances/
 statprof/
+statprofbeforepolchanges/
 aaaclique.opb
 bio170041.opb
 bio170041.veripb
@@ -11,3 +12,39 @@ moitest.opb
 777.csv
 abiolistold.jl
 instances.txt
+
+# Test files and scratch
+*.opb
+*.pbp
+*.veripb
+*.err
+*.out
+*.subout
+dump.jls
+*.tar.gz
+*.pb.gz
+output.log
+
+# Temp/scratch Julia files
+ClaudeTrimnalyser.jl
+PBparser.jl
+PBprinter.jl
+ehhhn.jl
+lecture.jl
+parse_parallel_test.jl
+testdump.txt
+
+# Results/data files
+afailedtrims
+atableoldGPB3T
+sip-trimming-results
+
+# HTML/visualization
+ciaran_show/
+vis/
+
+# Zone Identifier (Windows metadata)
+*.Zone.Identifier
+
+# But keep design docs
+!flat_pol_design.md

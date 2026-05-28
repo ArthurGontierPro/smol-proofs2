@@ -130,7 +130,16 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
                         if rss > maxinstmem_gb
                             try
                                 run(`kill -9 $pid`)
-                                printstyled("  OOM KILL $inst_name (pid=$pid): $(round(rss; digits=1)) GB > $maxinstmem_gb GB\n"; color=:red)
+                                msg = "OOM KILL $inst_name (pid=$pid): $(round(rss; digits=1)) GB > $maxinstmem_gb GB"
+                                printstyled("  $msg\n"; color=:red)
+                                # Record OOM kill in .err file
+                                try
+                                    open(proofs*inst_name*".err", "a") do f
+                                        println(f, "OOM at $(round(rss; digits=1))G (limit $(maxinstmem_gb)G)")
+                                    end
+                                catch
+                                    # Ignore errors writing .err file (may not have permissions)
+                                end
                             catch e
                                 printstyled("  OOM KILL FAILED $inst_name (pid=$pid): $(round(rss; digits=1)) GB - $(sprint(showerror, e))\n"; color=:magenta)
                             end
@@ -169,8 +178,15 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
                            wait=false)
                 wait(proc)
                 # timeout command exits with 124 (SIGTERM) or 137 (SIGKILL) on timeout
+                # OOM killer also sends SIGKILL (exit 137), check subout for "OOM" to distinguish
                 if proc.exitcode == 124 || proc.exitcode == 137
-                    msg = "Timeout after $(trimtimeout)s"
+                    # Check if it was OOM or timeout
+                    oom_killed = false
+                    if isfile(subout)
+                        out_preview = read(subout, String)
+                        oom_killed = occursin("OOM", out_preview) || occursin("memory", lowercase(out_preview))
+                    end
+                    msg = oom_killed ? "OOM killed (exceeded $(maxinstmem_gb) GB)" : "Timeout after $(trimtimeout)s"
                     printstyled("  $ins: $msg\n"; color=:red)
                     open(proofs*ins*".err", "a") do f; println(f, msg) end
                 end
@@ -250,6 +266,20 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
 
     smol_complete(ins) = isfile(proofs*ins*opb*smol) && !isempty(pbpconclusion(ins, smol))
 
+        # Check if instance was previously OOM killed, return (was_killed, memory_info)
+    function was_oom_killed(ins)
+        errfile = proofs * ins * ".err"
+        isfile(errfile) || return (false, "")
+        content = read(errfile, String)
+        # Look for "OOM at X.XG" pattern
+        m = match(r"OOM at ([\d.]+G)", content)
+        if m !== nothing
+            return (true, m.captures[1])
+        end
+        # Fallback: old format "OOM killed"
+        return (occursin("OOM killed", content) || occursin("OOM at", content), "")
+    end
+
         # Parse and trim a small proof to trigger JIT compilation of all hot paths before the
         # real instance runs. Without this, JIT time is charged to the first instance's timings.
         # Uses the smallest available opb+pbp pair; skips silently if none exists or if warmup fails.
@@ -278,6 +308,13 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
         # checked before the memory wait so finished instances never contend for RAM.
         if !OVERWRITE && smol_complete(ins)
             printstyled("  $ins already done — skipping\n"; color=:blue)
+            return
+        end
+        # skip instances that previously OOM killed (unless OVERWRITE)
+        oom_killed, mem_info = was_oom_killed(ins)
+        if !OVERWRITE && oom_killed
+            mem_str = isempty(mem_info) ? "" : " at $mem_info"
+            printstyled("  $ins previously OOM killed$mem_str — skipping\n"; color=:yellow)
             return
         end
         tryrm(proofs*ins*".out")
@@ -872,6 +909,76 @@ end; # using .Dumping # to save the import un comment this.
                                        s.row_ptr[end] == s.row_ptr[end-1] &&
                                        s.rhs[end] == 1
 
+        # Helper for FlatEqStore: get range of literals for equation e
+    eqrange(s::FlatEqStore, e::Integer) = Int(s.row_ptr[e]):Int(s.row_ptr[e+1])-1
+
+        # Scratch buffers for flat POL operations — eliminates all Eq/Lit allocations.
+        # For 40k-literal POL steps, this saves millions of allocations by operating
+        # directly on flat Int32/BitVector arrays instead of creating temporary Eq objects.
+    mutable struct PolScratch
+        # Primary working buffer (used for intermediate results)
+        vars  ::Vector{Int32}
+        coefs ::Vector{Int32}
+        signs ::BitVector
+        rhs   ::Int64
+
+        # Stack for POL expression evaluation
+        # Entries: >0 = equation ID in store, <0 = index into scratch_pool
+        stack ::Vector{Int32}
+        stack_depth ::Int
+
+        # Pool of scratch equations for complex POL expressions
+        # Each entry: (vars, coefs, signs, rhs)
+        scratch_pool ::Vector{Tuple{Vector{Int32}, Vector{Int32}, BitVector, Int64}}
+        next_scratch ::Int
+    end
+
+    PolScratch() = PolScratch(Int32[], Int32[], BitVector(), 0, Int32[], 0, [], 1)
+    get_pol_scratch() = get!(task_local_storage(), :pol_scratch, PolScratch())
+
+        # Helper: get equation arrays from either store (id > 0) or scratch (id < 0)
+    @inline function _pol_get_arrays(ps::PolScratch, store::FlatEqStore, id::Integer)
+        if id > 0
+            r = eqrange(store, id)
+            return store.vars, store.coefs, store.signs, store.rhs[id], r
+        else
+            idx = -id
+            scratch = ps.scratch_pool[idx]
+            r = 1:length(scratch[1])
+            return scratch[1], scratch[2], scratch[3], scratch[4], r
+        end
+    end
+
+        # Allocate scratch buffer from pool and copy ps.{vars,coefs,signs,rhs} into it
+    function _pol_alloc_scratch!(ps::PolScratch)
+        idx = ps.next_scratch
+        ps.next_scratch += 1
+        if idx > length(ps.scratch_pool)
+            push!(ps.scratch_pool, (copy(ps.vars), copy(ps.coefs), copy(ps.signs), ps.rhs))
+        else
+            s = ps.scratch_pool[idx]
+            resize!(s[1], length(ps.vars)); copyto!(s[1], ps.vars)
+            resize!(s[2], length(ps.coefs)); copyto!(s[2], ps.coefs)
+            resize!(s[3], length(ps.signs)); copyto!(s[3], ps.signs)
+            ps.scratch_pool[idx] = (s[1], s[2], s[3], ps.rhs)
+        end
+        return idx
+    end
+
+        # Materialize store equation into ps.{vars,coefs,signs,rhs}
+    function _pol_materialize!(ps::PolScratch, store::FlatEqStore, id::Integer)
+        r = eqrange(store, id)
+        resize!(ps.vars, length(r))
+        resize!(ps.coefs, length(r))
+        resize!(ps.signs, length(r))
+        for (i, k) in enumerate(r)
+            ps.vars[i] = store.vars[k]
+            ps.coefs[i] = store.coefs[k]
+            ps.signs[i] = store.signs[k]
+        end
+        ps.rhs = store.rhs[id]
+    end
+
     mutable struct Red
         witness::Vector{Lit}                # flat pairs: witness[2k-1]=source var, witness[2k]=target var (var=0 → const-0, var=-1 → const-1)
         range::UnitRange{Int64}             # system id range of the entire red block (reversed negation → conclusion)
@@ -892,24 +999,91 @@ end; # using .Dumping # to save the import un comment this.
         var  ::Vector{Int32}    # variables in propagation order
         eq   ::Vector{Int32}    # reason equation for each entry
         pos  ::Vector{Int}      # pos[v] = index in var/eq (0 = unassigned)
-        assi ::Vector{Int8} end # current assignment (1=true, 2=false, 0=unset)
+        assi ::Vector{Int8}     # current assignment (1=true, 2=false, 0=unset)
+        slack_cache ::Vector{Int32}      # incremental slack per constraint
+        slack_rev_cache ::Vector{Int32}  # incremental slack for reversed constraints
+    end
 
-    Trail(n_vars::Int) = Trail(Int32[], Int32[], zeros(Int, n_vars), zeros(Int8, n_vars))
+    Trail(n_vars::Int) = Trail(Int32[], Int32[], zeros(Int, n_vars), zeros(Int8, n_vars), Int32[], Int32[])
     @inline function reset!(t::Trail)
         empty!(t.var); empty!(t.eq)
-        fill!(t.pos, 0); fill!(t.assi, 0) end
+        fill!(t.pos, 0); fill!(t.assi, 0)
+        empty!(t.slack_cache); empty!(t.slack_rev_cache) end
 
         # Reset trail to base state, filtering out entries whose reason >= init.
         # OPB entries (reason ≤ nbopb ≤ any init) are always included.
         # PBP entries with reason < init are included; reason == init is excluded because
         # constraint init is the one being proved (using it as a reason is circular).
-    @inline function reset_to_base!(t::Trail, base::Trail, init::Int)
+    @inline function reset_to_base!(t::Trail, base::Trail, sys::PBSystem, init::Int)
         empty!(t.var); empty!(t.eq)
         fill!(t.pos, 0); fill!(t.assi, 0)
+        # Copy slack cache from base
+        resize!(t.slack_cache, length(base.slack_cache))
+        resize!(t.slack_rev_cache, length(base.slack_rev_cache))
+        copyto!(t.slack_cache, base.slack_cache)
+        copyto!(t.slack_rev_cache, base.slack_rev_cache)
         for k in 1:length(base.var)
             Int(base.eq[k]) >= init && continue            # exclude init itself and anything beyond
-            pushtrail!(t, base.var[k], base.eq[k], base.assi[Int(base.var[k])])
+            pushtrail!(t, sys, base.var[k], base.eq[k], base.assi[Int(base.var[k])])
         end end
+
+        # Initialize slack caches from scratch for all constraints.
+        # Forward slack: sum(coefs of unassigned/satisfied lits) - rhs
+        # Reversed slack: sum(coefs of unassigned/falsified lits) - (total_coefs - rhs + 1)
+    function init_slack_cache!(t::Trail, sys::PBSystem)
+        n = length(sys.rhs)
+        resize!(t.slack_cache, n)
+        resize!(t.slack_rev_cache, n)
+        for e in 1:n
+            c_fwd = zero(Int32)
+            c_rev = zero(Int32)
+            total = zero(Int32)
+            @inbounds for k in eqrange(sys, e)
+                coef = sys.coefs[k]
+                total += coef
+                val = t.assi[Int(sys.vars[k])]
+                sign = sys.signs[k]
+                # Forward: unassigned OR satisfied
+                unaffected_fwd = (val == 0) | (sign & (val == Int8(1))) | (!sign & (val == Int8(2)))
+                c_fwd += unaffected_fwd ? coef : zero(Int32)
+                # Reversed: unassigned OR falsified (opposite of forward satisfaction)
+                unaffected_rev = (val == 0) | (sign & (val == Int8(2))) | (!sign & (val == Int8(1)))
+                c_rev += unaffected_rev ? coef : zero(Int32)
+            end
+            t.slack_cache[e] = c_fwd - sys.rhs[e]
+            t.slack_rev_cache[e] = c_rev - (total - sys.rhs[e] + 1)
+        end
+    end
+
+        # Update slack caches incrementally when assigning variable v to val.
+        # For each constraint containing v:
+        #   - Forward: if literal becomes falsified, subtract its coef
+        #   - Reversed: if literal becomes satisfied, subtract its coef
+    @inline function update_slack_on_assign!(t::Trail, sys::PBSystem, v::Int, val::Int8)
+        for j in varrange(sys, v)
+            eid = Int(sys.var_eqs[j])
+            for k in eqrange(sys, eid)
+                Int(sys.vars[k]) == v || continue
+                sign = sys.signs[k]
+                coef = sys.coefs[k]
+                # Forward slack: subtract coef if literal becomes falsified
+                becomes_falsified = (sign & (val == Int8(2))) | (!sign & (val == Int8(1)))
+                if becomes_falsified
+                    t.slack_cache[eid] -= coef
+                end
+                # Reversed slack: subtract coef if literal becomes satisfied (opposite)
+                becomes_satisfied = (sign & (val == Int8(1))) | (!sign & (val == Int8(2)))
+                if becomes_satisfied
+                    t.slack_rev_cache[eid] -= coef
+                end
+                break  # v appears at most once per constraint
+            end
+        end
+    end
+
+        # Cached slack accessors — read from incremental cache instead of recomputing.
+    @inline slack_cached(t::Trail, e::Int) = @inbounds t.slack_cache[e]
+    @inline slack_reversed_cached(t::Trail, e::Int) = @inbounds t.slack_rev_cache[e]
 
     struct Ante
         flags::Vector{Bool}   # O(1) membership
@@ -1313,12 +1487,278 @@ end; # using .Dumping # to save the import un comment this.
     function processpol_push!(store,st,varmap,systemlink,c,ctrmap,nbopb)
         linkbuf = get!(task_local_storage(), :linkbuf, Int[])
         empty!(linkbuf); push!(linkbuf, -2)
-        lits,b = solvepol(st,store,linkbuf,c,varmap,ctrmap,nbopb)
-        if isempty(lits) && b==0; throw("POL empty"); end
-        sl_push_data!(systemlink, linkbuf)  # append in-place: no copy of linkbuf needed
-        push_eq_normalized!(store, lits, b)
-        push!(get_lit_pool(), lits)        # return final lits buffer to pool for reuse by next pol step
+        # Flat POL: pushes directly to store (no Eq/Lit allocations)
+        solvepol_flat!(store, st, linkbuf, c, varmap, ctrmap, nbopb)
+        # Check for empty result
+        if length(store) > 0 && store.row_ptr[end] == store.row_ptr[end-1] && store.rhs[end] == 0
+            throw("POL empty")
+        end
+        sl_push_data!(systemlink, linkbuf)
         return true end
+
+# ══ Flat POL Operations (Zero-Copy) ═════════════════════════════════════════
+
+        # Push equation ID onto POL stack (lazy - no copy)
+    @inline function pol_push_eq!(ps::PolScratch, id::Int)
+        push!(ps.stack, Int32(id))
+        ps.stack_depth += 1
+    end
+
+        # Push literal axiom onto POL stack
+    function pol_push_literal!(ps::PolScratch, var::Int, sign::Bool)
+        resize!(ps.vars, 1); ps.vars[1] = Int32(var)
+        resize!(ps.coefs, 1); ps.coefs[1] = Int32(1)
+        resize!(ps.signs, 1); ps.signs[1] = sign
+        ps.rhs = 0
+        idx = _pol_alloc_scratch!(ps)
+        push!(ps.stack, Int32(-idx))
+        ps.stack_depth += 1
+    end
+
+        # Addition: pop two equations, merge, push result
+    function pol_add!(ps::PolScratch, store::FlatEqStore)
+        ps.stack_depth >= 2 || error("pol stack underflow")
+        id2 = pop!(ps.stack); ps.stack_depth -= 1
+        id1 = pop!(ps.stack); ps.stack_depth -= 1
+
+        v1, c1, s1, rhs1, r1 = _pol_get_arrays(ps, store, id1)
+        v2, c2, s2, rhs2, r2 = _pol_get_arrays(ps, store, id2)
+
+        resize!(ps.vars, 0); resize!(ps.coefs, 0); resize!(ps.signs, 0)
+        sizehint!(ps.vars, length(r1) + length(r2))
+
+        i, j = r1.start, r2.start
+        rhs_adj = zero(Int32)
+
+        while i <= r1.stop && j <= r2.stop
+            if v1[i] < v2[j]
+                push!(ps.vars, v1[i]); push!(ps.coefs, c1[i]); push!(ps.signs, s1[i]); i += 1
+            elseif v1[i] > v2[j]
+                push!(ps.vars, v2[j]); push!(ps.coefs, c2[j]); push!(ps.signs, s2[j]); j += 1
+            else
+                # Same variable: add coefficients
+                # Invariant: all equations normalized (coefs > 0), so sign difference means cancellation
+                var = v1[i]
+                if s1[i] == s2[j]
+                    c = c1[i] + c2[j]
+                    c != 0 && (push!(ps.vars, var); push!(ps.coefs, c); push!(ps.signs, s1[i]))
+                else
+                    # Different signs: c1*x + c2*~x → adjust rhs
+                    if c1[i] > c2[j]
+                        push!(ps.vars, var); push!(ps.coefs, c1[i] - c2[j]); push!(ps.signs, s1[i])
+                        rhs_adj += c2[j]
+                    elseif c2[j] > c1[i]
+                        push!(ps.vars, var); push!(ps.coefs, c2[j] - c1[i]); push!(ps.signs, s2[j])
+                        rhs_adj += c1[i]
+                    else
+                        rhs_adj += c1[i]  # complete cancellation
+                    end
+                end
+                i += 1; j += 1
+            end
+        end
+
+        while i <= r1.stop
+            push!(ps.vars, v1[i]); push!(ps.coefs, c1[i]); push!(ps.signs, s1[i]); i += 1
+        end
+        while j <= r2.stop
+            push!(ps.vars, v2[j]); push!(ps.coefs, c2[j]); push!(ps.signs, s2[j]); j += 1
+        end
+
+        ps.rhs = rhs1 + rhs2 - rhs_adj
+        idx = _pol_alloc_scratch!(ps)
+        push!(ps.stack, Int32(-idx))
+        ps.stack_depth += 1
+    end
+
+        # Multiplication: mutate top of stack in-place
+    function pol_multiply!(ps::PolScratch, store::FlatEqStore, multiplier::Int)
+        ps.stack_depth >= 1 || error("pol stack underflow")
+        id = ps.stack[end]
+        if id > 0
+            _pol_materialize!(ps, store, id)
+            idx = _pol_alloc_scratch!(ps)
+            ps.stack[end] = Int32(-idx)
+        end
+        idx = -ps.stack[end]
+        scratch = ps.scratch_pool[idx]
+        for i in eachindex(scratch[2])
+            scratch[2][i] *= Int32(multiplier)
+        end
+        ps.scratch_pool[idx] = (scratch[1], scratch[2], scratch[3], scratch[4] * multiplier)
+    end
+
+        # Division: ceil divide, mutate top of stack in-place
+    function pol_divide!(ps::PolScratch, store::FlatEqStore, divisor::Int)
+        ps.stack_depth >= 1 || error("pol stack underflow")
+        id = ps.stack[end]
+        if id > 0
+            _pol_materialize!(ps, store, id)
+            idx = _pol_alloc_scratch!(ps)
+            ps.stack[end] = Int32(-idx)
+        end
+        idx = -ps.stack[end]
+        scratch = ps.scratch_pool[idx]
+        vars, coefs, signs, rhs = scratch
+        # Normalize first (should already be normalized, but ceil divide needs it)
+        for i in eachindex(coefs)
+            coefs[i] = Int32(ceil(coefs[i] / divisor))
+        end
+        ps.scratch_pool[idx] = (vars, coefs, signs, ceil(Int, rhs / divisor))
+    end
+
+        # Saturate: cap coefficients at rhs, mutate top of stack in-place
+    function pol_saturate!(ps::PolScratch, store::FlatEqStore)
+        ps.stack_depth >= 1 || error("pol stack underflow")
+        id = ps.stack[end]
+        if id > 0
+            _pol_materialize!(ps, store, id)
+            idx = _pol_alloc_scratch!(ps)
+            ps.stack[end] = Int32(-idx)
+        end
+        idx = -ps.stack[end]
+        scratch = ps.scratch_pool[idx]
+        coefs = scratch[2]
+        rhs = scratch[4]
+        for i in eachindex(coefs)
+            coefs[i] > rhs && (coefs[i] = Int32(rhs))
+        end
+    end
+
+        # Weaken: remove variable, mutate top of stack in-place
+    function pol_weaken!(ps::PolScratch, store::FlatEqStore, var::Int)
+        ps.stack_depth >= 1 || error("pol stack underflow")
+        id = ps.stack[end]
+        if id > 0
+            _pol_materialize!(ps, store, id)
+            idx = _pol_alloc_scratch!(ps)
+            ps.stack[end] = Int32(-idx)
+        end
+        idx = -ps.stack[end]
+        scratch = ps.scratch_pool[idx]
+        vars, coefs, signs, rhs = scratch
+        i = findfirst(==(Int32(var)), vars)
+        if i !== nothing
+            rhs -= coefs[i]
+            deleteat!(vars, i)
+            deleteat!(coefs, i)
+            deleteat!(signs, i)
+            ps.scratch_pool[idx] = (vars, coefs, signs, rhs)
+        end
+    end
+
+        # Finalize: pop result, remove nulls, optionally saturate, push to store
+    function pol_finalize_push!(ps::PolScratch, store::FlatEqStore, saturate_final::Bool)
+        ps.stack_depth >= 1 || error("pol stack underflow")
+        id = pop!(ps.stack)
+        ps.stack_depth -= 1
+
+        v, c, s, rhs, r = _pol_get_arrays(ps, store, id)
+
+        # Pass 1: normalize + remove nulls + write to store
+        rhs_adj = zero(Int32)
+        for i in r
+            c[i] == 0 && continue  # skip null lits
+            if c[i] < 0
+                push!(store.vars, v[i]); push!(store.coefs, -c[i]); push!(store.signs, !s[i])
+                rhs_adj += -c[i]
+            else
+                push!(store.vars, v[i]); push!(store.coefs, c[i]); push!(store.signs, s[i])
+            end
+        end
+        rhs += rhs_adj
+
+        # Pass 2: saturate if requested
+        if saturate_final
+            start_idx = length(store.coefs) - count(!=(0), c[k] for k in r) + 1
+            for i in start_idx:length(store.coefs)
+                store.coefs[i] > rhs && (store.coefs[i] = Int32(rhs))
+            end
+        end
+
+        push!(store.rhs, Int64(rhs))
+        push!(store.row_ptr, Int32(length(store.vars) + 1))
+
+        # Reset scratch for next POL
+        ps.next_scratch = 1
+    end
+
+# ══ End Flat POL Operations ═════════════════════════════════════════════════
+
+        # Flat POL evaluator: zero-copy replacement for solvepol + push_eq_normalized!
+        # Pushes result directly to store (no intermediate Eq/Lit allocations)
+    function solvepol_flat!(store::FlatEqStore, st, link::Vector{Int}, init::Int,
+                            varmap, ctrmap, nbopb)
+        ps = get_pol_scratch()
+        ps.stack_depth = 0
+        empty!(ps.stack)
+        ps.next_scratch = 1
+
+        # Parse initial equation ID
+        i = st[2]
+        id = i[1]==UInt8('@') ? ctrmap[String(view(i,2:length(i)))] : parse_int_bytes(i)
+        id < 0 && (id = init + id)
+
+        pol_push_eq!(ps, id)
+        push!(link, id)
+
+        weakvar = 0
+        lastsaturate = false
+
+        # Process POL expression
+        for j in 3:length(st)
+            i = st[j]
+            tok_eq(i, ";") && continue
+
+            if tok_eq(i, "+")
+                pol_add!(ps, store)
+                push!(link, -1)
+            elseif tok_eq(i, "*")
+                multiplier = link[end]
+                pol_multiply!(ps, store, multiplier)
+                push!(link, -2)
+            elseif tok_eq(i, "d")
+                divisor = link[end]
+                pol_divide!(ps, store, divisor)
+                push!(link, -3)
+            elseif tok_eq(i, "s")
+                if j == length(st)
+                    lastsaturate = true  # defer to finalize
+                else
+                    pol_saturate!(ps, store)
+                end
+                push!(link, -4)
+            elseif tok_eq(i, "w")
+                pol_weaken!(ps, store, weakvar)
+                push!(link, -5)
+            elseif !isdigit(Char(i[1])) && i[1] != UInt8('@') && i[1] != UInt8('-')
+                # Literal axiom
+                if length(st) > j && tok_eq(st[j+1], "w")
+                    weakvar = readvar(i, varmap)
+                    push!(link, -100 * weakvar - 99)
+                else
+                    sign = i[1] != UInt8('~')
+                    var = readvar(i, varmap)
+                    pol_push_literal!(ps, var, sign)
+                    push!(link, -100 * var - 99 - (sign ? 0 : 1))
+                end
+            elseif !tok_eq(i, "0")
+                # Constraint ID
+                id = i[1]==UInt8('@') ? ctrmap[String(view(i,2:length(i)))] : parse_int_bytes(i)
+                id < 1 && (id = init + id)
+                push!(link, id)
+                if !tok_in(st[j+1], ["*", "d"])
+                    pol_push_eq!(ps, id)
+                end
+            end
+        end
+
+        # Special case: single antecedent = ia
+        length(link) == 2 && (link[1] = -3)
+
+        # Finalize and push to store
+        pol_finalize_push!(ps, store, lastsaturate)
+    end
 
         # Evaluates a pol (polynomial combination) line and records its structure in `link`.
         # link encoding: positive values = constraint ids; negative sentinels below:
@@ -1630,7 +2070,7 @@ end; # using .Dumping # to save the import un comment this.
                 v = Int(sys.vars[k])
                 t.assi[v] != 0 && continue
                 sys.coefs[k] > s || continue
-                pushtrail!(t, Int32(v), Int32(i), sys.signs[k] ? Int8(1) : Int8(2))
+                pushtrail!(t, sys, Int32(v), Int32(i), sys.signs[k] ? Int8(1) : Int8(2))
             end
         end end
 
@@ -1655,11 +2095,12 @@ end; # using .Dumping # to save the import un comment this.
     @inline function ante_clear!(a::Ante)
         for i in a.list; a.flags[i] = false; end; empty!(a.list) end  # walk list to unset flags, then truncate
 
-    @inline function pushtrail!(t::Trail, v::Int32, eq::Int32, val::Int8)
+    @inline function pushtrail!(t::Trail, sys::PBSystem, v::Int32, eq::Int32, val::Int8)
         push!(t.var, v); push!(t.eq, eq)
         iv = Int(v)
         @inbounds t.pos[iv] = length(t.var)   # trail index of v (0 = unassigned)
-        @inbounds t.assi[iv] = val end
+        @inbounds t.assi[iv] = val
+        update_slack_on_assign!(t, sys, iv, val) end
 
     function fixante(systemlink::SystemLink, ante::Ante, i)
         for j in eachindex(systemlink[i])
@@ -1973,11 +2414,12 @@ end; # using .Dumping # to save the import un comment this.
 
         # Trail-based unit propagation.
     function propagate!(sys::PBSystem, t::Trail, prism, ante::Ante, conelits, rs::RupState, cone::Vector{Bool})
+        init_slack_cache!(t, sys)
         i = 1; n = length(sys.rhs)
         que = trues(n)                                # all constraints initially pending
         while i <= n
             if !inprism(i, prism) && que[i]
-                s = slack(sys, i, t.assi)
+                s = slack_cached(t, i)
                 if s < 0                               # falsified: record conflict and stop
                     conflicttrail(i, sys, t, ante, conelits, rs, Grim(), cone)
                     return
@@ -1988,7 +2430,7 @@ end; # using .Dumping # to save the import un comment this.
                     v = Int(sys.vars[k])
                     t.assi[v] != 0 && continue         # already assigned
                     sys.coefs[k] > s || continue       # coef too small to force propagation
-                    pushtrail!(t, Int32(v), Int32(i), sys.signs[k] ? Int8(1) : Int8(2))
+                    pushtrail!(t, sys, Int32(v), Int32(i), sys.signs[k] ? Int8(1) : Int8(2))
                     for j in varrange(sys, v)
                         eid = Int(sys.var_eqs[j])
                         que[eid] = true
@@ -2013,7 +2455,7 @@ end; # using .Dumping # to save the import un comment this.
         # Compute slack, propagate, re-activate triggered equations. Return true on conflict.
     @inline function process_eq!(i, init, sys, t, ante, conelits, cone, on_frontier, rs::RupState, mode)
         rev = (i == init)                  # reversed constraint for RUP check of init
-        s   = rev ? slack_reversed(sys, i, t.assi) : slack(sys, i, t.assi)
+        s   = rev ? slack_reversed_cached(t, i) : slack_cached(t, i)
         if s < 0                           # falsified: conflict found
             conflicttrail(i, sys, t, ante, conelits, rs, mode, cone; rev_init=init)
             return true
@@ -2023,7 +2465,7 @@ end; # using .Dumping # to save the import un comment this.
             t.assi[v] != 0 && continue     # already assigned
             sys.coefs[k] > s || continue   # coef too small to force propagation
             sign = sys.signs[k]
-            pushtrail!(t, Int32(v), Int32(i),
+            pushtrail!(t, sys, Int32(v), Int32(i),
                        rev ? (sign ? Int8(2) : Int8(1)) :
                              (sign ? Int8(1) : Int8(2)))            # assign variable
             for j in varrange(sys, v)
@@ -2041,6 +2483,7 @@ end; # using .Dumping # to save the import un comment this.
     function ruptrail(sys::PBSystem, init::Int, t::Trail,
                       ante::Ante, on_frontier::Vector{Bool},
                       cone::Vector{Bool}, conelits, prism, subrange, rs::RupState, mode=Grim())
+        init_slack_cache!(t, sys)
         fill!(rs.que, false)               # reset queue (may have stale trues from early return)
         empty!(rs.pq_prio.valtree); empty!(rs.pq_nonprio.valtree)  # BinaryHeap has no empty!, clear the internal vector
         for i in 1:init                    # seed both heaps with all eligible equations
@@ -2064,9 +2507,11 @@ end; # using .Dumping # to save the import un comment this.
         # enabling best-reason selection: when multiple constraints at the same level force the same
         # variable, the one already in cone/on_frontier is preferred as the Trail reason.
         # Among conflicts found in the same wave, the cone/on_frontier one is selected.
+        # DEAD CODE: BFS mode is no longer used. Kept for historical reference.
     function ruptrail_bfs(sys::PBSystem, init::Int, t::Trail,
                           ante::Ante, on_frontier::Vector{Bool},
                           cone::Vector{Bool}, conelits, prism, subrange, rs::RupState)
+        init_slack_cache!(t, sys)
         n_vars = length(rs.is_to_explain) - 1
         pending_reason = zeros(Int,  n_vars)               # best reason eq per variable (0 = none)
         pending_value  = zeros(Int8, n_vars)               # forced value per variable
@@ -2083,7 +2528,7 @@ end; # using .Dumping # to save the import un comment this.
             for i in current_wave
                 !rs.que[i] && continue                         # stale guard
                 rev = (i == init)
-                s = rev ? slack_reversed(sys, i, t.assi) : slack(sys, i, t.assi)
+                s = rev ? slack_reversed_cached(t, i) : slack_cached(t, i)
                 if s < 0
                     if best_conflict == 0 || (!cone[best_conflict] && cone[i])
                         best_conflict = i                      # prefer cone conflict
@@ -2116,7 +2561,7 @@ end; # using .Dumping # to save the import un comment this.
             empty!(current_wave)
             for v in pending_vars                              # commit all pending propagations
                 if t.assi[v] == 0
-                    pushtrail!(t, Int32(v), Int32(pending_reason[v]), pending_value[v])
+                    pushtrail!(t, sys, Int32(v), Int32(pending_reason[v]), pending_value[v])
                     for j in varrange(sys, v)
                         eid = Int(sys.var_eqs[j])
                         (eid <= init && eid != pending_reason[v]) || continue
@@ -2181,7 +2626,7 @@ end; # using .Dumping # to save the import un comment this.
         # to avoid Julia boxing mutable loop variables. Everything else is captured from getcone! scope.
         function do_rup!(i, subrange)
             ante_clear!(ante)
-            mode isa Bfs ? reset_to_base!(trail, base_trail, i) : reset!(trail)
+            mode isa Bfs ? reset_to_base!(trail, base_trail, sys, i) : reset!(trail)
             mode isa Bfs ? ruptrail_bfs(sys, i, trail, ante, on_frontier, cone, conelits, prism_bv, subrange, rs) :
                            ruptrail(sys, i, trail, ante, on_frontier, cone, conelits, prism_bv, subrange, rs, mode)
         end
@@ -2835,7 +3280,7 @@ end; # using .Dumping # to save the import un comment this.
 
 using StatProfilerHTML
 if PROFILE
-    throw("uncomment here to enable profiling")
+    # throw("uncomment here to enable profiling")
     @profilehtml main()
 elseif inst !== nothing
     # Subprocess mode: this process was spawned by the batch loop to handle one instance.
