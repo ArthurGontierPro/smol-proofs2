@@ -166,6 +166,12 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
                                    stdout=subout, stderr=subout),
                            wait=false)
                 wait(proc)
+                # timeout command exits with 124 (SIGTERM) or 137 (SIGKILL) on timeout
+                if proc.exitcode == 124 || proc.exitcode == 137
+                    msg = "Timeout after $(trimtimeout)s"
+                    printstyled("  $ins: $msg\n"; color=:red)
+                    open(proofs*ins*".err", "a") do f; println(f, msg) end
+                end
                 if isfile(subout)
                     out = read(subout, String)
                     !isempty(out) && (print(out); flush(stdout))
