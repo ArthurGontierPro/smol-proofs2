@@ -104,6 +104,41 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
         println("%OOM limit: ", maxinstmem_gb, " GB per subprocess, minfreemem: ", minfreemem ÷ 1024^3, " GB")
         done    = Threads.Atomic{Int}(0)
         t_start = time()
+        monitor_active = Threads.Atomic{Bool}(true)
+        # Independent OOM monitor: scans all trimnalyser.jl subprocesses every 10s and kills OOM ones.
+        # Runs on :interactive thread so worker saturation can't starve it.
+        Threads.@spawn :interactive begin
+            script_name = basename(@__FILE__)
+            while monitor_active[]
+                sleep(10)
+                try
+                    for entry in readdir("/proc")
+                        pid_str = entry
+                        all(isdigit, pid_str) || continue
+                        pid = parse(Int, pid_str)
+                        pid == getpid() && continue  # skip parent process
+                        cmdline_path = "/proc/$pid_str/cmdline"
+                        isfile(cmdline_path) || continue
+                        cmdline = read(cmdline_path, String)
+                        occursin(script_name, cmdline) || continue
+                        rss = process_rss_gb(pid)
+                        rss == 0.0 && continue
+                        if rss > maxinstmem_gb
+                            try
+                                kill(pid, 9)
+                                printstyled("  OOM KILL pid=$pid: $(round(rss; digits=1)) GB > $maxinstmem_gb GB\n"; color=:red)
+                            catch e
+                                # process may have exited between check and kill
+                            end
+                        elseif rss > maxinstmem_gb * 0.9
+                            printstyled("  MEM WATCH pid=$pid: $(round(rss; digits=1)) GB / $maxinstmem_gb GB\n"; color=:yellow)
+                        end
+                    end
+                catch e
+                    # /proc scan can race with process exit — ignore errors
+                end
+            end
+        end
         # Each instance runs in its own julia subprocess (single-threaded) so GC heaps are isolated:
         # no stop-the-world across instances. The outer @threads loop provides parallelism.
         # maxparse= and allgraphs are stripped: subprocess handles one instance, not a batch.
@@ -126,33 +161,6 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
                                           "JULIA_NUM_THREADS" => "1"),
                                    stdout=subout, stderr=subout),
                            wait=false)
-                # Kill the subprocess if it exceeds the per-instance RAM limit.
-                # Threads.@spawn puts the watcher in the shared pool — any free thread picks it up.
-                # @async binds to the spawning thread's scheduler; on a many-core cluster that thread
-                # stays busy with other iterations after each sleep(10) yield and the watcher starves.
-                local _proc = proc; local _ins = ins; local _pid = getpid(proc)
-                Threads.@spawn begin
-                    sleep(1)  # let subprocess start before first check
-                    check_count = 0
-                    while process_running(_proc)
-                        sleep(10)
-                        check_count += 1
-                        process_running(_proc) || break
-                        rss = process_rss_gb(_pid)
-                        if rss > maxinstmem_gb
-                            kill(_proc, 9)
-                            msg = "OOM killed: $(round(rss; digits=1)) GB > $maxinstmem_gb GB (checked $check_count times)"
-                            printstyled("  OOM KILL $_ins: $msg\n"; color=:red)
-                            open(proofs*_ins*".err", "a") do f; println(f, msg) end
-                            break
-                        elseif rss > maxinstmem_gb * 0.8
-                            printstyled("  MEM WATCH $_ins: $(round(rss; digits=1)) GB / $maxinstmem_gb GB\n"; color=:yellow)
-                        end
-                    end
-                    if check_count == 0
-                        printstyled("  WATCH BUG $_ins: watcher never entered loop (pid=$_pid)\n"; color=:magenta)
-                    end
-                end
                 wait(proc)
                 if isfile(subout)
                     out = read(subout, String)
@@ -174,6 +182,7 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
                         round(Int, eta), "min\n\n"; color=:magenta)
             end
         end
+        monitor_active[] = false  # stop the OOM monitor
         println("%Wall time: ", round(wall; digits=1), "s")
         end
 
