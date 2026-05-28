@@ -868,9 +868,9 @@ end; # using .Dumping # to save the import un comment this.
         coefs   :: Vector{Int32}   # flat literal coefficients
         signs   :: BitVector       # flat literal signs
         rhs     :: Vector{Int64}   # one rhs per equation
-        row_ptr :: Vector{Int32} end  # CSR row pointers, length = n_eqs+1; row_ptr[i]:row_ptr[i+1]-1 is eq i
+        row_ptr :: Vector{Int64} end  # CSR row pointers, length = n_eqs+1; row_ptr[i]:row_ptr[i+1]-1 is eq i
     
-    FlatEqStore() = FlatEqStore(Int32[], Int32[], BitVector(), Int64[], Int32[1])
+    FlatEqStore() = FlatEqStore(Int32[], Int32[], BitVector(), Int64[], Int64[1])
     function push_eq!(s::FlatEqStore, eq::Eq)
         for l in eq.lits
             push!(s.vars,  Int32(l.var))
@@ -878,7 +878,7 @@ end; # using .Dumping # to save the import un comment this.
             push!(s.signs, l.sign)
         end
         push!(s.rhs,     Int64(eq.rhs))
-        push!(s.row_ptr, Int32(s.row_ptr[end] + length(eq.lits))) end
+        push!(s.row_ptr, s.row_ptr[end] + length(eq.lits)) end
 
         # Normalises lits in-place (make all coefs positive) and pushes directly into the store.
         # Replaces the normcoefeq(eq) + push_eq!(store, eq) pair without allocating an Eq object.
@@ -896,7 +896,7 @@ end; # using .Dumping # to save the import un comment this.
             end
         end
         push!(s.rhs,     Int64(b))
-        push!(s.row_ptr, Int32(s.row_ptr[end] + length(lits))) end
+        push!(s.row_ptr, s.row_ptr[end] + length(lits)) end
 
     function get_eq(s::FlatEqStore, i::Int)
         r = Int(s.row_ptr[i]):Int(s.row_ptr[i+1])-1
@@ -990,7 +990,7 @@ end; # using .Dumping # to save the import un comment this.
         coefs   ::Vector{Int32}
         signs   ::BitVector
         rhs     ::Vector{Int64}
-        row_ptr ::Vector{Int32}
+        row_ptr ::Vector{Int64}
         # Inverse: variable → equations containing it
         var_ptr ::Vector{Int32}     # length = n_vars + 1
         var_eqs ::Vector{Int32} end # flat list of equation ids
@@ -1677,7 +1677,7 @@ end; # using .Dumping # to save the import un comment this.
         end
 
         push!(store.rhs, Int64(rhs))
-        push!(store.row_ptr, Int32(length(store.vars) + 1))
+        push!(store.row_ptr, length(store.vars) + 1)
 
         # Reset scratch for next POL
         ps.next_scratch = 1
