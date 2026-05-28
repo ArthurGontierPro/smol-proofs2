@@ -161,7 +161,7 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
                 # which adds up to ~18k OS threads with 192 concurrent subprocesses.
                 # addenv overrides JULIA_NUM_THREADS in case -t doesn't fully shadow it.
                 subout = proofs * ins * ".subout"
-                proc = run(pipeline(addenv(`julia -t1,1 $script $ins $subargs`,
+                proc = run(pipeline(addenv(`timeout $trimtimeout julia -t1,1 $script $ins $subargs`,
                                           "JULIA_NUM_THREADS" => "1"),
                                    stdout=subout, stderr=subout),
                            wait=false)
