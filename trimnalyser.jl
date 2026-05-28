@@ -125,10 +125,10 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
                         rss == 0.0 && continue
                         if rss > maxinstmem_gb
                             try
-                                kill(pid, 9)
+                                run(`kill -9 $pid`)
                                 printstyled("  OOM KILL pid=$pid: $(round(rss; digits=1)) GB > $maxinstmem_gb GB\n"; color=:red)
                             catch e
-                                # process may have exited between check and kill
+                                printstyled("  OOM KILL FAILED pid=$pid: $(round(rss; digits=1)) GB - $(sprint(showerror, e))\n"; color=:magenta)
                             end
                         elseif rss > maxinstmem_gb * 0.9
                             printstyled("  MEM WATCH pid=$pid: $(round(rss; digits=1)) GB / $maxinstmem_gb GB\n"; color=:yellow)
