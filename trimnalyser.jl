@@ -354,11 +354,7 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
         cone     = zeros(Bool, n)
         conelits = Dict{Int,Set{Int}}()
         trim_time = @elapsed begin
-            cone_timeout = getcone!(cone, conelits, sys, systemlink, nbopb, prism, redwitness, conclusion, obj, mode) === true
-        end
-        if cone_timeout
-            open(proofs*ins*".err", "a") do f; println(f, "getcone timeout after $(trimtimeout)s") end
-            return trunc(Int,parse_time),trunc(Int,trim_time),0,cone_stats,""
+            getcone!(cone, conelits, sys, systemlink, nbopb, prism, redwitness, conclusion, obj, mode)
         end
         writeout_trim(ins, trim_time, cone, nbopb, prefix)
         writeout_conelits(ins, sys, cone, conelits, prefix)
@@ -2198,14 +2194,9 @@ end; # using .Dumping # to save the import un comment this.
         red     = Red([], 0:0, [])                     # current red block being processed
         pfgl    = UnitRange{Int64}[]                   # deferred proof goals (ref not yet known to be in cone)
         newpfgl = true
-        t_cone_start = time()
         while newpfgl                                  # outer loop: retry deferred proof goals until stable
             newpfgl = false
             while !isempty(frontier)
-                if time() - t_cone_start > trimtimeout
-                    printstyled("  getcone timeout after $(trimtimeout)s — partial cone\n"; color=:red)
-                    return true
-                end
                 i = pop!(frontier)
                 on_frontier[i] || continue             # stale pop guard
                 on_frontier[i] = false                 # remove from queue (cone[i] already true since push)
