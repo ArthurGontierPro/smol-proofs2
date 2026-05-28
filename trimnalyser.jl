@@ -992,7 +992,7 @@ end; # using .Dumping # to save the import un comment this.
         rhs     ::Vector{Int64}
         row_ptr ::Vector{Int64}
         # Inverse: variable → equations containing it
-        var_ptr ::Vector{Int32}     # length = n_vars + 1
+        var_ptr ::Vector{Int64}     # length = n_vars + 1
         var_eqs ::Vector{Int32} end # flat list of equation ids
 
     mutable struct Trail
@@ -1125,7 +1125,7 @@ end; # using .Dumping # to save the import un comment this.
 
         var_count = zeros(Int32, n_vars)
         for v in vars; var_count[v] += 1; end
-        var_ptr = Vector{Int32}(undef, n_vars + 1)
+        var_ptr = Vector{Int64}(undef, n_vars + 1)
         var_ptr[1] = 1
         for v in 1:n_vars
             var_ptr[v+1] = var_ptr[v] + var_count[v]
