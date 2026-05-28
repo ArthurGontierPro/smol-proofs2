@@ -177,18 +177,18 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
     function allgraphinstances()
         list = String[]
         mkpath(proofs)
-        for (dir, pre, ext, fmt) in [
+        for (dir, pre, fext, fmt) in [
                 (SIPgraphpath*"LV/",                    "g",  "",     (p,t) -> "LVg$(p)g$(t)"),
                 (SIPgraphpath*"biochemicalReactions/",  "",   ".txt", (p,t) -> "bio$(p)$(t)") ]
             isdir(dir) || continue
             files = readdir(dir)
             # strip prefix and extension to get the numeric identifier
-            ids = [f[length(pre)+1 : end-length(ext)] for f in files
-                   if startswith(f, pre) && endswith(f, ext) && !isdir(dir*f)]
+            ids = [f[length(pre)+1 : end-length(fext)] for f in files
+                   if startswith(f, pre) && endswith(f, fext) && !isdir(dir*f)]
             # read node counts, filter by MAXNODES
             sizes = Dict{String,Int}()
             for id in ids
-                n = ladnodes(dir * pre * id * ext)
+                n = ladnodes(dir * pre * id * fext)
                 n !== nothing && n <= MAXNODES && (sizes[id] = n)
             end
             valid = collect(keys(sizes))
@@ -765,7 +765,7 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
     filesize(file) = stat(file).size
     inssize(file) = filesize(proofs*file*opb) + filesize(proofs*file*pbp)
     tryrm(s) = if isfile(s) rm(s) end
-    remove(s,c) = replace(s,c=>"")#deleteat!(s,findall(x->x==c,s))
+    remove(s,c) = replace(s,c=>"")
     const tabhead = "\\begin{tabular}{|cc|cc|c|c|c|}\\hline sizes & & &  & times (s) & & Instance\\\\\\hline\nopb & pbp & smol o & smol p & grim time (parse trim write verif) & veri time & \\\\\\hline"
     const tabfoot = "\\end{tabular}\\\\\n"
 
