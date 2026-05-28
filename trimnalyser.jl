@@ -37,15 +37,13 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
     const PACK      = "pack"      in ARGS  # tar.gz all .dot files in vis/ → vis.tar.gz (for cluster transfer)
     const RENDER    = "render"    in ARGS  # extract vis.tar.gz and render all .dot → .svg with neato
     const OVERWRITE = "overwrite" in ARGS  # re-trim even if .smol files are already complete
-    const MAXNODES  = begin
-        i = findfirst(x -> startswith(x, "maxnodes="), ARGS)
-        i !== nothing ? parse(Int, ARGS[i][10:end]) : typemax(Int)
-    end
-    const solvertimeout = begin i = findfirst(x -> startswith(x, "st="), ARGS); i !== nothing ? parse(Int, ARGS[i][4:end]) : 5   end  # st=N
-    const trimtimeout   = begin i = findfirst(x -> startswith(x, "tt="), ARGS); i !== nothing ? parse(Int, ARGS[i][4:end]) : 45  end  # tt=N
-    const minfreemem    = begin i = findfirst(x -> startswith(x, "minmem="), ARGS); i !== nothing ? parse(Int, ARGS[i][8:end]) * 1024^3 : (_cluster ? 100 : 4) * 1024^3 end  # minmem=N GB, default 500 on cluster / 4 locally
-    const maxinstmem_gb = begin i = findfirst(x -> startswith(x, "maxmem="), ARGS); i !== nothing ? parse(Float64, ARGS[i][8:end]) : (_cluster ? 50.0 : 8.0) end  # maxmem=N GB per subprocess, default 100 on cluster / 8 locally
-    using Random,DataStructures,Dates,Printf
+    argval(prefix, T, default) = (i = findfirst(x -> startswith(x, prefix), ARGS); i !== nothing ? parse(T, ARGS[i][length(prefix)+1:end]) : default)
+    const MAXNODES      = argval("maxnodes=", Int,     typemax(Int))
+    const solvertimeout = argval("st=",       Int,     5)                            # st=N
+    const trimtimeout   = argval("tt=",       Int,     45)                           # tt=N
+    const minfreemem    = argval("minmem=",   Int,     _cluster ? 100 : 4) * 1024^3 # minmem=N GB
+    const maxinstmem_gb = argval("maxmem=",   Float64, _cluster ? 50.0 : 8.0)       # maxmem=N GB per subprocess
+    using Random,DataStructures,Dates,Printf,Mmap
 
 
 # ══ Entry point ══════════════════════════════════════════════════════════════════════════
@@ -122,8 +120,11 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
                 # nCPUs/4 GC threads by default — 48 per subprocess on a 192-core machine,
                 # which adds up to ~18k OS threads with 192 concurrent subprocesses.
                 # addenv overrides JULIA_NUM_THREADS in case -t doesn't fully shadow it.
-                proc = run(addenv(`julia -t1,1 $script $ins $subargs`,
-                                  "JULIA_NUM_THREADS" => "1"); wait=false)
+                subout = proofs * ins * ".subout"
+                proc = run(pipeline(addenv(`julia -t1,1 $script $ins $subargs`,
+                                          "JULIA_NUM_THREADS" => "1"),
+                                   stdout=subout, stderr=subout),
+                           wait=false)
                 # Kill the subprocess if it exceeds the per-instance RAM limit.
                 # @async creates a lightweight task; wait(proc) yields so the task can run.
                 @async begin
@@ -141,6 +142,11 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
                     end
                 end
                 wait(proc)
+                if isfile(subout)
+                    out = read(subout, String)
+                    !isempty(out) && (print(out); flush(stdout))
+                    rm(subout)
+                end
             catch e
                 msg = sprint(showerror, e, catch_backtrace())
                 printstyled("  ERROR $ins: $msg\n"; color=:red)
@@ -467,6 +473,7 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
                     " & ", rpad(parse_time+trim_time+write_time+max(0,smol_verif_time),5),
                     " (", rpad(parse_time,4), rpad(trim_time,4), rpad(write_time,4), rpad(smol_verif_time,5), ")",
                     " & ", rpad(full_verif_time,5), " & ", f, " \\\\\\hline%", cone_s)
+            flush(stdout)
             return
         end
         printgreen(leftcarriage(31,prettybytes(filesize(proofs*f*opb*smol))))
@@ -980,46 +987,71 @@ end; # using .Dumping # to save the import un comment this.
     const _LINK_SOLI = Int[-21]  # soli
     const _LINK_SOLX = Int[-20]  # solx
 
+    # Contiguous byte view into the mmap'd file buffer — the token type returned by tokenize!.
+    # Safe as long as the mmap array stays alive (it is kept alive by readopb/readproof's local ref).
+    const ByteSpan = SubArray{UInt8,1,Vector{UInt8},Tuple{UnitRange{Int64}},true}
+
+    # Byte-level token comparison against a compile-time String literal (avoids String allocation).
+    @inline function tok_eq(v::AbstractVector{UInt8}, s::String)
+        n = ncodeunits(s)
+        length(v) == n || return false
+        @inbounds for i in 1:n
+            v[i] == codeunit(s, i) || return false
+        end
+        return true
+    end
+
+    @inline tok_in(v::AbstractVector{UInt8}, ss) = any(s -> tok_eq(v, s), ss)
+
+    # Parse a signed decimal integer from raw bytes — no String allocation on the hot path.
+    @inline function parse_int_bytes(v::AbstractVector{UInt8})
+        i = 1
+        @inbounds neg = v[1] == UInt8('-')
+        neg && (i = 2)
+        n = 0
+        @inbounds while i <= length(v)
+            n = n * 10 + (v[i] - UInt8('0'))
+            i += 1
+        end
+        return neg ? -n : n
+    end
+
     # Zero-allocation line tokenizer. Replaces both remove(ss,";") and split(ss,keepempty=false).
-    # Skips ';' characters inline so no intermediate String is allocated for semicolon stripping.
+    # Skips ';' characters inline so no intermediate allocation is needed for semicolon stripping.
     # Uses task_local_storage so the buffer persists across all iterations on the same task
     # (safe with @threads :greedy — each task owns its buffer and never shares it).
     # Returns a reference to the task-local buffer — valid only until the next tokenize! call on this task.
-    # AbstractString (not String) so it accepts SubString{String} from _scan_lines without copying.
-    function tokenize!(ss::AbstractString)
-        buf = get!(task_local_storage(), :tokbuf, SubString{String}[])
+    function tokenize!(ss::AbstractVector{UInt8})
+        buf = get!(task_local_storage(), :tokbuf, ByteSpan[])
         empty!(buf)
         i = 1
-        n = ncodeunits(ss)
+        n = length(ss)
         while i <= n
-            # skip whitespace and semicolons between tokens
             while i <= n
-                b = codeunit(ss, i)
+                @inbounds b = ss[i]
                 b == UInt8(' ') || b == UInt8('\t') || b == UInt8(';') ? i += 1 : break
             end
             i > n && break
             j = i
-            # scan token: stop at whitespace or semicolon
             while j <= n
-                b = codeunit(ss, j)
+                @inbounds b = ss[j]
                 b == UInt8(' ') || b == UInt8('\t') || b == UInt8(';') ? break : (j += 1)
             end
-            push!(buf, SubString(ss, i, j - 1))
+            push!(buf, @view ss[i:j-1])
             i = j
         end
         return buf
     end
 
-    # Iterate over lines of content as SubString{String} views — zero allocation per line.
-    # Drop-in for `for ss in eachline(io)`. Uses whole-file String to avoid per-line allocations
-    # from readline, which cause stop-the-world GC with multiple threads (45 GC pauses vs 1).
-    function _scan_lines(cb, content::String)
-        i = firstindex(content)
-        n = lastindex(content)
+    # Iterate over lines of content as byte views — zero copy per line.
+    # Uses mmap'd Vector{UInt8} to avoid the file→heap memcpy that read(file,String) incurs.
+    function _scan_lines(cb, content::AbstractVector{UInt8})
+        i = 1
+        n = length(content)
         while i <= n
-            j = findnext('\n', content, i)
+            j = findnext(==(UInt8('\n')), content, i)
             last = j === nothing ? n : j - 1
-            cb(SubString(content, i, last))
+            cb(@view content[i:last])
             i = j === nothing ? n + 1 : j + 1
         end
     end
@@ -1036,19 +1068,18 @@ end; # using .Dumping # to save the import un comment this.
         varmap = Dict{String,Int}()
         ctrmap = Dict{String, Int}()
         obj = ""
-        # read whole file as one String: one large allocation vs ~millions of small String objects from
-        # readline. The large allocation fits Julia's large-object pool cleanly; the small ones trigger
-        # stop-the-world GC on every thread whenever any thread allocates. minfreemem already gates this.
-        content_opb = read(path*file*opb, String)
+        # mmap the file: maps OS page cache directly into virtual address space — zero memcpy.
+        # Avoids the file→heap copy that read(file,String) incurs. minfreemem already gates this.
+        content_opb = Mmap.mmap(path*file*opb)
         c = 1
         _scan_lines(content_opb) do ss
-            if length(ss)==0 || ss[1]=='*' return end
+            if isempty(ss) || ss[1]==UInt8('*') return end
             st = tokenize!(ss)
-            if st[1][1]=='@'
-                ctrmap[st[1][2:end]] = c
+            if st[1][1]==UInt8('@')
+                ctrmap[String(view(st[1], 2:length(st[1])))] = c
                 st = st[2:end]
             end
-            if ss[1] == 'm'
+            if ss[1] == UInt8('m')
                 obj = readobj(st,varmap)
             else
                 readeq_push!(store, st, varmap, 1:2:length(st))
@@ -1067,8 +1098,8 @@ end; # using .Dumping # to save the import un comment this.
         n = length(range)
         resize!(lits, n)
         for i in range
-            coef = parse(Int,st[i])
-            sign = st[i+1][1]!='~'
+            coef = parse_int_bytes(st[i])
+            sign = st[i+1][1]!=UInt8('~')
             var = readvar(st[i+1],varmap)
             lits[(i - range.start)÷range.step+1] = Lit(coef,sign,var)
         end
@@ -1076,8 +1107,9 @@ end; # using .Dumping # to save the import un comment this.
         return lits end
 
     function readvar(s,varmap)
-        if s[1]==';' throw("; added as variable") end
-        tmp = s[1]=='~' ? s[2:end] : s
+        if s[1]==UInt8(';') throw("; added as variable") end
+        # String(view) needed for Dict{String,Int} key — one allocation per unique variable name.
+        tmp = s[1]==UInt8('~') ? String(view(s,2:length(s))) : String(s)
         if haskey(varmap,tmp)
             return varmap[tmp]
         end
@@ -1088,7 +1120,7 @@ end; # using .Dumping # to save the import un comment this.
     function readeq(st,varmap,r)
         lits = readlits(st,varmap,r.start:r.step:(r.stop-2))
         lits,b_corr = merge(lits)
-        return Eq(lits, parse(Int,st[r.start+2length(r)-1])-b_corr) end
+        return Eq(lits, parse_int_bytes(st[r.start+2length(r)-1])-b_corr) end
 
     # Like readeq but pushes directly into the store without allocating an Eq.
     # Used in readopb and hot proof-step paths where the eq is never needed as an object.
@@ -1097,7 +1129,7 @@ end; # using .Dumping # to save the import un comment this.
     function readeq_push!(store::FlatEqStore, st, varmap, r)
         lits = readlits(st, varmap, r.start:r.step:(r.stop-2))
         lits, b_corr = merge(lits)
-        b = parse(Int, st[r.start+2length(r)-1]) - b_corr
+        b = parse_int_bytes(st[r.start+2length(r)-1]) - b_corr
         if isempty(lits) && b != 1
             printstyled("  warning: unexpected empty eq with b=$b (expected contradiction b=1)\n"; color=:yellow)
         end
@@ -1150,48 +1182,43 @@ end; # using .Dumping # to save the import un comment this.
         output = conclusion = ""
         c = length(store)+1
         nbopb = length(store)
-        # Same rationale as readopb: whole-file read avoids per-line String allocations that cause
-        # stop-the-world GC across all threads.
-        content_pbp = read(path*file*pbp, String)
+        # mmap the proof file: same rationale as readopb — zero memcpy from OS page cache.
+        content_pbp = Mmap.mmap(path*file*pbp)
         _scan_lines(content_pbp) do ss
-            if length(ss)==0 return end
-            # ';' stripping is now handled inside tokenize! — no remove(ss,";") needed.
-            # ss is kept as-is for comment detection ('%') and assertion hint extraction.
-            i = findfirst(x->x=='%',ss)
+            if isempty(ss) return end
+            i = findfirst(==(UInt8('%')), ss)
             if i !== nothing
                 if i<3 return end
-                if ss[1]=='a'
-                    assertrecord[c] = ss[i+1:end]
+                if ss[1]==UInt8('a')
+                    assertrecord[c] = String(@view ss[i+1:end])
                 end
-                ss = ss[1:i-1]
+                ss = @view ss[1:i-1]
             end
             st = tokenize!(ss)
-            if st[1][1]=='@'
-                ctrmap[st[1][2:end]] = c
+            if st[1][1]==UInt8('@')
+                ctrmap[String(view(st[1], 2:length(st[1])))] = c
                 st = st[2:end]
             end
             type = st[1]
-            # All processX_push! functions push to both systemlink and store atomically,
-            # returning true. c is incremented once per push. red also returns new_c.
             pushed = false
-                if type == "rup" || type == "u" pushed = processrup_push!(store,st,varmap,systemlink)
-            elseif type == "pol" || type == "p" pushed = processpol_push!(store,st,varmap,systemlink,c,ctrmap,nbopb)
-            elseif type == "a"                  pushed = processassumption_push!(store,st,varmap,systemlink,assertrecord,c)
-            elseif type == "ia"                 pushed = processia_push!(store,st,varmap,ctrmap,c,systemlink)
-            elseif type == "red"                c,_ = processred(store,systemlink,st,varmap,redwitness,c); pushed = true
-            elseif type == "sol"                throw("trimmed SAT is the solution")
-            elseif type == "soli"               pushed = processsoli_push!(store,st,varmap,systemlink,c,prism,obj,solirecord)
-            elseif type == "solx"               pushed = processsolx_push!(store,st,varmap,systemlink,c,prism)
-            elseif type == "output"             output = remove(st[2],";")
-            elseif type == "conclusion"
-                conclusion = remove(st[2],";")
+                if tok_eq(type,"rup") || tok_eq(type,"u") pushed = processrup_push!(store,st,varmap,systemlink)
+            elseif tok_eq(type,"pol") || tok_eq(type,"p") pushed = processpol_push!(store,st,varmap,systemlink,c,ctrmap,nbopb)
+            elseif tok_eq(type,"a")                        pushed = processassumption_push!(store,st,varmap,systemlink,assertrecord,c)
+            elseif tok_eq(type,"ia")                       pushed = processia_push!(store,st,varmap,ctrmap,c,systemlink)
+            elseif tok_eq(type,"red")                      c,_ = processred(store,systemlink,st,varmap,redwitness,c); pushed = true
+            elseif tok_eq(type,"sol")                      throw("trimmed SAT is the solution")
+            elseif tok_eq(type,"soli")                     pushed = processsoli_push!(store,st,varmap,systemlink,c,prism,obj,solirecord)
+            elseif tok_eq(type,"solx")                     pushed = processsolx_push!(store,st,varmap,systemlink,c,prism)
+            elseif tok_eq(type,"output")                   output = String(st[2])
+            elseif tok_eq(type,"conclusion")
+                conclusion = String(st[2])
                 if conclusion == "BOUNDS"
-                    conclusion = ss
+                    conclusion = String(ss)
                 elseif !store_last_empty(store) && (conclusion == "SAT" || conclusion == "NONE")
                     throw("SAT Not supported..")
                 end
-            elseif !(type in ["%","*","wiplvl","w","setlvl","#","f","d","del","end","pseudo-Boolean"])
-                printstyled("  [warn] unknown line head (skipped): $ss\n"; color=:yellow)
+            elseif !tok_in(type, ["%","*","wiplvl","w","setlvl","#","f","d","del","end","pseudo-Boolean"])
+                printstyled("  [warn] unknown line head (skipped): $(String(ss))\n"; color=:yellow)
             end
             pushed && (c+=1)
         end
@@ -1225,7 +1252,7 @@ end; # using .Dumping # to save the import un comment this.
         # (The -(100v+99/100) scheme reserves negatives ≤ -99 for literals, leaving -1..-5 for operators.)
     function solvepol(st,store,link,init,varmap,ctrmap,nbopb)
         i = st[2]
-        id = i[1]=='@' ? ctrmap[i[2:end]] : parse(Int,i)
+        id = i[1]==UInt8('@') ? ctrmap[String(view(i,2:length(i)))] : parse_int_bytes(i)
         if id<0
             id = init+id                               # negative ids are relative to current position
         end
@@ -1239,18 +1266,18 @@ end; # using .Dumping # to save the import un comment this.
         lastsaturate = false                           # defer final saturate: apply after null-lit removal
         for j in 3:length(st)
             i=st[j]
-            if i == ";"
+            if tok_eq(i,";")
                 continue
-            elseif i=="+"
+            elseif tok_eq(i,"+")
                 push!(stack,addeq(pop!(stack),pop!(stack)))
                 push!(link,-1)
-            elseif i=="*"
+            elseif tok_eq(i,"*")
                 multiply!(first(stack),link[end])      # in-place: no new Eq/Vector{Lit} allocation
                 push!(link,-2)
-            elseif i=="d"
+            elseif tok_eq(i,"d")
                 divide!(first(stack),link[end])        # in-place: no new Eq/Vector{Lit} allocation
                 push!(link,-3)
-            elseif i=="s"
+            elseif tok_eq(i,"s")
                 if j == length(st)
                     lastsaturate = true                # last op: defer so null lits are removed first
                 else
@@ -1258,26 +1285,26 @@ end; # using .Dumping # to save the import un comment this.
                     saturate(first(stack))
                 end
                 push!(link,-4)
-            elseif i=="w"
+            elseif tok_eq(i,"w")
                 weaken!(first(stack),weakvar)          # in-place: no new Eq/Vector{Lit} allocation
                 push!(link,-5)
-            elseif !isdigit(i[1]) && i[1]!='@' && i[1]!='-'  # literal axiom: push unit constraint for this var
-                if length(st)>j && st[j+1] == "w"
+            elseif !isdigit(Char(i[1])) && i[1]!=UInt8('@') && i[1]!=UInt8('-')  # literal axiom
+                if length(st)>j && tok_eq(st[j+1],"w")
                     weakvar = readvar(i,varmap)
                     push!(link,-100weakvar-99)         # encode as weakening target (no stack push)
                 else
-                    sign = i[1]!='~'
+                    sign = i[1]!=UInt8('~')
                     var = readvar(i,varmap)
                     push!(stack,Eq([Lit(1,sign,var)],0))
                     push!(link,-100var-99sign)         # encode literal: -(100v+99) if positive, -(100v+100) if negative
                 end
-            elseif i!="0"
-                id = i[1]=='@' ? ctrmap[i[2:end]] : parse(Int,i)
+            elseif !tok_eq(i,"0")
+                id = i[1]==UInt8('@') ? ctrmap[String(view(i,2:length(i)))] : parse_int_bytes(i)
                 if id<1
                     id = init+id
                 end
                 push!(link,id)
-                if !(st[j+1] in ["*","d"])
+                if !tok_in(st[j+1],["*","d"])
                     push!(stack,get_eq(store,id))
                 end
             end
@@ -1384,14 +1411,13 @@ end; # using .Dumping # to save the import un comment this.
         return true end
 
     function readia(st,varmap,ctrmap,eq,c)
-        col = length(st)-1
-        if st[end-1] != ":" # coef lit coef lit >= b : id
+        if !tok_eq(st[end-1],":") # coef lit coef lit >= b : id
             eq = Eq([],0)
             printstyled("  [warn] missing ia ID: constraint will be ignored\n"; color=:yellow)
         else
             eq = readeq(st,varmap,2:2:length(st)-3)
             l = st[end]
-            l = l[1]=='@' ? ctrmap[l[2:end]] : parse(Int,l)
+            l = l[1]==UInt8('@') ? ctrmap[String(view(l,2:length(l)))] : parse_int_bytes(l)
             if l<0
                 l = c+l
             end
@@ -1399,9 +1425,9 @@ end; # using .Dumping # to save the import un comment this.
         return eq,l end
 
     function processred(store,systemlink,st,varmap,redwitness,redid)
-        i = findfirst(x->x==":",st)
+        i = findfirst(x->tok_eq(x,":"),st)
         eq = readeq(st[2:i],varmap)
-        j = findlast(x->x==":",st)
+        j = findlast(x->tok_eq(x,":"),st)
         if i==j                                        # no second ':' means no witness range — witness ends at "begin"
             j=length(st)
         end
@@ -1416,20 +1442,19 @@ end; # using .Dumping # to save the import un comment this.
         # Witness is stored as flat pairs: t[2k-1]=source variable, t[2k]=target variable.
         # sign on source encodes polarity of the substitution; sign on target encodes direction.
     function readwitness(st,varmap)
-        st = remove(st,"->")
-        st = remove(st,";")
+        st = filter(x -> !tok_eq(x,"->") && !tok_eq(x,";"), st)
         t = Vector{Lit}(undef,length(st))
         for i in 1:2:length(st)
             j = i+1
-            t[i] = Lit(0,st[i][1]!='~',readwitnessvar(st[i],varmap))  # source
-            t[j] = Lit(0,st[j][1]!='~',readwitnessvar(st[j],varmap))  # target
+            t[i] = Lit(0,st[i][1]!=UInt8('~'),readwitnessvar(st[i],varmap))  # source
+            t[j] = Lit(0,st[j][1]!=UInt8('~'),readwitnessvar(st[j],varmap))  # target
         end
         return t end
 
     function readwitnessvar(s,varmap)
-        if s=="0"
+        if tok_eq(s,"0")
             return 0           # constant 0
-        elseif s=="1"
+        elseif tok_eq(s,"1")
             return -1          # constant 1 (negative sentinel, not a real var id)
         else
             return readvar(s,varmap)
@@ -1469,7 +1494,7 @@ end; # using .Dumping # to save the import un comment this.
         end
         assi = zeros(Int8,length(varmap))
         for i in 2:length(st)-1
-            sign = st[i][1]!='~'
+            sign = st[i][1]!=UInt8('~')
             var = readvar(st[i],varmap)
             lits[i-1] = Lit(1,!sign,var)
             assi[var] = sign ? 1 : 2
@@ -2774,6 +2799,7 @@ else
     tee_task = Threads.@spawn :interactive while !eof(rd)
         data = readavailable(rd)
         write(orig_out, data)
+        flush(orig_out)
         write(logfile, data)
         flush(logfile)
     end
