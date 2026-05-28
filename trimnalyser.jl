@@ -44,8 +44,6 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
     const minfreemem    = argval("minmem=",   Int,     _cluster ? 100 : 4) * 1024^3 # minmem=N GB
     const maxinstmem_gb = argval("maxmem=",   Float64, _cluster ? 50.0 : 8.0)       # maxmem=N GB per subprocess
     using Random,DataStructures,Dates,Printf,Mmap
-
-
 # ══ Entry point ══════════════════════════════════════════════════════════════════════════
     function packdots()
         visdir = proofs * "vis/"
@@ -132,21 +130,27 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
                 # Threads.@spawn puts the watcher in the shared pool — any free thread picks it up.
                 # @async binds to the spawning thread's scheduler; on a many-core cluster that thread
                 # stays busy with other iterations after each sleep(10) yield and the watcher starves.
-                local _proc = proc; local _ins = ins
+                local _proc = proc; local _ins = ins; local _pid = getpid(proc)
                 Threads.@spawn begin
+                    sleep(1)  # let subprocess start before first check
+                    check_count = 0
                     while process_running(_proc)
                         sleep(10)
+                        check_count += 1
                         process_running(_proc) || break
-                        rss = process_rss_gb(getpid(_proc))
+                        rss = process_rss_gb(_pid)
                         if rss > maxinstmem_gb
                             kill(_proc, 9)
-                            msg = "OOM killed: $(round(rss; digits=1)) GB > $maxinstmem_gb GB"
+                            msg = "OOM killed: $(round(rss; digits=1)) GB > $maxinstmem_gb GB (checked $check_count times)"
                             printstyled("  OOM KILL $_ins: $msg\n"; color=:red)
                             open(proofs*_ins*".err", "a") do f; println(f, msg) end
                             break
                         elseif rss > maxinstmem_gb * 0.8
                             printstyled("  MEM WATCH $_ins: $(round(rss; digits=1)) GB / $maxinstmem_gb GB\n"; color=:yellow)
                         end
+                    end
+                    if check_count == 0
+                        printstyled("  WATCH BUG $_ins: watcher never entered loop (pid=$_pid)\n"; color=:magenta)
                     end
                 end
                 wait(proc)
@@ -740,6 +744,7 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
         println("}\\draw (\\x,\\y) node[noeudver] {};\n\\end{tikzpicture}") end
 
 # ══ Utilities ══════════════════════════════════════════════════════════════════════════
+    #
         # MemAvailable from /proc/meminfo includes reclaimable page cache, unlike Sys.free_memory() (MemFree only).
         # On a busy cluster reading large proof files, page cache can consume hundreds of GB, making MemFree
         # appear critically low while the system actually has plenty of usable memory.
@@ -812,7 +817,6 @@ end; # using .Dumping # to save the import un comment this.
         row_ptr :: Vector{Int32} end  # CSR row pointers, length = n_eqs+1; row_ptr[i]:row_ptr[i+1]-1 is eq i
     
     FlatEqStore() = FlatEqStore(Int32[], Int32[], BitVector(), Int64[], Int32[1])
-
     function push_eq!(s::FlatEqStore, eq::Eq)
         for l in eq.lits
             push!(s.vars,  Int32(l.var))
@@ -846,7 +850,7 @@ end; # using .Dumping # to save the import un comment this.
 
     Base.length(s::FlatEqStore)      = length(s.rhs)
     last_eq(s::FlatEqStore)          = get_eq(s, length(s))
-    # replicates isequal(system[end], Eq([],1)): last eq has zero lits and rhs==1
+        # replicates isequal(system[end], Eq([],1)): last eq has zero lits and rhs==1
     store_last_empty(s::FlatEqStore) = length(s) > 0 &&
                                        s.row_ptr[end] == s.row_ptr[end-1] &&
                                        s.rhs[end] == 1
@@ -895,7 +899,6 @@ end; # using .Dumping # to save the import un comment this.
         list ::Vector{Int} end# O(k) iteration; may contain stale (false) entries
 
     Ante(n::Int) = Ante(zeros(Bool, n), Int[])
-
     struct RupState                                    # reusable scratch buffers — allocated once in getcone
         que           ::BitVector                      # ruptrail equation queue
         pq_prio       ::BinaryMinHeap{Int}             # priority equations (cone/on_frontier)
@@ -910,7 +913,6 @@ end; # using .Dumping # to save the import un comment this.
     struct Grim end        # standard: proof-index sort in conflict analysis
     struct Clit end        # cone-first sort + essentials-aware filter in conflict analysis
     struct Bfs  end        # BFS propagation with wave-level reason selection (ruptrail_bfs)
-
     RupState(n_eqs::Int, n_vars::Int) = RupState(
         falses(n_eqs),
         BinaryMinHeap{Int}(),
@@ -988,7 +990,6 @@ end; # using .Dumping # to save the import un comment this.
     Base.length(sl::SystemLink) = length(sl.idx)
     Base.eachindex(sl::SystemLink) = 1:length(sl.idx)
     Base.isassigned(sl::SystemLink, i::Int) = 1 <= i <= length(sl.idx)
-
     @inline function _sl_singleton(t::Int)
         t == -1  ? _LINK_RUP  :
         t == -4  ? _LINK_RED  :
@@ -1034,6 +1035,7 @@ end; # using .Dumping # to save the import un comment this.
         return vec end
 
 # ══ Parser ══════════════════════════════════════════════════════════════════════════════
+    #
         # Pre-allocated singleton link vectors for rule types whose systemlink entries need no antecedents.
         # Singletons are safe to share ONLY if nothing pushes into them. _LINK_RUP is the exception:
         # ante_into_frontier! lazily replaces a RUP entry with a fresh vector on first cone visit,
@@ -1146,7 +1148,6 @@ end; # using .Dumping # to save the import un comment this.
         # readobj stores its result permanently (as obj), so it needs its own copy.
         # All other callers (readeq → normcoefeq → push_eq!) are done with lits before the next readlits call.
     readobj(st,varmap) = copy(readlits(st,varmap,2:2:length(st)))
-
     function readlits(st,varmap,range)
         # reuse a task-local buffer — safe because callers consume lits before the next readlits call.
         lits = get!(task_local_storage(), :litbuf, Lit[])
@@ -1597,7 +1598,7 @@ end; # using .Dumping # to save the import un comment this.
         return prism end
 
 # ══ Trimmer ═════════════════════════════════════════════════════════════════════════════
-
+    #
         # Level-0 base propagation: single forward pass through all constraints (OPB then PBP).
         # Monotone index order guarantees that if Cⱼ depends on a variable forced by Cᵢ (i<j),
         # then reason(v) = Cᵢ < Cⱼ. This makes init-based filtering in reset_to_base! safe:
@@ -2618,7 +2619,7 @@ end; # using .Dumping # to save the import un comment this.
         println(" >= ", sys.rhs[e]) end
 
 # ══ Solver & UNSAT core ═════════════════════════════════════════════════════════════════
-
+    #
         # Returns (node_count, path) for a LAD file, or nothing if unreadable.
     function ladnodes(path)
         isfile(path) || return nothing
