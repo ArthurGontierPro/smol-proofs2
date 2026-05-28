@@ -126,17 +126,20 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
                                    stdout=subout, stderr=subout),
                            wait=false)
                 # Kill the subprocess if it exceeds the per-instance RAM limit.
-                # @async creates a lightweight task; wait(proc) yields so the task can run.
-                @async begin
-                    while process_running(proc)
+                # Threads.@spawn puts the watcher in the shared pool — any free thread picks it up.
+                # @async binds to the spawning thread's scheduler; on a many-core cluster that thread
+                # stays busy with other iterations after each sleep(10) yield and the watcher starves.
+                local _proc = proc; local _ins = ins
+                Threads.@spawn begin
+                    while process_running(_proc)
                         sleep(10)
-                        process_running(proc) || break
-                        rss = process_rss_gb(getpid(proc))
+                        process_running(_proc) || break
+                        rss = process_rss_gb(getpid(_proc))
                         if rss > maxinstmem_gb
-                            kill(proc, 9)
+                            kill(_proc, 9)
                             msg = "OOM killed: $(round(rss; digits=1)) GB > $maxinstmem_gb GB"
-                            printstyled("  OOM KILL $ins: $msg\n"; color=:red)
-                            open(proofs*ins*".err", "a") do f; println(f, msg) end
+                            printstyled("  OOM KILL $_ins: $msg\n"; color=:red)
+                            open(proofs*_ins*".err", "a") do f; println(f, msg) end
                             break
                         end
                     end
