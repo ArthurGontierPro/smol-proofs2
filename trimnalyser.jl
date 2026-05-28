@@ -121,17 +121,21 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
                         isfile(cmdline_path) || continue
                         cmdline = read(cmdline_path, String)
                         occursin(script_name, cmdline) || continue
+                        # Extract instance name from cmdline (args are \0-separated)
+                        args = split(cmdline, '\0')
+                        instance = findfirst(a -> startswith(a, "LV") || startswith(a, "bio"), args)
+                        inst_name = instance !== nothing ? args[instance] : "?"
                         rss = process_rss_gb(pid)
                         rss == 0.0 && continue
                         if rss > maxinstmem_gb
                             try
                                 run(`kill -9 $pid`)
-                                printstyled("  OOM KILL pid=$pid: $(round(rss; digits=1)) GB > $maxinstmem_gb GB\n"; color=:red)
+                                printstyled("  OOM KILL $inst_name (pid=$pid): $(round(rss; digits=1)) GB > $maxinstmem_gb GB\n"; color=:red)
                             catch e
-                                printstyled("  OOM KILL FAILED pid=$pid: $(round(rss; digits=1)) GB - $(sprint(showerror, e))\n"; color=:magenta)
+                                printstyled("  OOM KILL FAILED $inst_name (pid=$pid): $(round(rss; digits=1)) GB - $(sprint(showerror, e))\n"; color=:magenta)
                             end
                         elseif rss > maxinstmem_gb * 0.9
-                            printstyled("  MEM WATCH pid=$pid: $(round(rss; digits=1)) GB / $maxinstmem_gb GB\n"; color=:yellow)
+                            printstyled("  MEM WATCH $inst_name (pid=$pid): $(round(rss; digits=1)) GB / $maxinstmem_gb GB\n"; color=:yellow)
                         end
                     end
                 catch e
