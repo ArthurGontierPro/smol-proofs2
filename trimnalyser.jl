@@ -110,7 +110,9 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
         # no stop-the-world across instances. The outer @threads loop provides parallelism.
         # maxparse= and allgraphs are stripped: subprocess handles one instance, not a batch.
         # Directory paths are stripped and proofs_abs is passed explicitly (absolute, cluster-safe).
-        subargs = filter(a -> a in Set(["solve","resolv","verif","render","profile"]), ARGS)
+        subargs = filter(a -> a in Set(["solve","resolv","verif","render","profile"]) ||
+                              startswith(a, "st=") || startswith(a, "tt=") ||
+                              startswith(a, "maxmem=") || startswith(a, "minmem="), ARGS)
         script   = basename(@__FILE__) #Base.abspath(@__FILE__)
         wall = @elapsed Threads.@threads :greedy for ins in list
             try
