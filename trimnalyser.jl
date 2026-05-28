@@ -103,6 +103,7 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
         list = ALLGRAPHS ? allgraphinstances() : getinstancesfromdir(proofs)
         n = length(list)
         println("%Running ", n, " instances on ", Threads.nthreads(), " thread(s)")
+        println("%OOM limit: ", maxinstmem_gb, " GB per subprocess, minfreemem: ", minfreemem ÷ 1024^3, " GB")
         done    = Threads.Atomic{Int}(0)
         t_start = time()
         # Each instance runs in its own julia subprocess (single-threaded) so GC heaps are isolated:
@@ -141,6 +142,8 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
                             printstyled("  OOM KILL $_ins: $msg\n"; color=:red)
                             open(proofs*_ins*".err", "a") do f; println(f, msg) end
                             break
+                        elseif rss > maxinstmem_gb * 0.8
+                            printstyled("  MEM WATCH $_ins: $(round(rss; digits=1)) GB / $maxinstmem_gb GB\n"; color=:yellow)
                         end
                     end
                 end
@@ -175,8 +178,8 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
         println("%Found ", length(list), " instances in ", proofs)
         return list end
 
-    # Enumerates all (pattern, target) instance names from the benchmark graph directories.
-    # Filters pairs where both graphs have <= MAXNODES nodes and pattern_size <= target_size.
+        # Enumerates all (pattern, target) instance names from the benchmark graph directories.
+        # Filters pairs where both graphs have <= MAXNODES nodes and pattern_size <= target_size.
     function allgraphinstances()
         list = String[]
         mkpath(proofs)
@@ -204,8 +207,7 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
         end
         RAND && shuffle!(list)
         println("%Generated ", length(list), " instances from benchmark graphs (maxnodes=", MAXNODES, ")")
-        return list
-    end
+        return list end
 
 # ══ Instance pipeline ══════════════════════════════════════════════════════════════════════════
     function pbpconclusion(ins, suffix="")
@@ -221,10 +223,10 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
 
     smol_complete(ins) = isfile(proofs*ins*opb*smol) && !isempty(pbpconclusion(ins, smol))
 
-    # Parse and trim a small proof to trigger JIT compilation of all hot paths before the
-    # real instance runs. Without this, JIT time is charged to the first instance's timings.
-    # Uses the smallest available opb+pbp pair; skips silently if none exists or if warmup fails.
-    # .smol files count as valid warmup targets — they are tiny and exercise the same code paths.
+        # Parse and trim a small proof to trigger JIT compilation of all hot paths before the
+        # real instance runs. Without this, JIT time is charged to the first instance's timings.
+        # Uses the smallest available opb+pbp pair; skips silently if none exists or if warmup fails.
+        # .smol files count as valid warmup targets — they are tiny and exercise the same code paths.
     function warmup_jit()
         candidates = filter(f -> ext(f)==opb && isfile(noext(f)*pbp), readdir(proofs, join=true))
         isempty(candidates) && return
@@ -242,8 +244,7 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
                      nbopb, prism, redwitness, conclusion, obj, Grim())
         catch
             # warmup failure is silent; real work proceeds regardless
-        end
-    end
+        end end
 
     function trimnalyseandcie(ins)
         # resume: if trimmed output already exists and the pbp tail confirms a complete write, skip entirely.
@@ -455,8 +456,8 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
         carriage = string(c-length(s))
         return "\r\033["*carriage*"G"*s end
 
-    # True when output can't use cursor positioning: either multiple threads in the same process
-    # (would interleave), or a single-threaded subprocess handling one instance in a batch run.
+        # True when output can't use cursor positioning: either multiple threads in the same process
+        # (would interleave), or a single-threaded subprocess handling one instance in a batch run.
     par() = Threads.nthreads() > 1 || inst !== nothing
 
     function printabline(f)
@@ -554,13 +555,13 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
         const T_GCLT_CVAR  = 45  # distinct variables in union of clit conelits
         const T_NCOLS      = 45
 
-    # Counts how many resolv iterations ran for ins by checking coreN .out files.
+        # Counts how many resolv iterations ran for ins by checking coreN .out files.
     function countresolveiters(ins)
         n = 0
         while isfile(proofs * ins * ".core$(n+1)" * ".out"); n += 1 end
         return n end
 
-    # Parses solver-written fields from the top of ins.out (appended by runsipsolver).
+        # Parses solver-written fields from the top of ins.out (appended by runsipsolver).
     function parsesolverstats(ins)
         outfile = proofs * ins * ".out"
         isfile(outfile) || return nothing
@@ -737,28 +738,26 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
         println("}\\draw (\\x,\\y) node[noeudver] {};\n\\end{tikzpicture}") end
 
 # ══ Utilities ══════════════════════════════════════════════════════════════════════════
-    # MemAvailable from /proc/meminfo includes reclaimable page cache, unlike Sys.free_memory() (MemFree only).
-    # On a busy cluster reading large proof files, page cache can consume hundreds of GB, making MemFree
-    # appear critically low while the system actually has plenty of usable memory.
+        # MemAvailable from /proc/meminfo includes reclaimable page cache, unlike Sys.free_memory() (MemFree only).
+        # On a busy cluster reading large proof files, page cache can consume hundreds of GB, making MemFree
+        # appear critically low while the system actually has plenty of usable memory.
     function available_memory()
         if isfile("/proc/meminfo")
             for line in eachline("/proc/meminfo")
                 startswith(line, "MemAvailable:") && return parse(Int, split(line)[2]) * 1024
             end
         end
-        return Sys.free_memory()  # fallback for non-Linux
-    end
+        return Sys.free_memory() end # fallback for non-Linux
 
-    # Read the resident set size of a subprocess from /proc/PID/status (Linux only).
-    # Returns GB; 0.0 if the process already exited or on non-Linux.
+        # Read the resident set size of a subprocess from /proc/PID/status (Linux only).
+        # Returns GB; 0.0 if the process already exited or on non-Linux.
     function process_rss_gb(pid::Int)
         try
             for line in eachline("/proc/$pid/status")
                 startswith(line, "VmRSS:") && return parse(Int, split(line)[2]) / 1024^2
             end
         catch end
-        return 0.0
-    end
+        return 0.0 end
 
     const argflags = Set(["bfs","clit","core","verif","no","rand","sort","clean","atable",
                           "profile","solve","resolv","allgraphs"])
@@ -799,17 +798,17 @@ end; # using .Dumping # to save the import un comment this.
         lits::Vector{Lit}   # literals (coef, sign, var triples), sorted by var
         rhs::Int end        # right-hand side constant (sum of satisfied lits >= rhs)
 
-    # Growable flat CSR store for equations parsed from .opb and .pbp files.
-    # Replaces Vector{Eq} as the persistent representation, eliminating millions of
-    # Eq/Vector{Lit}/Lit heap allocations. Processing functions (solvepol, processred, etc.)
-    # still use temporary Eq values for arithmetic — those are short-lived and collected quickly.
+        # Growable flat CSR store for equations parsed from .opb and .pbp files.
+        # Replaces Vector{Eq} as the persistent representation, eliminating millions of
+        # Eq/Vector{Lit}/Lit heap allocations. Processing functions (solvepol, processred, etc.)
+        # still use temporary Eq values for arithmetic — those are short-lived and collected quickly.
     mutable struct FlatEqStore
         vars    :: Vector{Int32}   # flat literal variable indices
         coefs   :: Vector{Int32}   # flat literal coefficients
         signs   :: BitVector       # flat literal signs
         rhs     :: Vector{Int64}   # one rhs per equation
-        row_ptr :: Vector{Int32}   # CSR row pointers, length = n_eqs+1; row_ptr[i]:row_ptr[i+1]-1 is eq i
-    end
+        row_ptr :: Vector{Int32} end  # CSR row pointers, length = n_eqs+1; row_ptr[i]:row_ptr[i+1]-1 is eq i
+    
     FlatEqStore() = FlatEqStore(Int32[], Int32[], BitVector(), Int64[], Int32[1])
 
     function push_eq!(s::FlatEqStore, eq::Eq)
@@ -819,11 +818,10 @@ end; # using .Dumping # to save the import un comment this.
             push!(s.signs, l.sign)
         end
         push!(s.rhs,     Int64(eq.rhs))
-        push!(s.row_ptr, Int32(s.row_ptr[end] + length(eq.lits)))
-    end
+        push!(s.row_ptr, Int32(s.row_ptr[end] + length(eq.lits))) end
 
-    # Normalises lits in-place (make all coefs positive) and pushes directly into the store.
-    # Replaces the normcoefeq(eq) + push_eq!(store, eq) pair without allocating an Eq object.
+        # Normalises lits in-place (make all coefs positive) and pushes directly into the store.
+        # Replaces the normcoefeq(eq) + push_eq!(store, eq) pair without allocating an Eq object.
     function push_eq_normalized!(s::FlatEqStore, lits::Vector{Lit}, b::Int)
         b2 = 0
         for l in lits
@@ -838,13 +836,11 @@ end; # using .Dumping # to save the import un comment this.
             end
         end
         push!(s.rhs,     Int64(b))
-        push!(s.row_ptr, Int32(s.row_ptr[end] + length(lits)))
-    end
+        push!(s.row_ptr, Int32(s.row_ptr[end] + length(lits))) end
 
     function get_eq(s::FlatEqStore, i::Int)
         r = Int(s.row_ptr[i]):Int(s.row_ptr[i+1])-1
-        Eq([Lit(Int(s.coefs[k]), s.signs[k], Int(s.vars[k])) for k in r], Int(s.rhs[i]))
-    end
+        Eq([Lit(Int(s.coefs[k]), s.signs[k], Int(s.vars[k])) for k in r], Int(s.rhs[i])) end
 
     Base.length(s::FlatEqStore)      = length(s.rhs)
     last_eq(s::FlatEqStore)          = get_eq(s, length(s))
@@ -907,8 +903,8 @@ end; # using .Dumping # to save the import un comment this.
         falsified_lits::Vector{Tuple{Int,Int,Int,Int32}} # conflicttrail: reused per-iteration buffer
         essentials    ::Dict{Int,Set{Int}} end           # forward-pass: essential vars per constraint (Clit only)
 
-    # Trimming mode — passed through getcone! → ruptrail → process_eq! → conflicttrail.
-    # To add a new mode: define a new struct + a conflicttrail method. Nothing else changes.
+        # Trimming mode — passed through getcone! → ruptrail → process_eq! → conflicttrail.
+        # To add a new mode: define a new struct + a conflicttrail method. Nothing else changes.
     struct Grim end        # standard: proof-index sort in conflict analysis
     struct Clit end        # cone-first sort + essentials-aware filter in conflict analysis
     struct Bfs  end        # BFS propagation with wave-level reason selection (ruptrail_bfs)
@@ -949,7 +945,6 @@ end; # using .Dumping # to save the import un comment this.
                 var_count[v] += 1
             end
         end
-
         return PBSystem(vars, coefs, signs, rhs, row_ptr, var_ptr, var_eqs) end
 
     eqrange(sys::PBSystem, e) = Int(sys.row_ptr[e]):Int(sys.row_ptr[e+1])-1
@@ -977,16 +972,16 @@ end; # using .Dumping # to save the import un comment this.
     @inline function setconelits(conelits, v, id)
         push!(get!(Set{Int}, conelits, id), v) end
 
-    # CSR storage for proof step link data — zero allocation per step during parsing.
-    # idx[i] encodes entry type:  k>0 → flat data at ptr[k]:ptr[k+1]-1
-    #                              k<0 → singleton rule type (shared const, never mutated)
-    #                              k=0 → mutable entry in extra (RUP cone + RED with refs)
+        # CSR storage for proof step link data — zero allocation per step during parsing.
+        # idx[i] encodes entry type:  k>0 → flat data at ptr[k]:ptr[k+1]-1
+        #                              k<0 → singleton rule type (shared const, never mutated)
+        #                              k=0 → mutable entry in extra (RUP cone + RED with refs)
     mutable struct SystemLink
         data::Vector{Int}             # flat concatenated link payloads for non-singleton steps
         ptr::Vector{Int}              # ptr[k]:ptr[k+1]-1 = k-th flat entry range in data
         idx::Vector{Int}              # one per proof step — see encoding above
-        extra::Dict{Int,Vector{Int}}  # mutable per-step vectors (RUP cone-visited, RED refs)
-    end
+        extra::Dict{Int,Vector{Int}} end # mutable per-step vectors (RUP cone-visited, RED refs)
+
     SystemLink() = SystemLink(Int[], Int[1], Int[], Dict{Int,Vector{Int}}())
     Base.length(sl::SystemLink) = length(sl.idx)
     Base.eachindex(sl::SystemLink) = 1:length(sl.idx)
@@ -1001,32 +996,33 @@ end; # using .Dumping # to save the import un comment this.
         t == -21 ? _LINK_SOLI :
         t == -20 ? _LINK_SOLX : error("unknown singleton type $t") end
 
-    # Read: zero allocation — returns a view into flat data or a shared singleton const.
+        # Read: zero allocation — returns a view into flat data or a shared singleton const.
     function Base.getindex(sl::SystemLink, i::Int)
         k = @inbounds sl.idx[i]
         k > 0 ? (@inbounds @view sl.data[sl.ptr[k]:sl.ptr[k+1]-1]) :
         k < 0 ? _sl_singleton(k) :
                  sl.extra[i] end
 
-    # Push singleton (RUP, RED, SOLI, SOLX, …): one Int stored, no heap allocation.
-    sl_push_singleton!(sl::SystemLink, type::Int) = push!(sl.idx, type)
+        # Push a proof rule with no antecedents (RUP, RED, SOLI, SOLX, …).
+        # Stores only the rule type — no heap allocation.
+    sl_push_rule!(sl::SystemLink, type::Int) = push!(sl.idx, type)
 
-    # Push non-singleton link with pre-built data vector (POL, IA, assumption-with-hints).
-    # Appends the data in-place — no copy of the source vector.
+        # Push a proof step with multiple antecedents (POL, assumption-with-hints).
+        # Appends the link data in-place — no copy of the source vector.
     function sl_push_data!(sl::SystemLink, link::AbstractVector{Int})
         k = length(sl.ptr)
         append!(sl.data, link)
         push!(sl.ptr, length(sl.data) + 1)
         push!(sl.idx, k) end
 
-    # Specialised two-element push (IA: [-3, antecedent]) — avoids a temp Vector{Int}.
-    function sl_push_2!(sl::SystemLink, a::Int, b::Int)
+        # Push an inequality addition (IA) rule: stores [-3, constraint_id] without a temp Vector.
+    function sl_push_ia!(sl::SystemLink, a::Int, b::Int)
         k = length(sl.ptr)
         push!(sl.data, a, b)
         push!(sl.ptr, length(sl.data) + 1)
         push!(sl.idx, k) end
 
-    # Return (creating if needed) the mutable Vector for step i (RUP cone / RED refs).
+        # Return (creating if needed) the mutable Vector for step i (RUP cone / RED refs).
     function sl_get_mut!(sl::SystemLink, i::Int)
         k = sl.idx[i]
         k == 0 && return sl.extra[i]
@@ -1036,10 +1032,10 @@ end; # using .Dumping # to save the import un comment this.
         return vec end
 
 # ══ Parser ══════════════════════════════════════════════════════════════════════════════
-    # Pre-allocated singleton link vectors for rule types whose systemlink entries need no antecedents.
-    # Singletons are safe to share ONLY if nothing pushes into them. _LINK_RUP is the exception:
-    # ante_into_frontier! lazily replaces a RUP entry with a fresh vector on first cone visit,
-    # so the singleton is only ever observed (never mutated) during parsing.
+        # Pre-allocated singleton link vectors for rule types whose systemlink entries need no antecedents.
+        # Singletons are safe to share ONLY if nothing pushes into them. _LINK_RUP is the exception:
+        # ante_into_frontier! lazily replaces a RUP entry with a fresh vector on first cone visit,
+        # so the singleton is only ever observed (never mutated) during parsing.
     const _LINK_RUP  = Int[-1]   # rup — sentinel; replaced lazily by ante_into_frontier! for cone steps
     const _LINK_RED  = Int[-4]   # inline red (no subproof)
     const _LINK_IARES = Int[-3]  # ia (single-antecedent pol) result
@@ -1048,23 +1044,22 @@ end; # using .Dumping # to save the import un comment this.
     const _LINK_SOLI = Int[-21]  # soli
     const _LINK_SOLX = Int[-20]  # solx
 
-    # Contiguous byte view into the mmap'd file buffer — the token type returned by tokenize!.
-    # Safe as long as the mmap array stays alive (it is kept alive by readopb/readproof's local ref).
+        # Contiguous byte view into the mmap'd file buffer — the token type returned by tokenize!.
+        # Safe as long as the mmap array stays alive (it is kept alive by readopb/readproof's local ref).
     const ByteSpan = SubArray{UInt8,1,Vector{UInt8},Tuple{UnitRange{Int64}},true}
 
-    # Byte-level token comparison against a compile-time String literal (avoids String allocation).
+        # Byte-level token comparison against a compile-time String literal (avoids String allocation).
     @inline function tok_eq(v::AbstractVector{UInt8}, s::String)
         n = ncodeunits(s)
         length(v) == n || return false
         @inbounds for i in 1:n
             v[i] == codeunit(s, i) || return false
         end
-        return true
-    end
+        return true end
 
     @inline tok_in(v::AbstractVector{UInt8}, ss) = any(s -> tok_eq(v, s), ss)
 
-    # Parse a signed decimal integer from raw bytes — no String allocation on the hot path.
+        # Parse a signed decimal integer from raw bytes — no String allocation on the hot path.
     @inline function parse_int_bytes(v::AbstractVector{UInt8})
         i = 1
         @inbounds neg = v[1] == UInt8('-')
@@ -1074,14 +1069,13 @@ end; # using .Dumping # to save the import un comment this.
             n = n * 10 + (v[i] - UInt8('0'))
             i += 1
         end
-        return neg ? -n : n
-    end
+        return neg ? -n : n end
 
-    # Zero-allocation line tokenizer. Replaces both remove(ss,";") and split(ss,keepempty=false).
-    # Skips ';' characters inline so no intermediate allocation is needed for semicolon stripping.
-    # Uses task_local_storage so the buffer persists across all iterations on the same task
-    # (safe with @threads :greedy — each task owns its buffer and never shares it).
-    # Returns a reference to the task-local buffer — valid only until the next tokenize! call on this task.
+        # Zero-allocation line tokenizer. Replaces both remove(ss,";") and split(ss,keepempty=false).
+        # Skips ';' characters inline so no intermediate allocation is needed for semicolon stripping.
+        # Uses task_local_storage so the buffer persists across all iterations on the same task
+        # (safe with @threads :greedy — each task owns its buffer and never shares it).
+        # Returns a reference to the task-local buffer — valid only until the next tokenize! call on this task.
     function tokenize!(ss::AbstractVector{UInt8})
         buf = get!(task_local_storage(), :tokbuf, ByteSpan[])
         empty!(buf)
@@ -1101,11 +1095,10 @@ end; # using .Dumping # to save the import un comment this.
             push!(buf, @view ss[i:j-1])
             i = j
         end
-        return buf
-    end
+        return buf end
 
-    # Iterate over lines of content as byte views — zero copy per line.
-    # Uses mmap'd Vector{UInt8} to avoid the file→heap memcpy that read(file,String) incurs.
+        # Iterate over lines of content as byte views — zero copy per line.
+        # Uses mmap'd Vector{UInt8} to avoid the file→heap memcpy that read(file,String) incurs.
     function _scan_lines(cb, content::AbstractVector{UInt8})
         i = 1
         n = length(content)
@@ -1114,8 +1107,7 @@ end; # using .Dumping # to save the import un comment this.
             last = j === nothing ? n : j - 1
             cb(@view content[i:last])
             i = j === nothing ? n + 1 : j + 1
-        end
-    end
+        end end
 
     function readinstance(path,file)
         store,varmap,ctrmap,obj = readopb(path,file)
@@ -1149,8 +1141,8 @@ end; # using .Dumping # to save the import un comment this.
         end
         return store,varmap,ctrmap,obj end
 
-    # readobj stores its result permanently (as obj), so it needs its own copy.
-    # All other callers (readeq → normcoefeq → push_eq!) are done with lits before the next readlits call.
+        # readobj stores its result permanently (as obj), so it needs its own copy.
+        # All other callers (readeq → normcoefeq → push_eq!) are done with lits before the next readlits call.
     readobj(st,varmap) = copy(readlits(st,varmap,2:2:length(st)))
 
     function readlits(st,varmap,range)
@@ -1184,10 +1176,10 @@ end; # using .Dumping # to save the import un comment this.
         lits,b_corr = merge(lits)
         return Eq(lits, parse_int_bytes(st[r.start+2length(r)-1])-b_corr) end
 
-    # Like readeq but pushes directly into the store without allocating an Eq.
-    # Used in readopb and hot proof-step paths where the eq is never needed as an object.
-    # Always pushes — an empty equation (no lits) IS the contradiction (e.g. >= 1 with no vars)
-    # and must occupy a slot in the store so that store and systemlink stay in sync.
+        # Like readeq but pushes directly into the store without allocating an Eq.
+        # Used in readopb and hot proof-step paths where the eq is never needed as an object.
+        # Always pushes — an empty equation (no lits) IS the contradiction (e.g. >= 1 with no vars)
+        # and must occupy a slot in the store so that store and systemlink stay in sync.
     function readeq_push!(store::FlatEqStore, st, varmap, r)
         lits = readlits(st, varmap, r.start:r.step:(r.stop-2))
         lits, b_corr = merge(lits)
@@ -1286,18 +1278,18 @@ end; # using .Dumping # to save the import un comment this.
         end
         return store,systemlink,redwitness,solirecord,assertrecord,output,conclusion end
 
-    # Hot-path version: pushes directly into the store without allocating an Eq.
-    # Always returns true: every systemlink push must have a matching store push to keep indices in sync.
-    # Uses _LINK_RUP singleton — zero allocation per RUP step during parsing (~millions per large file).
-    # ante_into_frontier! replaces the singleton with a fresh vector on first cone visit (lazy allocation).
+        # Hot-path version: pushes directly into the store without allocating an Eq.
+        # Always returns true: every systemlink push must have a matching store push to keep indices in sync.
+        # Uses _LINK_RUP singleton — zero allocation per RUP step during parsing (~millions per large file).
+        # ante_into_frontier! replaces the singleton with a fresh vector on first cone visit (lazy allocation).
     function processrup_push!(store,st,varmap,systemlink)
-        sl_push_singleton!(systemlink, -1)
+        sl_push_rule!(systemlink, -1)
         readeq_push!(store, st, varmap, 2:2:length(st))
         return true end
 
-    # Hot-path version: pushes directly into the store without allocating a final Eq.
-    # Uses a task-local link buffer so solvepol can extend it without repeated reallocation;
-    # one copy() at the end replaces the old pattern of capacity-doubling from [-2] to [-2,x,...].
+        # Hot-path version: pushes directly into the store without allocating a final Eq.
+        # Uses a task-local link buffer so solvepol can extend it without repeated reallocation;
+        # one copy() at the end replaces the old pattern of capacity-doubling from [-2] to [-2,x,...].
     function processpol_push!(store,st,varmap,systemlink,c,ctrmap,nbopb)
         linkbuf = get!(task_local_storage(), :linkbuf, Int[])
         empty!(linkbuf); push!(linkbuf, -2)
@@ -1389,9 +1381,9 @@ end; # using .Dumping # to save the import un comment this.
         end
         return lits2, b end
 
-    # Task-local pool of reusable Lit vectors for addeq intermediate results.
-    # After warmup (a few pol steps), the pool holds enough buffers for the max concurrent
-    # stack depth and allocation rate drops to near zero for addeq.
+        # Task-local pool of reusable Lit vectors for addeq intermediate results.
+        # After warmup (a few pol steps), the pool holds enough buffers for the max concurrent
+        # stack depth and allocation rate drops to near zero for addeq.
     get_lit_pool() = get!(task_local_storage(), :lit_pool, Vector{Lit}[])
 
     function addeq(eq1, eq2)
@@ -1461,14 +1453,14 @@ end; # using .Dumping # to save the import un comment this.
             end
             sl_push_data!(systemlink,link)
         else
-            sl_push_singleton!(systemlink,-30)
+            sl_push_rule!(systemlink,-30)
         end
         normcoefeq(eq); push_eq!(store,eq)
         return true end
 
     function processia_push!(store,st,varmap,ctrmap,c,systemlink)
         eq,l = readia(st,varmap,ctrmap,Eq([],0),c)
-        sl_push_2!(systemlink,-3,l)
+        sl_push_ia!(systemlink,-3,l)
         normcoefeq(eq); push_eq!(store,eq)
         return true end
 
@@ -1494,7 +1486,7 @@ end; # using .Dumping # to save the import un comment this.
             j=length(st)
         end
         w = readwitness(st[i+1:j],varmap)
-        sl_push_singleton!(systemlink, -4)
+        sl_push_rule!(systemlink, -4)
         normcoefeq(eq)
         push_eq!(store,eq)
         redwitness[redid] = Red(w,0:0,[])
@@ -1524,7 +1516,7 @@ end; # using .Dumping # to save the import un comment this.
             
 
     function processsoli_push!(store,st,varmap,systemlink,c,prism,obj,solirecord)
-        sl_push_singleton!(systemlink, -21)
+        sl_push_rule!(systemlink, -21)
         eq = findbound(store,st,c,varmap,prism,obj,solirecord)
         normcoefeq(eq); push_eq!(store,eq)
         return true end
@@ -1582,7 +1574,7 @@ end; # using .Dumping # to save the import un comment this.
         return assi end
 
     function processsolx_push!(store,st,varmap,systemlink,c,prism)
-        sl_push_singleton!(systemlink, -20)
+        sl_push_rule!(systemlink, -20)
         eq = solbreakingctr(store,st,c,varmap,prism)
         normcoefeq(eq); push_eq!(store,eq)
         return true end
@@ -1622,9 +1614,9 @@ end; # using .Dumping # to save the import un comment this.
             end
         end end
 
-    # Forward pass: variable w is essential in constraint e if removing it makes e infeasible
-    # (total coef - coef_w < rhs[e]). Essential vars must stay in conelits — weakening them out
-    # would make the constraint unsatisfiable and break the proof. Only called for Clit mode.
+        # Forward pass: variable w is essential in constraint e if removing it makes e infeasible
+        # (total coef - coef_w < rhs[e]). Essential vars must stay in conelits — weakening them out
+        # would make the constraint unsatisfiable and break the proof. Only called for Clit mode.
     function compute_essentials!(essentials::Dict{Int,Set{Int}}, sys::PBSystem)
         for e in 1:length(sys.rhs)
             total = sum(sys.coefs[k] for k in eqrange(sys, e); init=zero(Int32))
@@ -1990,7 +1982,7 @@ end; # using .Dumping # to save the import un comment this.
         end
         printstyled("  [error] propagate! found no conflict\n"; color=:red) end
 
-    # Push eid into the right heap if not already queued.
+        # Push eid into the right heap if not already queued.
     @inline function activate!(eid, rs::RupState, cone, on_frontier)
         rs.que[eid] && return              # already in a heap, skip
         rs.que[eid] = true
@@ -1998,7 +1990,7 @@ end; # using .Dumping # to save the import un comment this.
         else                        push!(rs.pq_nonprio, eid)  # non-priority: new to cone
         end end
 
-    # Compute slack, propagate, re-activate triggered equations. Return true on conflict.
+        # Compute slack, propagate, re-activate triggered equations. Return true on conflict.
     @inline function process_eq!(i, init, sys, t, ante, conelits, cone, on_frontier, rs::RupState, mode)
         rev = (i == init)                  # reversed constraint for RUP check of init
         s   = rev ? slack_reversed(sys, i, t.assi) : slack(sys, i, t.assi)
@@ -2124,12 +2116,12 @@ end; # using .Dumping # to save the import un comment this.
         cone[j] && return                             # already in cone (scheduled or processed)
         on_frontier[j] = true; cone[j] = true; push!(frontier, j) end
 
-    # Expand the frontier with all active antecedents; optionally record them in systemlink.
+        # Expand the frontier with all active antecedents; optionally record them in systemlink.
     @inline function ante_into_frontier!(ante::Ante, frontier, on_frontier, cone)
         for j in ante.list; ante.flags[j] || continue; push_frontier!(frontier, on_frontier, cone, j); end end
-    # Variant that records antecedents in systemlink[idx] for the writer.
-    # sl_get_mut! lazily upgrades the singleton idx entry to a mutable extra vector on first visit,
-    # so parsing pays zero allocation per RUP step and only cone steps (a tiny fraction) allocate.
+        # Variant that records antecedents in systemlink[idx] for the writer.
+        # sl_get_mut! lazily upgrades the singleton idx entry to a mutable extra vector on first visit,
+        # so parsing pays zero allocation per RUP step and only cone steps (a tiny fraction) allocate.
     @inline function ante_into_frontier!(ante::Ante, frontier, on_frontier, cone, systemlink, idx)
         link = sl_get_mut!(systemlink, idx)
         for j in ante.list; ante.flags[j] || continue; push!(link, j); push_frontier!(frontier, on_frontier, cone, j); end end
@@ -2255,8 +2247,7 @@ end; # using .Dumping # to save the import un comment this.
                 end
             end
         end
-        fixredsystemlink(systemlink, cone, prism, nbopb)  # propagate subproof antecedents up to red declarations
-    end
+        fixredsystemlink(systemlink, cone, prism, nbopb) end # propagate subproof antecedents up to red declarations
 
     function getfirstcontradiction(sys::PBSystem, prism)
         assi = zeros(Int8, length(sys.var_ptr) - 1)
@@ -2626,17 +2617,16 @@ end; # using .Dumping # to save the import un comment this.
 
 # ══ Solver & UNSAT core ═════════════════════════════════════════════════════════════════
 
-    # Returns (node_count, path) for a LAD file, or nothing if unreadable.
+        # Returns (node_count, path) for a LAD file, or nothing if unreadable.
     function ladnodes(path)
         isfile(path) || return nothing
         n = tryparse(Int, readline(path))
         n === nothing && return nothing
-        return n
-    end
+        return n end
 
-    # Returns (pattern_file_path, target_file_path) for an instance name.
-    # For ins.coreN, returns the LAD files written by the previous iteration.
-    # For original bio*/LV* instances, returns the benchmark graph files.
+        # Returns (pattern_file_path, target_file_path) for an instance name.
+        # For ins.coreN, returns the LAD files written by the previous iteration.
+        # For original bio*/LV* instances, returns the benchmark graph files.
     function parsegraphfiles(ins)
         m = match(r"^(.+)\.core(\d+)$", ins)
         if m !== nothing
@@ -2657,11 +2647,10 @@ end; # using .Dumping # to save the import un comment this.
             base = SIPgraphpath * "LV/"
             return base * "g" * pat, base * "g" * tar
         end
-        return nothing, nothing
-    end
+        return nothing, nothing end
 
-    # Reads a LAD format graph: first line = n, then n lines of "degree nb1 nb2 ..." (0-indexed neighbors).
-    # Returns 1-indexed adjacency list Vector{Vector{Int}}.
+        # Reads a LAD format graph: first line = n, then n lines of "degree nb1 nb2 ..." (0-indexed neighbors).
+        # Returns 1-indexed adjacency list Vector{Vector{Int}}.
     function readlad(path)
         adj = Vector{Vector{Int}}()
         open(path, "r") do f
@@ -2671,10 +2660,9 @@ end; # using .Dumping # to save the import un comment this.
                 push!(adj, [parse(Int, p) + 1 for p in parts[2:end]])
             end
         end
-        return adj
-    end
+        return adj end
 
-    # Parses "x{p}_{t}" (0-indexed) → (p+1, t+1). Returns nothing if name doesn't match.
+        # Parses "x{p}_{t}" (0-indexed) → (p+1, t+1). Returns nothing if name doesn't match.
     function parsevarname(name)
         length(name) < 3 && return nothing
         name[1] == 'x'   || return nothing
@@ -2683,11 +2671,10 @@ end; # using .Dumping # to save the import un comment this.
         p = tryparse(Int, name[2:u-1])
         t = tryparse(Int, name[u+1:end])
         (p === nothing || t === nothing) && return nothing
-        return p + 1, t + 1
-    end
+        return p + 1, t + 1 end
 
-    # Extracts core pattern nodes P and target nodes T from OPB cone constraints,
-    # restricted to variables kept by conelits (weakened-out variables are excluded).
+        # Extracts core pattern nodes P and target nodes T from OPB cone constraints,
+        # restricted to variables kept by conelits (weakened-out variables are excluded).
     function corenodes(sys::PBSystem, cone::Vector{Bool}, varmap_inv::Vector{String},
                        conelits::Dict{Int,Set{Int}}, nbopb::Int)
         P = Set{Int}(); T = Set{Int}()
@@ -2702,12 +2689,11 @@ end; # using .Dumping # to save the import un comment this.
                 push!(P, pt[1]); push!(T, pt[2])
             end
         end
-        return sort!(collect(P)), sort!(collect(T))
-    end
+        return sort!(collect(P)), sort!(collect(T)) end
 
-    # Writes a DOT file for a graph. core_set nodes are green, others red.
-    # LAD format stores each edge once (asymmetric) — symmetrise before writing.
-    # For graphs with many nodes, node labels are hidden to reduce clutter.
+        # Writes a DOT file for a graph. core_set nodes are green, others red.
+        # LAD format stores each edge once (asymmetric) — symmetrise before writing.
+        # For graphs with many nodes, node labels are hidden to reduce clutter.
     function writedot(path, adj, core_set)
         n = length(adj)
         large = n > 300
@@ -2728,10 +2714,9 @@ end; # using .Dumping # to save the import un comment this.
                 println(f, "  $i -- $j [color=\"$ec\"];")
             end
             println(f, "}")
-        end
-    end
+        end end
 
-    # Writes a LAD file for the induced subgraph on core (sorted 1-indexed node list).
+        # Writes a LAD file for the induced subgraph on core (sorted 1-indexed node list).
     function writecoreladfile(path, adj, core)
         core_set = Set(core)
         old2new  = Dict(v => i - 1 for (i, v) in enumerate(core))  # 0-indexed for LAD format
@@ -2741,12 +2726,11 @@ end; # using .Dumping # to save the import un comment this.
                 neighbors = [old2new[u] for u in adj[v] if u in core_set]
                 println(f, length(neighbors), " ", join(neighbors, " "))
             end
-        end
-    end
+        end end
 
-    # Runs the Glasgow SIP solver on pat_lad/tar_lad, writing proof to proofs/out_prefix.{opb,pbp}.
-    # Solver stdout/stderr are appended to out_prefix.{out,err} (tryrm clears them beforehand for the original instance).
-    # Returns true if both output files were produced.
+        # Runs the Glasgow SIP solver on pat_lad/tar_lad, writing proof to proofs/out_prefix.{opb,pbp}.
+        # Solver stdout/stderr are appended to out_prefix.{out,err} (tryrm clears them beforehand for the original instance).
+        # Returns true if both output files were produced.
     function runsipsolver(out_prefix, pat_lad, tar_lad)
         isfile(sipsolverpath) || (printstyled("  solver not found: $sipsolverpath\n"; color=:red); return false)
         errfile = proofs*out_prefix*".err"
@@ -2766,12 +2750,11 @@ end; # using .Dumping # to save the import un comment this.
                 tryrm(errfile)
             end
         end
-        return isfile(proofs*out_prefix*opb) && isfile(proofs*out_prefix*pbp)
-    end
+        return isfile(proofs*out_prefix*opb) && isfile(proofs*out_prefix*pbp) end
 
-    # Runs the solver on the core LAD files produced by writeunsatcore, then trims the result.
-    # Iterates until fixpoint (core node counts stop shrinking) or solver fails.
-    # Instances are named ins.core1, ins.core2, ... ; LADs chain naturally from each trim.
+        # Runs the solver on the core LAD files produced by writeunsatcore, then trims the result.
+        # Iterates until fixpoint (core node counts stop shrinking) or solver fails.
+        # Instances are named ins.core1, ins.core2, ... ; LADs chain naturally from each trim.
     function resolvecore(ins)
         cur_pat = proofs * "vis/" * ins * ".core.pat.lad"
         cur_tar = proofs * "vis/" * ins * ".core.tar.lad"
@@ -2806,8 +2789,7 @@ end; # using .Dumping # to save the import un comment this.
             writeout_verif(core_ins, smol_verif_time, full_verif_time)
             cur_pat = proofs * "vis/" * core_ins * ".core.pat.lad"
             cur_tar = proofs * "vis/" * core_ins * ".core.tar.lad"
-        end
-    end
+        end end
 
     function writeunsatcore(ins, sys::PBSystem, cone::Vector{Bool},
                             conelits::Dict{Int,Set{Int}}, varmap_inv::Vector{String}, nbopb::Int)
@@ -2832,8 +2814,7 @@ end; # using .Dumping # to save the import un comment this.
                 # printstyled("  neato not found — install graphviz to render $svg\n"; color=:yellow) 
             end
         end
-        return "  $ins core: $(length(P))/$(length(adj_p)) pat nodes, $(length(T))/$(length(adj_t)) tar nodes"
-    end
+        return "  $ins core: $(length(P))/$(length(adj_p)) pat nodes, $(length(T))/$(length(adj_t)) tar nodes" end
 
 # ══ Run ══════════════════════════════════════════════════════════════════════════════════
 
