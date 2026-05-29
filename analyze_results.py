@@ -16,11 +16,12 @@ def load_and_clean_data(csv_path):
     """Load CSV and convert boolean/numeric columns."""
     df = pd.read_csv(csv_path)
 
-    # Convert boolean columns
+    # Convert boolean columns - handle both string and actual boolean
     bool_cols = ['is_sat', 'is_unsat', 'has_proof', 'proof_truncated', 'has_error']
     for col in bool_cols:
         if col in df.columns:
-            df[col] = df[col].map({'true': True, 'false': False})
+            # Handle both 'true'/'false' strings and actual True/False
+            df[col] = df[col].map({'true': True, 'false': False, True: True, False: False, 'True': True, 'False': False})
 
     return df
 
