@@ -26,13 +26,13 @@ const CSV_COLUMNS = [
     # Verification
     "veri_smol_time", "veri_total_time",
     "veri_opb_size", "veri_pbp_size", "veri_total_size",
-    # Brim
-    "brim_time",
-    "brim_opb_size", "brim_pbp_size", "brim_total_size",
     # Solver stats (if available)
     "pattern_vertices", "target_vertices", "runtime_ms", "status",
+    # UNSAT core statistics (if core files exist)
+    "core_pattern_nodes", "core_target_nodes", "core_pattern_total", "core_target_total",
     # Instance classification
     "is_sat", "is_unsat", "has_proof",
+    "skip_reason", "proof_truncated", "truncation_reason",
     # Error tracking
     "has_error", "error_type", "error_details",
     # Resolv iterations
@@ -154,6 +154,73 @@ function count_resolv_iterations(proofdir, instance)
     return n
 end
 
+# Parse LAD file to get node count (first line of LAD format)
+function parse_lad_node_count(filepath)
+    isfile(filepath) || return nothing
+    try
+        return parse(Int, readline(filepath))
+    catch
+        return nothing
+    end
+end
+
+# Get UNSAT core statistics from vis/ directory LAD files
+function get_core_stats(proofdir, instance)
+    vis_dir = joinpath(proofdir, "vis")
+    isdir(vis_dir) || return (nothing, nothing, nothing, nothing)
+
+    core_pat = joinpath(vis_dir, instance * ".core.pat.lad")
+    core_tar = joinpath(vis_dir, instance * ".core.tar.lad")
+    pat = joinpath(vis_dir, instance * ".pat.lad")  # original pattern
+    tar = joinpath(vis_dir, instance * ".tar.lad")  # original target
+
+    core_pat_nodes = parse_lad_node_count(core_pat)
+    core_tar_nodes = parse_lad_node_count(core_tar)
+    pat_total = parse_lad_node_count(pat)
+    tar_total = parse_lad_node_count(tar)
+
+    return (core_pat_nodes, core_tar_nodes, pat_total, tar_total)
+end
+
+# Detect skip reason from .err file and missing proof data
+function detect_skip_reason(err_filepath, has_proof, status_val)
+    # Check if SAT
+    if status_val == "SAT"
+        return "SAT"
+    end
+
+    # Check err file for skip reasons
+    if isfile(err_filepath)
+        content = read(err_filepath, String)
+        occursin("proof truncated: no conclusion", content) && return "truncated_no_conclusion"
+        occursin("proof truncated: output line missing", content) && return "truncated_no_output"
+        occursin("proof truncated", content) && return "truncated"
+    end
+
+    # If UNSAT but no proof, likely timed out during solve/trim
+    if status_val == "UNSAT" && !has_proof
+        return "no_proof_generated"
+    end
+
+    return ""
+end
+
+# Get verification file sizes from .opb.smol and .pbp.smol files
+function get_verification_sizes(proofdir, instance)
+    veri_opb = veri_pbp = veri_total = nothing
+
+    # Get actual smol file sizes
+    opb_smol = joinpath(proofdir, instance * ".opb.smol")
+    pbp_smol = joinpath(proofdir, instance * ".pbp.smol")
+    if isfile(opb_smol) && isfile(pbp_smol)
+        veri_opb = filesize(opb_smol)
+        veri_pbp = filesize(pbp_smol)
+        veri_total = veri_opb + veri_pbp
+    end
+
+    return (veri_opb, veri_pbp, veri_total)
+end
+
 function aggregate_results(proofdir::String, output_csv::String)
     println("Scanning directory: $proofdir")
 
@@ -239,15 +306,11 @@ function aggregate_results(proofdir::String, output_csv::String)
             # Verification
             push!(row, get(data, "veri_smol_time", ""))
             push!(row, get(data, "veri_total_time", ""))
-            push!(row, get(data, "veri_opb_size", ""))
-            push!(row, get(data, "veri_pbp_size", ""))
-            push!(row, get(data, "veri_total_size", ""))
-
-            # Brim
-            push!(row, get(data, "brim_time", ""))
-            push!(row, get(data, "brim_opb_size", ""))
-            push!(row, get(data, "brim_pbp_size", ""))
-            push!(row, get(data, "brim_total_size", ""))
+            # Get verification file sizes from actual smol files
+            veri_opb, veri_pbp, veri_total = get_verification_sizes(proofdir, instance)
+            push!(row, veri_opb !== nothing ? veri_opb : "")
+            push!(row, veri_pbp !== nothing ? veri_pbp : "")
+            push!(row, veri_total !== nothing ? veri_total : "")
 
             # Solver stats
             push!(row, get(data, "pattern_vertices", ""))
@@ -255,6 +318,13 @@ function aggregate_results(proofdir::String, output_csv::String)
             push!(row, get(data, "runtime_ms", ""))
             status_val = get(data, "status", "")
             push!(row, status_val == "" ? "" : "\"$status_val\"")
+
+            # UNSAT core statistics
+            core_pat, core_tar, pat_total, tar_total = get_core_stats(proofdir, instance)
+            push!(row, core_pat !== nothing ? core_pat : "")
+            push!(row, core_tar !== nothing ? core_tar : "")
+            push!(row, pat_total !== nothing ? pat_total : "")
+            push!(row, tar_total !== nothing ? tar_total : "")
 
             # Instance classification
             # is_sat: solver found SAT
@@ -266,6 +336,14 @@ function aggregate_results(proofdir::String, output_csv::String)
             push!(row, is_sat ? "true" : "false")
             push!(row, is_unsat ? "true" : "false")
             push!(row, has_proof ? "true" : "false")
+
+            # Skip reason and truncation detection
+            skip_reason = detect_skip_reason(err_file, has_proof, status_val)
+            proof_truncated = startswith(skip_reason, "truncated")
+            truncation_reason = proof_truncated ? skip_reason : ""
+            push!(row, skip_reason == "" ? "" : "\"$skip_reason\"")
+            push!(row, proof_truncated ? "true" : "false")
+            push!(row, truncation_reason == "" ? "" : "\"$truncation_reason\"")
 
             # Error tracking
             push!(row, has_error ? "true" : "false")

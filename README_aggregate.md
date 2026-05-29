@@ -69,15 +69,9 @@ The script generates a CSV file with the following columns:
 ### Verification Results
 - `veri_smol_time` - Smol verification time (seconds)
 - `veri_total_time` - Total verification time (seconds)
-- `veri_opb_size` - Verification OPB size (bytes)
-- `veri_pbp_size` - Verification PBP size (bytes)
+- `veri_opb_size` - Verification OPB size (bytes) - from .opb.smol file
+- `veri_pbp_size` - Verification PBP size (bytes) - from .pbp.smol file
 - `veri_total_size` - Total verification size (bytes)
-
-### Brim (Backward Trimming) Results
-- `brim_time` - Brim time (seconds)
-- `brim_opb_size` - Brim OPB size (bytes)
-- `brim_pbp_size` - Brim PBP size (bytes)
-- `brim_total_size` - Total brim size (bytes)
 
 ### Solver Statistics (if available)
 - `pattern_vertices` - Pattern graph vertices
@@ -85,10 +79,19 @@ The script generates a CSV file with the following columns:
 - `runtime_ms` - Solver runtime (milliseconds)
 - `status` - Solver status (SAT/UNSAT/TIMEOUT/etc.)
 
+### UNSAT Core Statistics
+- `core_pattern_nodes` - Number of pattern nodes in UNSAT core (from vis/*.core.pat.lad)
+- `core_target_nodes` - Number of target nodes in UNSAT core (from vis/*.core.tar.lad)
+- `core_pattern_total` - Total pattern nodes (from vis/*.pat.lad)
+- `core_target_total` - Total target nodes (from vis/*.tar.lad)
+
 ### Instance Classification
 - `is_sat` - Boolean: true if solver found SAT (no proof to trim)
 - `is_unsat` - Boolean: true if solver found UNSAT (proof should exist)
 - `has_proof` - Boolean: true if proof exists and was trimmed (has grim_total_time)
+- `skip_reason` - Reason instance was skipped: SAT, truncated_no_conclusion, truncated_no_output, truncated, no_proof_generated
+- `proof_truncated` - Boolean: true if proof file was incomplete/truncated
+- `truncation_reason` - Specific truncation reason if proof_truncated is true
 
 ### Error Tracking
 - `has_error` - Boolean: true if instance had an error
@@ -102,8 +105,11 @@ The script generates a CSV file with the following columns:
 
 The script reads:
 - `.out` files - Main output statistics
-- `.err` files - Error messages and diagnostics
+- `.err` files - Error messages, diagnostics, and skip reasons
 - `.coreN.out` files - Resolv iteration detection
+- `.opb.smol` / `.pbp.smol` files - Verification file sizes
+- `vis/*.core.pat.lad` / `vis/*.core.tar.lad` - UNSAT core sizes
+- `vis/*.pat.lad` / `vis/*.tar.lad` - Original graph sizes
 
 ## Notes
 
