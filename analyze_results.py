@@ -720,15 +720,14 @@ def generate_html_report(df, stats, output_path):
             html_parts.append("<h2>🔍 Instances with Solver Search</h2>")
             html_parts.append(f"<p>Showing {len(search_df):,} instances where solver performed search (solver_nodes > 0)</p>")
 
-            # Constraint reduction for search instances
-            html_parts.append("<h3>Constraint Reduction (Search Instances Only)</h3>")
-            if 'inp_total_nbeq' in search_df.columns and 'grim_total_cone' in search_df.columns:
-                valid_data = search_df[search_df['inp_total_nbeq'].notna() & search_df['grim_total_cone'].notna()]
+            # Helper function to create search plots
+            def create_search_plot(df, x_col, y_col, title, x_label, y_label, hover_x, hover_y):
+                valid_data = df[df[x_col].notna() & df[y_col].notna()]
                 if not valid_data.empty:
-                    fig_search = go.Figure()
-                    fig_search.add_trace(go.Scatter(
-                        x=valid_data['inp_total_nbeq'],
-                        y=valid_data['grim_total_cone'],
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(
+                        x=valid_data[x_col],
+                        y=valid_data[y_col],
                         mode='markers',
                         marker=dict(
                             size=4,
@@ -739,10 +738,10 @@ def generate_html_report(df, stats, output_path):
                             opacity=0.3
                         ),
                         text=valid_data['instance'],
-                        hovertemplate='%{text}<br>Input: %{x:,}<br>Cone: %{y:,}<br>Nodes: %{marker.color:,}<extra></extra>'
+                        hovertemplate=f'%{{text}}<br>{hover_x}: %{{x:,}}<br>{hover_y}: %{{y:,}}<br>Nodes: %{{marker.color:,}}<extra></extra>'
                     ))
-                    max_val = max(valid_data['inp_total_nbeq'].max(), valid_data['grim_total_cone'].max())
-                    fig_search.add_trace(go.Scatter(
+                    max_val = max(valid_data[x_col].max(), valid_data[y_col].max())
+                    fig.add_trace(go.Scatter(
                         x=[1, max_val],
                         y=[1, max_val],
                         mode='lines',
@@ -751,62 +750,105 @@ def generate_html_report(df, stats, output_path):
                         showlegend=True,
                         hoverinfo='skip'
                     ))
-                    fig_search.update_layout(
-                        title='Constraint Reduction (Search Instances): Input vs Cone',
-                        xaxis_title='Input Constraints',
-                        yaxis_title='Cone Constraints',
+                    fig.update_layout(
+                        title=title,
+                        xaxis_title=x_label,
+                        yaxis_title=y_label,
                         xaxis_type='log',
                         yaxis_type='log',
                         hovermode='closest',
                         height=500
                     )
-                    html_parts.append('<div class="plot-container">')
-                    html_parts.append(fig_search.to_html(full_html=False, include_plotlyjs=False))
-                    html_parts.append('</div>')
+                    return fig
+                return None
 
-            # Variable reduction for search instances
-            html_parts.append("<h3>Variable Reduction (Search Instances Only)</h3>")
-            if 'inp_variables' in search_df.columns and 'grim_cone_variables' in search_df.columns:
-                valid_data = search_df[search_df['inp_variables'].notna() & search_df['grim_cone_variables'].notna()]
-                if not valid_data.empty:
-                    fig_search_var = go.Figure()
-                    fig_search_var.add_trace(go.Scatter(
-                        x=valid_data['inp_variables'],
-                        y=valid_data['grim_cone_variables'],
-                        mode='markers',
-                        marker=dict(
-                            size=4,
-                            color=valid_data['solver_nodes'],
-                            colorscale='RdYlGn_r',
-                            showscale=True,
-                            colorbar=dict(title='Solver Nodes'),
-                            opacity=0.3
-                        ),
-                        text=valid_data['instance'],
-                        hovertemplate='%{text}<br>Input Variables: %{x:,}<br>Cone Variables: %{y:,}<br>Nodes: %{marker.color:,}<extra></extra>'
-                    ))
-                    max_val = max(valid_data['inp_variables'].max(), valid_data['grim_cone_variables'].max())
-                    fig_search_var.add_trace(go.Scatter(
-                        x=[1, max_val],
-                        y=[1, max_val],
-                        mode='lines',
-                        line=dict(dash='dash', color='gray', width=2),
-                        name='No reduction',
-                        showlegend=True,
-                        hoverinfo='skip'
-                    ))
-                    fig_search_var.update_layout(
-                        title='Variable Reduction (Search Instances): Input vs Cone',
-                        xaxis_title='Input Variables',
-                        yaxis_title='Cone Variables',
-                        xaxis_type='log',
-                        yaxis_type='log',
-                        hovermode='closest',
-                        height=500
-                    )
-                    html_parts.append('<div class="plot-container">')
-                    html_parts.append(fig_search_var.to_html(full_html=False, include_plotlyjs=False))
-                    html_parts.append('</div>')
+            # Total proof size reduction
+            html_parts.append("<h3>Total Proof Size Reduction (Search Instances)</h3>")
+            fig = create_search_plot(search_df, 'inp_total_size', 'grim_total_size',
+                                    'Total Proof Size Reduction (Search Instances): Input vs Trimmed',
+                                    'Input Total Size (bytes)', 'Trimmed Total Size (bytes)',
+                                    'Input Size', 'Grim Size')
+            if fig:
+                html_parts.append('<div class="plot-container">')
+                html_parts.append(fig.to_html(full_html=False, include_plotlyjs=False))
+                html_parts.append('</div>')
+
+            # OPB size reduction
+            html_parts.append("<h3>OPB Proof Size Reduction (Search Instances)</h3>")
+            fig = create_search_plot(search_df, 'inp_opb_size', 'grim_opb_size',
+                                    'OPB File Size Reduction (Search Instances): Input vs Trimmed',
+                                    'Input OPB Size (bytes)', 'Trimmed OPB Size (bytes)',
+                                    'Input OPB', 'Grim OPB')
+            if fig:
+                html_parts.append('<div class="plot-container">')
+                html_parts.append(fig.to_html(full_html=False, include_plotlyjs=False))
+                html_parts.append('</div>')
+
+            # PBP size reduction
+            html_parts.append("<h3>PBP Proof Size Reduction (Search Instances)</h3>")
+            fig = create_search_plot(search_df, 'inp_pbp_size', 'grim_pbp_size',
+                                    'PBP File Size Reduction (Search Instances): Input vs Trimmed',
+                                    'Input PBP Size (bytes)', 'Trimmed PBP Size (bytes)',
+                                    'Input PBP', 'Grim PBP')
+            if fig:
+                html_parts.append('<div class="plot-container">')
+                html_parts.append(fig.to_html(full_html=False, include_plotlyjs=False))
+                html_parts.append('</div>')
+
+            # Constraint reduction
+            html_parts.append("<h3>Constraint Reduction (Search Instances)</h3>")
+            fig = create_search_plot(search_df, 'inp_total_nbeq', 'grim_total_cone',
+                                    'Constraint Reduction (Search Instances): Input vs Cone',
+                                    'Input Constraints', 'Cone Constraints',
+                                    'Input', 'Cone')
+            if fig:
+                html_parts.append('<div class="plot-container">')
+                html_parts.append(fig.to_html(full_html=False, include_plotlyjs=False))
+                html_parts.append('</div>')
+
+            # Variable reduction
+            html_parts.append("<h3>Variable Reduction (Search Instances)</h3>")
+            fig = create_search_plot(search_df, 'inp_variables', 'grim_cone_variables',
+                                    'Variable Reduction (Search Instances): Input vs Cone',
+                                    'Input Variables', 'Cone Variables',
+                                    'Input Variables', 'Cone Variables')
+            if fig:
+                html_parts.append('<div class="plot-container">')
+                html_parts.append(fig.to_html(full_html=False, include_plotlyjs=False))
+                html_parts.append('</div>')
+
+            # Literal reduction
+            html_parts.append("<h3>Literal Reduction (Search Instances)</h3>")
+            fig = create_search_plot(search_df, 'inp_literals', 'grim_cone_literals',
+                                    'Literal Reduction (Search Instances): Input vs Cone',
+                                    'Input Literals', 'Cone Literals',
+                                    'Input Literals', 'Cone Literals')
+            if fig:
+                html_parts.append('<div class="plot-container">')
+                html_parts.append(fig.to_html(full_html=False, include_plotlyjs=False))
+                html_parts.append('</div>')
+
+            # Pattern graph core reduction
+            html_parts.append("<h3>Pattern Graph Core Reduction (Search Instances)</h3>")
+            fig = create_search_plot(search_df, 'pattern_vertices', 'core_pattern_nodes',
+                                    'Pattern Graph Core Reduction (Search Instances): Original vs Core',
+                                    'Pattern Vertices', 'Core Pattern Vertices',
+                                    'Pattern Vertices', 'Core Vertices')
+            if fig:
+                html_parts.append('<div class="plot-container">')
+                html_parts.append(fig.to_html(full_html=False, include_plotlyjs=False))
+                html_parts.append('</div>')
+
+            # Target graph core reduction
+            html_parts.append("<h3>Target Graph Core Reduction (Search Instances)</h3>")
+            fig = create_search_plot(search_df, 'target_vertices', 'core_target_nodes',
+                                    'Target Graph Core Reduction (Search Instances): Original vs Core',
+                                    'Target Vertices', 'Core Target Vertices',
+                                    'Target Vertices', 'Core Vertices')
+            if fig:
+                html_parts.append('<div class="plot-container">')
+                html_parts.append(fig.to_html(full_html=False, include_plotlyjs=False))
+                html_parts.append('</div>')
 
     # Top 10 lists
     html_parts.append("<h2>🏆 Top 10 Lists</h2>")
