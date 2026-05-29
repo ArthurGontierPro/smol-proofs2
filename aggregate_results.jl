@@ -27,7 +27,7 @@ const CSV_COLUMNS = [
     "veri_smol_time", "veri_total_time",
     "veri_opb_size", "veri_pbp_size", "veri_total_size",
     # Solver stats (if available)
-    "pattern_vertices", "target_vertices", "runtime_ms", "status",
+    "pattern_vertices", "target_vertices", "runtime_ms", "status", "solver_nodes", "solver_propagations",
     # UNSAT core statistics (if core files exist)
     "core_pattern_nodes", "core_target_nodes", "core_pattern_total", "core_target_total",
     # Instance classification
@@ -106,6 +106,8 @@ function parse_out_file(filepath)
         occursin("target_vertices", line)    && (data["target_vertices"] = tryparse(Int, match(r"=\s*(\d+)", line).captures[1]))
         occursin("runtime", line)            && (data["runtime_ms"] = tryparse(Int, match(r"=\s*(\d+)", line).captures[1]))
         occursin("status", line)             && (data["status"] = match(r"=\s*(\w+)", line).captures[1])
+        match(r"^nodes = (\d+)", line) !== nothing && (data["solver_nodes"] = tryparse(Int, match(r"^nodes = (\d+)", line).captures[1]))
+        match(r"^propagations = (\d+)", line) !== nothing && (data["solver_propagations"] = tryparse(Int, match(r"^propagations = (\d+)", line).captures[1]))
     end
 
     return data
@@ -318,6 +320,8 @@ function aggregate_results(proofdir::String, output_csv::String)
             push!(row, get(data, "runtime_ms", ""))
             status_val = get(data, "status", "")
             push!(row, status_val == "" ? "" : "\"$status_val\"")
+            push!(row, get(data, "solver_nodes", ""))
+            push!(row, get(data, "solver_propagations", ""))
 
             # UNSAT core statistics
             core_pat, core_tar, pat_total, tar_total = get_core_stats(proofdir, instance)
