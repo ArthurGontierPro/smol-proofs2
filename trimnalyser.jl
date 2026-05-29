@@ -688,7 +688,7 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
             end
             push!(table,res)
         end
-        printpoints2Dlog(table, T_GRIM_CONE, T_GRIM_NBEQ, "grim CONE", "grim NBEQ")
+        # printpoints2Dlog(table, T_GRIM_CONE, T_GRIM_NBEQ, "grim CONE", "grim NBEQ")
         printratios(table)
         # resolv iteration counts — inferred from coreN .out file existence
         iters = [countresolveiters(t[1]) for t in table if !occursin(".core", t[1])]
@@ -3198,7 +3198,7 @@ end; # using .Dumping # to save the import un comment this.
             open(errfile, "a") do ferr
                 run(pipeline(
                     ignorestatus(`timeout $solvertimeout $sipsolverpath
-                        --prove $(proofs*out_prefix) --no-clique-detection --format lad $pat_lad $tar_lad`),
+                        --prove $(proofs*out_prefix) --no-clique-detection --no-supplementals --format lad $pat_lad $tar_lad`),
                     stdout=fout, stderr=ferr))
             end
         end
