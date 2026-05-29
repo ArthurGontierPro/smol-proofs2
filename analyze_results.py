@@ -713,6 +713,101 @@ def generate_html_report(df, stats, output_path):
             html_parts.append(fig6.to_html(full_html=False, include_plotlyjs=False))
             html_parts.append('</div>')
 
+    # Instances with solver search (solver_nodes > 0)
+    if not proof_df.empty and 'solver_nodes' in proof_df.columns:
+        search_df = proof_df[proof_df['solver_nodes'] > 0]
+        if not search_df.empty:
+            html_parts.append("<h2>🔍 Instances with Solver Search</h2>")
+            html_parts.append(f"<p>Showing {len(search_df):,} instances where solver performed search (solver_nodes > 0)</p>")
+
+            # Constraint reduction for search instances
+            html_parts.append("<h3>Constraint Reduction (Search Instances Only)</h3>")
+            if 'inp_total_nbeq' in search_df.columns and 'grim_total_cone' in search_df.columns:
+                valid_data = search_df[search_df['inp_total_nbeq'].notna() & search_df['grim_total_cone'].notna()]
+                if not valid_data.empty:
+                    fig_search = go.Figure()
+                    fig_search.add_trace(go.Scatter(
+                        x=valid_data['inp_total_nbeq'],
+                        y=valid_data['grim_total_cone'],
+                        mode='markers',
+                        marker=dict(
+                            size=4,
+                            color=valid_data['solver_nodes'],
+                            colorscale='RdYlGn_r',
+                            showscale=True,
+                            colorbar=dict(title='Solver Nodes'),
+                            opacity=0.3
+                        ),
+                        text=valid_data['instance'],
+                        hovertemplate='%{text}<br>Input: %{x:,}<br>Cone: %{y:,}<br>Nodes: %{marker.color:,}<extra></extra>'
+                    ))
+                    max_val = max(valid_data['inp_total_nbeq'].max(), valid_data['grim_total_cone'].max())
+                    fig_search.add_trace(go.Scatter(
+                        x=[1, max_val],
+                        y=[1, max_val],
+                        mode='lines',
+                        line=dict(dash='dash', color='gray', width=2),
+                        name='No reduction',
+                        showlegend=True,
+                        hoverinfo='skip'
+                    ))
+                    fig_search.update_layout(
+                        title='Constraint Reduction (Search Instances): Input vs Cone',
+                        xaxis_title='Input Constraints',
+                        yaxis_title='Cone Constraints',
+                        xaxis_type='log',
+                        yaxis_type='log',
+                        hovermode='closest',
+                        height=500
+                    )
+                    html_parts.append('<div class="plot-container">')
+                    html_parts.append(fig_search.to_html(full_html=False, include_plotlyjs=False))
+                    html_parts.append('</div>')
+
+            # Variable reduction for search instances
+            html_parts.append("<h3>Variable Reduction (Search Instances Only)</h3>")
+            if 'inp_variables' in search_df.columns and 'grim_cone_variables' in search_df.columns:
+                valid_data = search_df[search_df['inp_variables'].notna() & search_df['grim_cone_variables'].notna()]
+                if not valid_data.empty:
+                    fig_search_var = go.Figure()
+                    fig_search_var.add_trace(go.Scatter(
+                        x=valid_data['inp_variables'],
+                        y=valid_data['grim_cone_variables'],
+                        mode='markers',
+                        marker=dict(
+                            size=4,
+                            color=valid_data['solver_nodes'],
+                            colorscale='RdYlGn_r',
+                            showscale=True,
+                            colorbar=dict(title='Solver Nodes'),
+                            opacity=0.3
+                        ),
+                        text=valid_data['instance'],
+                        hovertemplate='%{text}<br>Input Variables: %{x:,}<br>Cone Variables: %{y:,}<br>Nodes: %{marker.color:,}<extra></extra>'
+                    ))
+                    max_val = max(valid_data['inp_variables'].max(), valid_data['grim_cone_variables'].max())
+                    fig_search_var.add_trace(go.Scatter(
+                        x=[1, max_val],
+                        y=[1, max_val],
+                        mode='lines',
+                        line=dict(dash='dash', color='gray', width=2),
+                        name='No reduction',
+                        showlegend=True,
+                        hoverinfo='skip'
+                    ))
+                    fig_search_var.update_layout(
+                        title='Variable Reduction (Search Instances): Input vs Cone',
+                        xaxis_title='Input Variables',
+                        yaxis_title='Cone Variables',
+                        xaxis_type='log',
+                        yaxis_type='log',
+                        hovermode='closest',
+                        height=500
+                    )
+                    html_parts.append('<div class="plot-container">')
+                    html_parts.append(fig_search_var.to_html(full_html=False, include_plotlyjs=False))
+                    html_parts.append('</div>')
+
     # Top 10 lists
     html_parts.append("<h2>🏆 Top 10 Lists</h2>")
 
