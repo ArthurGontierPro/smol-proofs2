@@ -31,6 +31,8 @@ const CSV_COLUMNS = [
     "brim_opb_size", "brim_pbp_size", "brim_total_size",
     # Solver stats (if available)
     "pattern_vertices", "target_vertices", "runtime_ms", "status",
+    # Instance classification
+    "is_sat", "is_unsat", "has_proof",
     # Error tracking
     "has_error", "error_type", "error_details",
     # Resolv iterations
@@ -251,7 +253,19 @@ function aggregate_results(proofdir::String, output_csv::String)
             push!(row, get(data, "pattern_vertices", ""))
             push!(row, get(data, "target_vertices", ""))
             push!(row, get(data, "runtime_ms", ""))
-            push!(row, get(data, "status", ""))
+            status_val = get(data, "status", "")
+            push!(row, status_val == "" ? "" : "\"$status_val\"")
+
+            # Instance classification
+            # is_sat: solver found SAT
+            # is_unsat: solver found UNSAT
+            # has_proof: proof file exists (has trimming stats)
+            is_sat = (status_val == "SAT")
+            is_unsat = (status_val == "UNSAT")
+            has_proof = haskey(data, "grim_total_time")  # if trimmer ran, we have proof
+            push!(row, is_sat ? "true" : "false")
+            push!(row, is_unsat ? "true" : "false")
+            push!(row, has_proof ? "true" : "false")
 
             # Error tracking
             push!(row, has_error ? "true" : "false")

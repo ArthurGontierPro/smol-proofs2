@@ -85,6 +85,11 @@ The script generates a CSV file with the following columns:
 - `runtime_ms` - Solver runtime (milliseconds)
 - `status` - Solver status (SAT/UNSAT/TIMEOUT/etc.)
 
+### Instance Classification
+- `is_sat` - Boolean: true if solver found SAT (no proof to trim)
+- `is_unsat` - Boolean: true if solver found UNSAT (proof should exist)
+- `has_proof` - Boolean: true if proof exists and was trimmed (has grim_total_time)
+
 ### Error Tracking
 - `has_error` - Boolean: true if instance had an error
 - `error_type` - Type of error (OOM, Timeout, Int32Overflow, BoundsError, Unknown)
