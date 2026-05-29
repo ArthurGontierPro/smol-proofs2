@@ -91,8 +91,6 @@ def generate_summary_stats(df):
     stats['overview'] = {
         'Total Instances': len(df),
         'Successfully Trimmed': df['has_proof'].sum() if 'has_proof' in df.columns else 0,
-        'Truncated Proofs': df['proof_truncated'].sum() if 'proof_truncated' in df.columns else 0,
-        'Errors': df['has_error'].sum() if 'has_error' in df.columns else 0,
         'With Core Extraction': df[df['resolv_iterations'] > 0].shape[0] if 'resolv_iterations' in df.columns else 0,
     }
 
@@ -148,7 +146,6 @@ def generate_html_report(df, stats, output_path):
 <head>
     <meta charset="utf-8">
     <title>Proof Trimming Analysis Report</title>
-    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -251,38 +248,22 @@ def generate_html_report(df, stats, output_path):
         ''')
     html_parts.append('</div>')
 
-    # Skip reasons breakdown
-    if 'skip_reason' in df.columns:
-        skip_counts = df[df['skip_reason'].notna()]['skip_reason'].value_counts()
-        if not skip_counts.empty:
-            html_parts.append("<h3>Skip Reasons Breakdown</h3>")
-            html_parts.append("<table>")
-            html_parts.append("<tr><th>Reason</th><th>Count</th><th>Percentage</th></tr>")
-            for reason, count in skip_counts.items():
-                pct = (count / len(df)) * 100
-                html_parts.append(f"<tr><td>{reason}</td><td>{count}</td><td>{pct:.1f}%</td></tr>")
-            html_parts.append("</table>")
-
-    # Error type breakdown
-    if 'error_type' in df.columns:
-        error_counts = df[df['has_error'] == True]['error_type'].value_counts()
-        if not error_counts.empty:
-            html_parts.append("<h3>Error Types</h3>")
-            html_parts.append("<table>")
-            html_parts.append("<tr><th>Error Type</th><th>Count</th></tr>")
-            for err_type, count in error_counts.items():
-                html_parts.append(f"<tr><td>{err_type}</td><td>{count}</td></tr>")
-            html_parts.append("</table>")
-
-    # Timing statistics
+    # Trimmer timing statistics
     if 'timing' in stats and stats['timing']:
-        html_parts.append("<h2>⏱️ Timing Statistics (seconds)</h2>")
+        html_parts.append("<h2>⏱️ Trimmer Times (seconds)</h2>")
         html_parts.append("<table>")
         html_parts.append("<tr><th>Metric</th><th>Mean</th><th>Median</th><th>Min</th><th>Max</th><th>Std Dev</th></tr>")
+        timing_labels = {
+            'grim_parse_time': 'Parse',
+            'grim_trim_time': 'Trim',
+            'grim_write_time': 'Write',
+            'grim_total_time': 'Total'
+        }
         for metric, values in stats['timing'].items():
+            label = timing_labels.get(metric, metric.replace('_', ' ').title())
             html_parts.append(f'''
             <tr>
-                <td>{metric.replace('_', ' ').title()}</td>
+                <td>{label}</td>
                 <td>{values['mean']:.2f}</td>
                 <td>{values['median']:.2f}</td>
                 <td>{values['min']:.2f}</td>
@@ -312,80 +293,264 @@ def generate_html_report(df, stats, output_path):
     # Generate plots
     html_parts.append("<h2>📊 Interactive Visualizations</h2>")
 
-    # Plot 1: Parse time vs input size
-    if not proof_df.empty and 'grim_parse_time' in proof_df.columns and 'inp_total_nbeq' in proof_df.columns:
-        valid_data = proof_df[proof_df['inp_total_nbeq'].notna() & proof_df['grim_parse_time'].notna()]
+    # Plot 1: Total proof size reduction
+    html_parts.append("<h3>Total Proof Size Reduction</h3>")
+    if not proof_df.empty and 'inp_total_size' in proof_df.columns and 'grim_total_size' in proof_df.columns:
+        valid_data = proof_df[proof_df['inp_total_size'].notna() & proof_df['grim_total_size'].notna()]
+        if not valid_data.empty:
+            fig0a = go.Figure()
+            fig0a.add_trace(go.Scatter(
+                x=valid_data['inp_total_size'],
+                y=valid_data['grim_total_size'],
+                mode='markers',
+                marker=dict(
+                    size=4,
+                    color=valid_data['grim_total_time'] if 'grim_total_time' in valid_data.columns else 'green',
+                    colorscale='RdYlGn_r',
+                    cmin=0,
+                    cmax=6000,
+                    showscale=True,
+                    colorbar=dict(title='Time (s)'),
+                    opacity=0.3
+                ),
+                text=valid_data['instance'],
+                hovertemplate='%{text}<br>Input Size: %{x:,} bytes<br>Grim Size: %{y:,} bytes<extra></extra>'
+            ))
+            # Add diagonal line (no reduction)
+            max_val = max(valid_data['inp_total_size'].max(), valid_data['grim_total_size'].max())
+            fig0a.add_trace(go.Scatter(
+                x=[1, max_val],
+                y=[1, max_val],
+                mode='lines',
+                line=dict(dash='dash', color='gray', width=2),
+                name='No reduction',
+                showlegend=True,
+                hoverinfo='skip'
+            ))
+            fig0a.update_layout(
+                title='Total Proof Size Reduction: Input vs Trimmed',
+                xaxis_title='Input Total Size (bytes)',
+                yaxis_title='Trimmed Total Size (bytes)',
+                xaxis_type='log',
+                yaxis_type='log',
+                hovermode='closest',
+                height=500
+            )
+            html_parts.append('<div class="plot-container">')
+            html_parts.append(fig0a.to_html(full_html=False, include_plotlyjs='cdn'))
+            html_parts.append('</div>')
+
+    # Plot 2: OPB proof size reduction
+    html_parts.append("<h3>OPB Proof Size Reduction</h3>")
+    if not proof_df.empty and 'inp_opb_size' in proof_df.columns and 'grim_opb_size' in proof_df.columns:
+        valid_data = proof_df[proof_df['inp_opb_size'].notna() & proof_df['grim_opb_size'].notna()]
+        if not valid_data.empty:
+            fig0b = go.Figure()
+            fig0b.add_trace(go.Scatter(
+                x=valid_data['inp_opb_size'],
+                y=valid_data['grim_opb_size'],
+                mode='markers',
+                marker=dict(
+                    size=4,
+                    color=valid_data['grim_total_time'] if 'grim_total_time' in valid_data.columns else 'green',
+                    colorscale='RdYlGn_r',
+                    cmin=0,
+                    cmax=6000,
+                    showscale=True,
+                    colorbar=dict(title='Time (s)'),
+                    opacity=0.3
+                ),
+                text=valid_data['instance'],
+                hovertemplate='%{text}<br>Input OPB: %{x:,} bytes<br>Grim OPB: %{y:,} bytes<extra></extra>'
+            ))
+            max_val = max(valid_data['inp_opb_size'].max(), valid_data['grim_opb_size'].max())
+            fig0b.add_trace(go.Scatter(
+                x=[1, max_val],
+                y=[1, max_val],
+                mode='lines',
+                line=dict(dash='dash', color='gray', width=2),
+                name='No reduction',
+                showlegend=True,
+                hoverinfo='skip'
+            ))
+            fig0b.update_layout(
+                title='OPB File Size Reduction: Input vs Trimmed',
+                xaxis_title='Input OPB Size (bytes)',
+                yaxis_title='Trimmed OPB Size (bytes)',
+                xaxis_type='log',
+                yaxis_type='log',
+                hovermode='closest',
+                height=500
+            )
+            html_parts.append('<div class="plot-container">')
+            html_parts.append(fig0b.to_html(full_html=False, include_plotlyjs=False))
+            html_parts.append('</div>')
+
+    # Plot 3: PBP proof size reduction
+    html_parts.append("<h3>PBP Proof Size Reduction</h3>")
+    if not proof_df.empty and 'inp_pbp_size' in proof_df.columns and 'grim_pbp_size' in proof_df.columns:
+        valid_data = proof_df[proof_df['inp_pbp_size'].notna() & proof_df['grim_pbp_size'].notna()]
+        if not valid_data.empty:
+            fig0c = go.Figure()
+            fig0c.add_trace(go.Scatter(
+                x=valid_data['inp_pbp_size'],
+                y=valid_data['grim_pbp_size'],
+                mode='markers',
+                marker=dict(
+                    size=4,
+                    color=valid_data['grim_total_time'] if 'grim_total_time' in valid_data.columns else 'green',
+                    colorscale='RdYlGn_r',
+                    cmin=0,
+                    cmax=6000,
+                    showscale=True,
+                    colorbar=dict(title='Time (s)'),
+                    opacity=0.3
+                ),
+                text=valid_data['instance'],
+                hovertemplate='%{text}<br>Input PBP: %{x:,} bytes<br>Grim PBP: %{y:,} bytes<extra></extra>'
+            ))
+            max_val = max(valid_data['inp_pbp_size'].max(), valid_data['grim_pbp_size'].max())
+            fig0c.add_trace(go.Scatter(
+                x=[1, max_val],
+                y=[1, max_val],
+                mode='lines',
+                line=dict(dash='dash', color='gray', width=2),
+                name='No reduction',
+                showlegend=True,
+                hoverinfo='skip'
+            ))
+            fig0c.update_layout(
+                title='PBP File Size Reduction: Input vs Trimmed',
+                xaxis_title='Input PBP Size (bytes)',
+                yaxis_title='Trimmed PBP Size (bytes)',
+                xaxis_type='log',
+                yaxis_type='log',
+                hovermode='closest',
+                height=500
+            )
+            html_parts.append('<div class="plot-container">')
+            html_parts.append(fig0c.to_html(full_html=False, include_plotlyjs=False))
+            html_parts.append('</div>')
+
+    # Plot 4: Constraint reduction scatter
+    html_parts.append("<h3>Constraint Reduction</h3>")
+    if not proof_df.empty and 'inp_total_nbeq' in proof_df.columns and 'grim_total_cone' in proof_df.columns:
+        valid_data = proof_df[proof_df['inp_total_nbeq'].notna() & proof_df['grim_total_cone'].notna()]
         if not valid_data.empty:
             fig1 = go.Figure()
             fig1.add_trace(go.Scatter(
                 x=valid_data['inp_total_nbeq'],
-                y=valid_data['grim_parse_time'],
-                mode='markers',
-                marker=dict(size=6, color='blue', opacity=0.6),
-                text=valid_data['instance'],
-                hovertemplate='%{text}<br>Constraints: %{x:,}<br>Parse: %{y:.2f}s<extra></extra>'
-            ))
-            fig1.update_layout(
-                title='Parse Time vs Input Size',
-                xaxis_title='Input Constraints',
-                yaxis_title='Parse Time (seconds)',
-                xaxis_type='log',
-                yaxis_type='log',
-                hovermode='closest',
-                height=450
-            )
-            html_parts.append('<div class="plot-container">')
-            html_parts.append(fig1.to_html(full_html=False, include_plotlyjs=False))
-            html_parts.append('</div>')
-
-    # Plot 2: Trim time vs input size
-    if not proof_df.empty and 'grim_trim_time' in proof_df.columns and 'inp_total_nbeq' in proof_df.columns:
-        valid_data = proof_df[proof_df['inp_total_nbeq'].notna() & proof_df['grim_trim_time'].notna()]
-        if not valid_data.empty:
-            fig2 = go.Figure()
-            fig2.add_trace(go.Scatter(
-                x=valid_data['inp_total_nbeq'],
-                y=valid_data['grim_trim_time'],
-                mode='markers',
-                marker=dict(size=6, color='red', opacity=0.6),
-                text=valid_data['instance'],
-                hovertemplate='%{text}<br>Constraints: %{x:,}<br>Trim: %{y:.2f}s<extra></extra>'
-            ))
-            fig2.update_layout(
-                title='Trim Time vs Input Size',
-                xaxis_title='Input Constraints',
-                yaxis_title='Trim Time (seconds)',
-                xaxis_type='log',
-                yaxis_type='log',
-                hovermode='closest',
-                height=450
-            )
-            html_parts.append('<div class="plot-container">')
-            html_parts.append(fig2.to_html(full_html=False, include_plotlyjs=False))
-            html_parts.append('</div>')
-
-    # Plot 3: Constraint reduction scatter
-    if not proof_df.empty and 'inp_total_nbeq' in proof_df.columns and 'grim_total_cone' in proof_df.columns:
-        valid_data = proof_df[proof_df['inp_total_nbeq'].notna() & proof_df['grim_total_cone'].notna()]
-        if not valid_data.empty:
-            fig3 = go.Figure()
-            fig3.add_trace(go.Scatter(
-                x=valid_data['inp_total_nbeq'],
                 y=valid_data['grim_total_cone'],
                 mode='markers',
                 marker=dict(
-                    size=6,
-                    color=valid_data['grim_total_time'] if 'grim_total_time' in valid_data.columns else 'blue',
-                    colorscale='Viridis',
+                    size=4,
+                    color=valid_data['grim_total_time'] if 'grim_total_time' in valid_data.columns else 'green',
+                    colorscale='RdYlGn_r',
+                    cmin=0,
+                    cmax=6000,
                     showscale=True,
-                    colorbar=dict(title='Total Time (s)'),
-                    opacity=0.7
+                    colorbar=dict(title='Time (s)'),
+                    opacity=0.3
                 ),
                 text=valid_data['instance'],
                 hovertemplate='%{text}<br>Input: %{x:,}<br>Cone: %{y:,}<extra></extra>'
             ))
             # Add diagonal line (no reduction)
             max_val = max(valid_data['inp_total_nbeq'].max(), valid_data['grim_total_cone'].max())
+            fig1.add_trace(go.Scatter(
+                x=[1, max_val],
+                y=[1, max_val],
+                mode='lines',
+                line=dict(dash='dash', color='gray', width=2),
+                name='No reduction',
+                showlegend=True,
+                hoverinfo='skip'
+            ))
+            fig1.update_layout(
+                title='Constraint Reduction: Input vs Cone',
+                xaxis_title='Input Constraints',
+                yaxis_title='Cone Constraints',
+                xaxis_type='log',
+                yaxis_type='log',
+                hovermode='closest',
+                height=500
+            )
+            html_parts.append('<div class="plot-container">')
+            html_parts.append(fig1.to_html(full_html=False, include_plotlyjs='cdn'))
+            html_parts.append('</div>')
+
+    # Plot 2: Variable reduction scatter
+    html_parts.append("<h3>Variable Reduction</h3>")
+    if not proof_df.empty and 'inp_variables' in proof_df.columns and 'grim_cone_variables' in proof_df.columns:
+        valid_data = proof_df[proof_df['inp_variables'].notna() & proof_df['grim_cone_variables'].notna()]
+        if not valid_data.empty:
+            fig2 = go.Figure()
+            fig2.add_trace(go.Scatter(
+                x=valid_data['inp_variables'],
+                y=valid_data['grim_cone_variables'],
+                mode='markers',
+                marker=dict(
+                    size=4,
+                    color=valid_data['grim_total_time'] if 'grim_total_time' in valid_data.columns else 'green',
+                    colorscale='RdYlGn_r',
+                    cmin=0,
+                    cmax=6000,
+                    showscale=True,
+                    colorbar=dict(title='Time (s)'),
+                    opacity=0.3
+                ),
+                text=valid_data['instance'],
+                hovertemplate='%{text}<br>Input Variables: %{x:,}<br>Cone Variables: %{y:,}<extra></extra>'
+            ))
+            # Add diagonal line (no reduction)
+            max_val = max(valid_data['inp_variables'].max(), valid_data['grim_cone_variables'].max())
+            fig2.add_trace(go.Scatter(
+                x=[1, max_val],
+                y=[1, max_val],
+                mode='lines',
+                line=dict(dash='dash', color='gray', width=2),
+                name='No reduction',
+                showlegend=True,
+                hoverinfo='skip'
+            ))
+            fig2.update_layout(
+                title='Variable Reduction: Input vs Cone',
+                xaxis_title='Input Variables',
+                yaxis_title='Cone Variables',
+                xaxis_type='log',
+                yaxis_type='log',
+                hovermode='closest',
+                height=500
+            )
+            html_parts.append('<div class="plot-container">')
+            html_parts.append(fig2.to_html(full_html=False, include_plotlyjs=False))
+            html_parts.append('</div>')
+
+    # Plot 3: Literal reduction scatter
+    html_parts.append("<h3>Literal Reduction</h3>")
+    if not proof_df.empty and 'inp_literals' in proof_df.columns and 'grim_cone_literals' in proof_df.columns:
+        valid_data = proof_df[proof_df['inp_literals'].notna() & proof_df['grim_cone_literals'].notna()]
+        if not valid_data.empty:
+            fig3 = go.Figure()
+            fig3.add_trace(go.Scatter(
+                x=valid_data['inp_literals'],
+                y=valid_data['grim_cone_literals'],
+                mode='markers',
+                marker=dict(
+                    size=4,
+                    color=valid_data['grim_total_time'] if 'grim_total_time' in valid_data.columns else 'green',
+                    colorscale='RdYlGn_r',
+                    cmin=0,
+                    cmax=6000,
+                    showscale=True,
+                    colorbar=dict(title='Time (s)'),
+                    opacity=0.3
+                ),
+                text=valid_data['instance'],
+                hovertemplate='%{text}<br>Input Literals: %{x:,}<br>Cone Literals: %{y:,}<extra></extra>'
+            ))
+            # Add diagonal line (no reduction)
+            max_val = max(valid_data['inp_literals'].max(), valid_data['grim_cone_literals'].max())
             fig3.add_trace(go.Scatter(
                 x=[1, max_val],
                 y=[1, max_val],
@@ -396,9 +561,9 @@ def generate_html_report(df, stats, output_path):
                 hoverinfo='skip'
             ))
             fig3.update_layout(
-                title='Constraint Reduction: Input vs Cone',
-                xaxis_title='Input Constraints',
-                yaxis_title='Cone Constraints',
+                title='Literal Reduction: Input vs Cone',
+                xaxis_title='Input Literals',
+                yaxis_title='Cone Literals',
                 xaxis_type='log',
                 yaxis_type='log',
                 hovermode='closest',
@@ -408,7 +573,102 @@ def generate_html_report(df, stats, output_path):
             html_parts.append(fig3.to_html(full_html=False, include_plotlyjs=False))
             html_parts.append('</div>')
 
-    # Plot 4: Variable and Literal reduction histograms side by side
+    # Plot 4: Core graph reduction scatter (Pattern)
+    html_parts.append("<h3>Pattern Graph Core Reduction</h3>")
+    if not proof_df.empty and 'pattern_vertices' in proof_df.columns and 'core_pattern_nodes' in proof_df.columns:
+        valid_data = proof_df[proof_df['pattern_vertices'].notna() & proof_df['core_pattern_nodes'].notna()]
+        if not valid_data.empty:
+            fig4 = go.Figure()
+            fig4.add_trace(go.Scatter(
+                x=valid_data['pattern_vertices'],
+                y=valid_data['core_pattern_nodes'],
+                mode='markers',
+                marker=dict(
+                    size=4,
+                    color=valid_data['grim_total_time'] if 'grim_total_time' in valid_data.columns else 'green',
+                    colorscale='RdYlGn_r',
+                    cmin=0,
+                    cmax=6000,
+                    showscale=True,
+                    colorbar=dict(title='Time (s)'),
+                    opacity=0.3
+                ),
+                text=valid_data['instance'],
+                hovertemplate='%{text}<br>Pattern Vertices: %{x:,}<br>Core Vertices: %{y:,}<extra></extra>'
+            ))
+            # Add diagonal line (no reduction)
+            max_val = max(valid_data['pattern_vertices'].max(), valid_data['core_pattern_nodes'].max())
+            fig4.add_trace(go.Scatter(
+                x=[1, max_val],
+                y=[1, max_val],
+                mode='lines',
+                line=dict(dash='dash', color='gray', width=2),
+                name='No reduction',
+                showlegend=True,
+                hoverinfo='skip'
+            ))
+            fig4.update_layout(
+                title='Pattern Graph Core Reduction: Original vs Core',
+                xaxis_title='Pattern Vertices',
+                yaxis_title='Core Pattern Vertices',
+                xaxis_type='log',
+                yaxis_type='log',
+                hovermode='closest',
+                height=500
+            )
+            html_parts.append('<div class="plot-container">')
+            html_parts.append(fig4.to_html(full_html=False, include_plotlyjs=False))
+            html_parts.append('</div>')
+
+    # Plot 5: Target graph core reduction scatter
+    html_parts.append("<h3>Target Graph Core Reduction</h3>")
+    if not proof_df.empty and 'target_vertices' in proof_df.columns and 'core_target_nodes' in proof_df.columns:
+        valid_data = proof_df[proof_df['target_vertices'].notna() & proof_df['core_target_nodes'].notna()]
+        if not valid_data.empty:
+            fig5 = go.Figure()
+            fig5.add_trace(go.Scatter(
+                x=valid_data['target_vertices'],
+                y=valid_data['core_target_nodes'],
+                mode='markers',
+                marker=dict(
+                    size=4,
+                    color=valid_data['grim_total_time'] if 'grim_total_time' in valid_data.columns else 'green',
+                    colorscale='RdYlGn_r',
+                    cmin=0,
+                    cmax=6000,
+                    showscale=True,
+                    colorbar=dict(title='Time (s)'),
+                    opacity=0.3
+                ),
+                text=valid_data['instance'],
+                hovertemplate='%{text}<br>Target Vertices: %{x:,}<br>Core Vertices: %{y:,}<extra></extra>'
+            ))
+            # Add diagonal line (no reduction)
+            max_val = max(valid_data['target_vertices'].max(), valid_data['core_target_nodes'].max())
+            fig5.add_trace(go.Scatter(
+                x=[1, max_val],
+                y=[1, max_val],
+                mode='lines',
+                line=dict(dash='dash', color='gray', width=2),
+                name='No reduction',
+                showlegend=True,
+                hoverinfo='skip'
+            ))
+            fig5.update_layout(
+                title='Target Graph Core Reduction: Original vs Core',
+                xaxis_title='Target Vertices',
+                yaxis_title='Core Target Vertices',
+                xaxis_type='log',
+                yaxis_type='log',
+                hovermode='closest',
+                height=500
+            )
+            html_parts.append('<div class="plot-container">')
+            html_parts.append(fig5.to_html(full_html=False, include_plotlyjs=False))
+            html_parts.append('</div>')
+
+    # Plot 6: Reduction ratio histograms
+    html_parts.append("<h3>Reduction Ratio Distributions</h3>")
     if not proof_df.empty:
         has_var = 'variable_reduction_ratio' in proof_df.columns
         has_lit = 'literal_reduction_ratio' in proof_df.columns
@@ -422,13 +682,13 @@ def generate_html_report(df, stats, output_path):
             if has_lit:
                 titles.append('Literal Reduction Distribution')
 
-            fig4 = make_subplots(rows=1, cols=ncols, subplot_titles=titles)
+            fig6 = make_subplots(rows=1, cols=ncols, subplot_titles=titles)
 
             col_idx = 1
             if has_var:
                 valid_ratios = proof_df['variable_reduction_ratio'].dropna()
                 if not valid_ratios.empty:
-                    fig4.add_trace(go.Histogram(
+                    fig6.add_trace(go.Histogram(
                         x=valid_ratios * 100,
                         nbinsx=30,
                         marker=dict(color='lightgreen', line=dict(color='darkgreen', width=1)),
@@ -439,85 +699,19 @@ def generate_html_report(df, stats, output_path):
             if has_lit:
                 valid_ratios = proof_df['literal_reduction_ratio'].dropna()
                 if not valid_ratios.empty:
-                    fig4.add_trace(go.Histogram(
+                    fig6.add_trace(go.Histogram(
                         x=valid_ratios * 100,
                         nbinsx=30,
                         marker=dict(color='lightblue', line=dict(color='darkblue', width=1)),
                         name='Literal Reduction'
                     ), row=1, col=col_idx)
 
-            fig4.update_xaxes(title_text='Reduction Ratio (%)')
-            fig4.update_yaxes(title_text='Count')
-            fig4.update_layout(height=400, showlegend=False)
+            fig6.update_xaxes(title_text='Reduction Ratio (%)')
+            fig6.update_yaxes(title_text='Count')
+            fig6.update_layout(height=400, showlegend=False)
             html_parts.append('<div class="plot-container">')
-            html_parts.append(fig4.to_html(full_html=False, include_plotlyjs=False))
+            html_parts.append(fig6.to_html(full_html=False, include_plotlyjs=False))
             html_parts.append('</div>')
-
-    # Plot 5: Core reduction (if available)
-    if not proof_df.empty and 'core_pattern_reduction' in proof_df.columns:
-        core_data = proof_df[proof_df['core_pattern_reduction'].notna()]
-        if not core_data.empty:
-            from plotly.subplots import make_subplots
-            fig5 = make_subplots(rows=1, cols=2,
-                                subplot_titles=('Pattern Graph Core Reduction', 'Target Graph Core Reduction'))
-
-            # Pattern reduction
-            fig5.add_trace(go.Histogram(
-                x=core_data['core_pattern_reduction'] * 100,
-                nbinsx=30,
-                marker=dict(color='lightcoral', line=dict(color='darkred', width=1)),
-                name='Pattern'
-            ), row=1, col=1)
-
-            # Target reduction
-            if 'core_target_reduction' in core_data.columns:
-                valid_target = core_data['core_target_reduction'].dropna()
-                if not valid_target.empty:
-                    fig5.add_trace(go.Histogram(
-                        x=valid_target * 100,
-                        nbinsx=30,
-                        marker=dict(color='lightsalmon', line=dict(color='darkorange', width=1)),
-                        name='Target'
-                    ), row=1, col=2)
-
-            fig5.update_xaxes(title_text='Core Reduction (%)')
-            fig5.update_yaxes(title_text='Count')
-            fig5.update_layout(height=400, showlegend=False)
-            html_parts.append('<div class="plot-container">')
-            html_parts.append('<h3>UNSAT Core Reductions</h3>')
-            html_parts.append(fig5.to_html(full_html=False, include_plotlyjs=False))
-            html_parts.append('</div>')
-
-    # Outlier detection
-    html_parts.append("<h2>🔍 Outlier Detection</h2>")
-
-    outlier_cols = ['grim_total_time', 'grim_trim_time', 'literal_reduction_ratio']
-    outliers_found = False
-
-    for col in outlier_cols:
-        if col in proof_df.columns:
-            outliers = detect_outliers(proof_df, col)
-            outlier_instances = proof_df[outliers]
-            if not outlier_instances.empty:
-                outliers_found = True
-                html_parts.append(f"<h3>Outliers: {col.replace('_', ' ').title()}</h3>")
-                html_parts.append("<table>")
-                html_parts.append("<tr><th>Instance</th><th>Value</th><th>Mean</th><th>Deviation</th></tr>")
-                col_mean = proof_df[col].mean()
-                for idx, row in outlier_instances.iterrows():
-                    deviation = ((row[col] - col_mean) / col_mean) * 100
-                    html_parts.append(f'''
-                    <tr class="outlier">
-                        <td>{row['instance']}</td>
-                        <td>{row[col]:.2f}</td>
-                        <td>{col_mean:.2f}</td>
-                        <td>{deviation:+.1f}%</td>
-                    </tr>
-                    ''')
-                html_parts.append("</table>")
-
-    if not outliers_found:
-        html_parts.append("<p>No significant outliers detected.</p>")
 
     # Top 10 lists
     html_parts.append("<h2>🏆 Top 10 Lists</h2>")
@@ -533,6 +727,23 @@ def generate_html_report(df, stats, output_path):
         best_reduction = proof_df.nlargest(10, 'constraint_reduction_ratio')[['instance', 'constraint_reduction_ratio', 'inp_total_nbeq', 'grim_total_cone']]
         html_parts.append("<h3>Best Constraint Reductions</h3>")
         html_parts.append(best_reduction.to_html(index=False, classes='', border=0, formatters={'constraint_reduction_ratio': lambda x: f'{x:.1%}'}))
+
+    # Least reduced instances
+    if not proof_df.empty and 'constraint_reduction_ratio' in proof_df.columns:
+        worst_reduction = proof_df.nsmallest(10, 'constraint_reduction_ratio')[['instance', 'constraint_reduction_ratio', 'inp_total_nbeq', 'grim_total_cone']]
+        html_parts.append("<h3>Least Reduced Instances</h3>")
+        html_parts.append(worst_reduction.to_html(index=False, classes='', border=0, formatters={'constraint_reduction_ratio': lambda x: f'{x:.1%}'}))
+
+    # Most reduced pattern graphs
+    if not proof_df.empty and 'pattern_vertices' in proof_df.columns and 'core_pattern_nodes' in proof_df.columns:
+        proof_df_copy = proof_df.copy()
+        proof_df_copy['pattern_reduction_ratio'] = (
+            (proof_df_copy['pattern_vertices'] - proof_df_copy['core_pattern_nodes']) /
+            proof_df_copy['pattern_vertices'].replace(0, np.nan)
+        )
+        best_pattern = proof_df_copy.nlargest(10, 'pattern_reduction_ratio')[['instance', 'pattern_reduction_ratio', 'pattern_vertices', 'core_pattern_nodes']]
+        html_parts.append("<h3>Most Reduced Pattern Graphs</h3>")
+        html_parts.append(best_pattern.to_html(index=False, classes='', border=0, formatters={'pattern_reduction_ratio': lambda x: f'{x:.1%}'}))
 
     # Footer
     html_parts.append("""
