@@ -122,6 +122,18 @@ def generate_summary_stats(df):
                     'max': proof_df[col].max(),
                 }
 
+    # Resolv iterations statistics
+    if 'resolv_iterations' in df.columns:
+        resolv_counts = df['resolv_iterations'].value_counts().sort_index()
+        max_iter = df['resolv_iterations'].max()
+        max_instances = df[df['resolv_iterations'] == max_iter]['instance'].tolist()
+        stats['resolv'] = {
+            'max': max_iter,
+            'mean': df['resolv_iterations'].mean(),
+            'counts': resolv_counts.to_dict(),
+            'max_instances': max_instances
+        }
+
     return stats
 
 def generate_html_report(df, stats, output_path):
@@ -289,6 +301,20 @@ def generate_html_report(df, stats, output_path):
             </tr>
             ''')
         html_parts.append("</table>")
+
+    # Resolv iterations statistics
+    if 'resolv' in stats and stats['resolv']:
+        html_parts.append("<h2>🔄 Resolv Iterations</h2>")
+        html_parts.append(f"<p><strong>Max:</strong> {stats['resolv']['max']}</p>")
+        html_parts.append(f"<p><strong>Mean:</strong> {stats['resolv']['mean']:.2f}</p>")
+        html_parts.append("<table>")
+        html_parts.append("<tr><th>Iterations</th><th>Count</th></tr>")
+        for iter_num in sorted(stats['resolv']['counts'].keys()):
+            count = stats['resolv']['counts'][iter_num]
+            html_parts.append(f"<tr><td>iter={iter_num}</td><td>{count} instance(s)</td></tr>")
+        html_parts.append("</table>")
+        if stats['resolv']['max_instances']:
+            html_parts.append(f"<p><strong>Max instances:</strong> {', '.join(stats['resolv']['max_instances'][:5])}</p>")
 
     # Generate plots
     html_parts.append("<h2>📊 Interactive Visualizations</h2>")
@@ -849,6 +875,81 @@ def generate_html_report(df, stats, output_path):
                 html_parts.append('<div class="plot-container">')
                 html_parts.append(fig.to_html(full_html=False, include_plotlyjs=False))
                 html_parts.append('</div>')
+
+    # Correlation: Solver Search vs Resolv Benefit
+    if not proof_df.empty and 'solver_nodes' in proof_df.columns and 'resolv_iterations' in proof_df.columns:
+        resolv_df = proof_df[proof_df['resolv_iterations'] > 0]
+        if not resolv_df.empty and 'solver_nodes' in resolv_df.columns:
+            valid_data = resolv_df[resolv_df['solver_nodes'].notna()]
+            if not valid_data.empty:
+                html_parts.append("<h2>🔗 Correlation: Solver Search vs Resolv Iterations</h2>")
+                html_parts.append(f"<p>Analyzing {len(valid_data):,} instances with both solver search data and resolv iterations</p>")
+
+                # Plot: solver_nodes vs resolv_iterations
+                fig_corr = go.Figure()
+                fig_corr.add_trace(go.Scatter(
+                    x=valid_data['solver_nodes'],
+                    y=valid_data['resolv_iterations'],
+                    mode='markers',
+                    marker=dict(
+                        size=4,
+                        color=valid_data['constraint_reduction_ratio'] if 'constraint_reduction_ratio' in valid_data.columns else 'blue',
+                        colorscale='RdYlGn',
+                        showscale=True,
+                        colorbar=dict(title='Constraint<br>Reduction'),
+                        opacity=0.5
+                    ),
+                    text=valid_data['instance'],
+                    hovertemplate='%{text}<br>Solver Nodes: %{x:,}<br>Resolv Iters: %{y}<extra></extra>'
+                ))
+                fig_corr.update_layout(
+                    title='Solver Search Nodes vs Resolv Iterations',
+                    xaxis_title='Solver Nodes',
+                    yaxis_title='Resolv Iterations',
+                    xaxis_type='log',
+                    hovermode='closest',
+                    height=500
+                )
+                html_parts.append('<div class="plot-container">')
+                html_parts.append(fig_corr.to_html(full_html=False, include_plotlyjs=False))
+                html_parts.append('</div>')
+
+                # Plot: constraint reduction for instances with/without resolv
+                html_parts.append("<h3>Constraint Reduction: With vs Without Resolv</h3>")
+                if 'constraint_reduction_ratio' in proof_df.columns:
+                    no_resolv = proof_df[proof_df['resolv_iterations'] == 0]['constraint_reduction_ratio'].dropna()
+                    with_resolv = proof_df[proof_df['resolv_iterations'] > 0]['constraint_reduction_ratio'].dropna()
+
+                    if not no_resolv.empty and not with_resolv.empty:
+                        from plotly.subplots import make_subplots
+                        fig_comp = make_subplots(rows=1, cols=2, subplot_titles=('No Resolv', 'With Resolv'))
+
+                        fig_comp.add_trace(go.Histogram(
+                            x=no_resolv * 100,
+                            nbinsx=30,
+                            marker=dict(color='lightcoral', line=dict(color='darkred', width=1)),
+                            name='No Resolv',
+                            showlegend=False
+                        ), row=1, col=1)
+
+                        fig_comp.add_trace(go.Histogram(
+                            x=with_resolv * 100,
+                            nbinsx=30,
+                            marker=dict(color='lightgreen', line=dict(color='darkgreen', width=1)),
+                            name='With Resolv',
+                            showlegend=False
+                        ), row=1, col=2)
+
+                        fig_comp.update_xaxes(title_text='Constraint Reduction (%)', row=1, col=1)
+                        fig_comp.update_xaxes(title_text='Constraint Reduction (%)', row=1, col=2)
+                        fig_comp.update_yaxes(title_text='Count', row=1, col=1)
+                        fig_comp.update_yaxes(title_text='Count', row=1, col=2)
+                        fig_comp.update_layout(height=400)
+
+                        html_parts.append('<div class="plot-container">')
+                        html_parts.append(f'<p>Mean without resolv: {no_resolv.mean():.1%} | Mean with resolv: {with_resolv.mean():.1%}</p>')
+                        html_parts.append(fig_comp.to_html(full_html=False, include_plotlyjs=False))
+                        html_parts.append('</div>')
 
     # Top 10 lists
     html_parts.append("<h2>🏆 Top 10 Lists</h2>")
