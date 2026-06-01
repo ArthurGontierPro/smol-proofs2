@@ -1007,6 +1007,197 @@ def generate_html_report(df, stats, output_path):
                         html_parts.append(fig_comp.to_html(full_html=False, include_plotlyjs=False))
                         html_parts.append('</div>')
 
+                # Compute correlation coefficients for solver_nodes vs resolv_iterations
+                if len(valid_data) > 1:
+                    from scipy import stats as scipy_stats
+                    try:
+                        # Filter to instances with search (solver_nodes > 0)
+                        search_resolv_df = valid_data[valid_data['solver_nodes'] > 0]
+                        if len(search_resolv_df) > 1:
+                            pearson_corr, pearson_p = scipy_stats.pearsonr(search_resolv_df['solver_nodes'], search_resolv_df['resolv_iterations'])
+                            spearman_corr, spearman_p = scipy_stats.spearmanr(search_resolv_df['solver_nodes'], search_resolv_df['resolv_iterations'])
+                            html_parts.append(f"<p><strong>Pearson correlation:</strong> {pearson_corr:.3f} (p-value: {pearson_p:.3e})</p>")
+                            html_parts.append(f"<p><strong>Spearman correlation:</strong> {spearman_corr:.3f} (p-value: {spearman_p:.3e})</p>")
+                    except ImportError:
+                        pass  # scipy not available
+
+                # Plot: solver_propagations vs resolv_iterations
+                if 'solver_propagations' in valid_data.columns:
+                    html_parts.append("<h3>Solver Propagations vs Resolv Iterations</h3>")
+                    fig_prop = go.Figure()
+                    fig_prop.add_trace(go.Scatter(
+                        x=valid_data['solver_propagations'],
+                        y=valid_data['resolv_iterations'],
+                        mode='markers',
+                        marker=dict(
+                            size=4,
+                            color=valid_data['constraint_reduction_ratio'] if 'constraint_reduction_ratio' in valid_data.columns else 'blue',
+                            colorscale='RdYlGn',
+                            showscale=True,
+                            colorbar=dict(title='Constraint<br>Reduction'),
+                            opacity=0.5
+                        ),
+                        text=valid_data['instance'],
+                        hovertemplate='%{text}<br>Propagations: %{x:,}<br>Resolv Iters: %{y}<extra></extra>'
+                    ))
+                    fig_prop.update_layout(
+                        title='Solver Propagations vs Resolv Iterations',
+                        xaxis_title='Solver Propagations',
+                        yaxis_title='Resolv Iterations',
+                        xaxis_type='log',
+                        hovermode='closest',
+                        height=500
+                    )
+                    html_parts.append('<div class="plot-container">')
+                    html_parts.append(fig_prop.to_html(full_html=False, include_plotlyjs=False))
+                    html_parts.append('</div>')
+
+    # Correlation: Solver Search vs Pattern Graph Reduction
+    if not proof_df.empty and 'solver_nodes' in proof_df.columns and 'pattern_vertices' in proof_df.columns and 'core_pattern_nodes' in proof_df.columns:
+        # Calculate pattern graph reduction
+        pattern_df = proof_df[(proof_df['pattern_vertices'].notna()) & (proof_df['core_pattern_nodes'].notna()) & (proof_df['pattern_vertices'] > 0)].copy()
+        pattern_df['pattern_reduction_ratio'] = (pattern_df['pattern_vertices'] - pattern_df['core_pattern_nodes']) / pattern_df['pattern_vertices']
+
+        search_pattern_df = pattern_df[pattern_df['solver_nodes'] > 0]
+        if not search_pattern_df.empty:
+            html_parts.append("<h2>🔗 Correlation: Solver Search vs Pattern Graph Reduction</h2>")
+            html_parts.append(f"<p>Analyzing {len(search_pattern_df):,} instances with both solver search and pattern graph reduction</p>")
+
+            # Plot: solver_nodes vs pattern_reduction_ratio
+            html_parts.append("<h3>Solver Nodes vs Pattern Graph Vertices Reduction</h3>")
+            fig_pattern = go.Figure()
+            fig_pattern.add_trace(go.Scatter(
+                x=search_pattern_df['solver_nodes'],
+                y=search_pattern_df['pattern_reduction_ratio'],
+                mode='markers',
+                marker=dict(
+                    size=4,
+                    color=search_pattern_df['resolv_iterations'] if 'resolv_iterations' in search_pattern_df.columns else 'green',
+                    colorscale='Viridis',
+                    showscale=True,
+                    colorbar=dict(title='Resolv<br>Iterations'),
+                    opacity=0.5
+                ),
+                text=search_pattern_df['instance'],
+                hovertemplate='%{text}<br>Solver Nodes: %{x:,}<br>Pattern Reduction: %{y:.1%}<extra></extra>'
+            ))
+            fig_pattern.update_layout(
+                title='Solver Nodes vs Pattern Graph Vertices Reduction',
+                xaxis_title='Solver Nodes',
+                yaxis_title='Pattern Graph Reduction Ratio',
+                xaxis_type='log',
+                yaxis_tickformat='.0%',
+                hovermode='closest',
+                height=500
+            )
+            html_parts.append('<div class="plot-container">')
+            html_parts.append(fig_pattern.to_html(full_html=False, include_plotlyjs=False))
+            html_parts.append('</div>')
+
+            # Plot: solver_propagations vs pattern_reduction_ratio
+            if 'solver_propagations' in search_pattern_df.columns:
+                html_parts.append("<h3>Solver Propagations vs Pattern Graph Vertices Reduction</h3>")
+                fig_pattern_prop = go.Figure()
+                fig_pattern_prop.add_trace(go.Scatter(
+                    x=search_pattern_df['solver_propagations'],
+                    y=search_pattern_df['pattern_reduction_ratio'],
+                    mode='markers',
+                    marker=dict(
+                        size=4,
+                        color=search_pattern_df['resolv_iterations'] if 'resolv_iterations' in search_pattern_df.columns else 'green',
+                        colorscale='Viridis',
+                        showscale=True,
+                        colorbar=dict(title='Resolv<br>Iterations'),
+                        opacity=0.5
+                    ),
+                    text=search_pattern_df['instance'],
+                    hovertemplate='%{text}<br>Propagations: %{x:,}<br>Pattern Reduction: %{y:.1%}<extra></extra>'
+                ))
+                fig_pattern_prop.update_layout(
+                    title='Solver Propagations vs Pattern Graph Vertices Reduction',
+                    xaxis_title='Solver Propagations',
+                    yaxis_title='Pattern Graph Reduction Ratio',
+                    xaxis_type='log',
+                    yaxis_tickformat='.0%',
+                    hovermode='closest',
+                    height=500
+                )
+                html_parts.append('<div class="plot-container">')
+                html_parts.append(fig_pattern_prop.to_html(full_html=False, include_plotlyjs=False))
+                html_parts.append('</div>')
+
+    # Per-iteration constraint/variable/literal analysis
+    if 'iter_nbeq' in df.columns or 'iter_var' in df.columns or 'iter_lit' in df.columns:
+        import json
+        resolv_df = df[df['resolv_iterations'] > 0].copy()
+        if not resolv_df.empty:
+            html_parts.append("<h2>🔄 Per-Iteration Constraint/Variable/Literal Analysis</h2>")
+
+            # Helper to detect top 10 increases
+            def get_top_increases(df, column_name, metric_name, initial_column):
+                outliers = []
+                for idx, row in df.iterrows():
+                    if pd.notna(row[column_name]) and row[column_name]:
+                        try:
+                            values = json.loads(row[column_name])
+                            if len(values) > 0:
+                                initial = row[initial_column] if pd.notna(row[initial_column]) else None
+                                if initial and initial > 0:
+                                    for i, val in enumerate(values):
+                                        if val is not None:
+                                            increase = val - initial
+                                            outliers.append({
+                                                'instance': row['instance'],
+                                                'iteration': i+1,
+                                                'initial': initial,
+                                                'iter_val': val,
+                                                'increase': increase,
+                                                'increase_ratio': increase / initial
+                                            })
+                        except:
+                            pass
+                # Sort by absolute increase (descending) and return top 10
+                return sorted(outliers, key=lambda x: abs(x['increase']), reverse=True)[:10]
+
+            # Constraint outliers
+            if 'iter_nbeq' in resolv_df.columns:
+                html_parts.append("<h3>Top 10 Constraint Increases Per Iteration</h3>")
+                outliers = get_top_increases(resolv_df, 'iter_nbeq', 'Constraints', 'inp_total_nbeq')
+                if outliers:
+                    html_parts.append("<table>")
+                    html_parts.append("<tr><th>Instance</th><th>Iteration</th><th>Initial</th><th>Iter Value</th><th>Increase</th><th>Ratio</th></tr>")
+                    for o in outliers:
+                        html_parts.append(f"<tr><td>{o['instance']}</td><td>{o['iteration']}</td>"
+                                        f"<td>{o['initial']:,}</td><td>{o['iter_val']:,}</td>"
+                                        f"<td>{o['increase']:+,}</td><td>{o['increase_ratio']:+.1%}</td></tr>")
+                    html_parts.append("</table>")
+
+            # Variable outliers
+            if 'iter_var' in resolv_df.columns:
+                html_parts.append("<h3>Top 10 Variable Increases Per Iteration</h3>")
+                outliers = get_top_increases(resolv_df, 'iter_var', 'Variables', 'inp_variables')
+                if outliers:
+                    html_parts.append("<table>")
+                    html_parts.append("<tr><th>Instance</th><th>Iteration</th><th>Initial</th><th>Iter Value</th><th>Increase</th><th>Ratio</th></tr>")
+                    for o in outliers:
+                        html_parts.append(f"<tr><td>{o['instance']}</td><td>{o['iteration']}</td>"
+                                        f"<td>{o['initial']:,}</td><td>{o['iter_val']:,}</td>"
+                                        f"<td>{o['increase']:+,}</td><td>{o['increase_ratio']:+.1%}</td></tr>")
+                    html_parts.append("</table>")
+
+            # Literal outliers
+            if 'iter_lit' in resolv_df.columns:
+                html_parts.append("<h3>Top 10 Literal Increases Per Iteration</h3>")
+                outliers = get_top_increases(resolv_df, 'iter_lit', 'Literals', 'inp_literals')
+                if outliers:
+                    html_parts.append("<table>")
+                    html_parts.append("<tr><th>Instance</th><th>Iteration</th><th>Initial</th><th>Iter Value</th><th>Increase</th><th>Ratio</th></tr>")
+                    for o in outliers:
+                        html_parts.append(f"<tr><td>{o['instance']}</td><td>{o['iteration']}</td>"
+                                        f"<td>{o['initial']:,}</td><td>{o['iter_val']:,}</td>"
+                                        f"<td>{o['increase']:+,}</td><td>{o['increase_ratio']:+.1%}</td></tr>")
+                    html_parts.append("</table>")
+
     # Top 10 lists
     html_parts.append("<h2>🏆 Top 10 Lists</h2>")
 

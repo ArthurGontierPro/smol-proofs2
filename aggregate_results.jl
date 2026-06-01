@@ -38,7 +38,9 @@ const CSV_COLUMNS = [
     # Resolv iterations
     "resolv_iterations",
     # Per-iteration size changes (JSON arrays for flexibility)
-    "iter_sizes_total", "iter_sizes_opb", "iter_sizes_pbp"
+    "iter_sizes_total", "iter_sizes_opb", "iter_sizes_pbp",
+    # Per-iteration constraint/variable/literal tracking
+    "iter_nbeq", "iter_var", "iter_lit"
 ]
 
 function parse_out_file(filepath)
@@ -181,6 +183,29 @@ function get_iteration_sizes(proofdir, instance, n_iterations)
     return (sizes_total, sizes_opb, sizes_pbp)
 end
 
+# Get constraint/variable/literal counts from each iteration's .out file
+function get_iteration_metrics(proofdir, instance, n_iterations)
+    nbeq_list = []
+    var_list = []
+    lit_list = []
+
+    for i in 1:n_iterations
+        out_file = joinpath(proofdir, instance * ".core$i" * ".out")
+        if isfile(out_file)
+            data = parse_out_file(out_file)
+            push!(nbeq_list, get(data, "inp_total_nbeq", nothing))
+            push!(var_list, get(data, "inp_variables", nothing))
+            push!(lit_list, get(data, "inp_literals", nothing))
+        else
+            push!(nbeq_list, nothing)
+            push!(var_list, nothing)
+            push!(lit_list, nothing)
+        end
+    end
+
+    return (nbeq_list, var_list, lit_list)
+end
+
 # Parse LAD file to get node count (first line of LAD format)
 function parse_lad_node_count(filepath)
     isfile(filepath) || return nothing
@@ -285,6 +310,9 @@ function aggregate_results(proofdir::String, output_csv::String)
 
             # Get iteration sizes
             iter_sizes_total, iter_sizes_opb, iter_sizes_pbp = get_iteration_sizes(proofdir, instance, resolv_iters)
+
+            # Get iteration metrics (constraints, variables, literals)
+            iter_nbeq, iter_var, iter_lit = get_iteration_metrics(proofdir, instance, resolv_iters)
 
             # Build row
             row = []
@@ -399,6 +427,11 @@ function aggregate_results(proofdir::String, output_csv::String)
             push!(row, format_array(iter_sizes_total))
             push!(row, format_array(iter_sizes_opb))
             push!(row, format_array(iter_sizes_pbp))
+
+            # Per-iteration metrics
+            push!(row, format_array(iter_nbeq))
+            push!(row, format_array(iter_var))
+            push!(row, format_array(iter_lit))
 
             # Write row
             println(io, join(row, ","))
