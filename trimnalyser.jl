@@ -3239,7 +3239,7 @@ end; # using .Dumping # to save the import un comment this.
             end
             np = parse(Int, readline(cur_pat))
             nt = parse(Int, readline(cur_tar))
-            if np == prev_np && nt == prev_nt
+            if np == prev_np  # Stop if pattern unchanged (target reduction alone doesn't help)
                 tryrm(cur_pat); tryrm(cur_tar)
                 printstyled("  $ins resolv: fixpoint after $(iter-1) iteration(s) ($np pat, $nt tar nodes)\n"; color=:green); return
             end
