@@ -1062,7 +1062,15 @@ end; # using .Dumping # to save the import un comment this.
     @inline function update_slack_on_assign!(t::Trail, sys::PBSystem, v::Int, val::Int8)
         for j in varrange(sys, v)
             eid = Int(sys.var_eqs[j])
+            # Bounds check to prevent crashes
+            if eid < 1 || eid >= length(sys.row_ptr)
+                continue
+            end
             for k in eqrange(sys, eid)
+                # Additional bounds check for k
+                if k < 1 || k > length(sys.signs)
+                    continue
+                end
                 Int(sys.vars[k]) == v || continue
                 sign = sys.signs[k]
                 coef = sys.coefs[k]
