@@ -44,6 +44,18 @@ julia -t4,1 trimnalyser.jl solve resolv verif allgraphs maxnodes=3000 st=180 tt=
     const minfreemem    = argval("minmem=",   Int,     _cluster ? 100 : 4) * 1024^3 # minmem=N GB
     const maxinstmem_gb = argval("maxmem=",   Float64, _cluster ? 50.0 : 8.0)       # maxmem=N GB per subprocess
     using Random,DataStructures,Dates,Printf,Mmap
+
+# ══ Signal Handling ═══════════════════════════════════════════════════════════════════════
+    # Clean exit on timeout to prevent signal handler corruption of @inbounds code
+    function handle_timeout(sig::Cint)
+        println(stderr, "Timeout signal received (signal $sig), exiting cleanly...")
+        exit(124)  # Standard timeout exit code
+    end
+    # Only install handler when running as subprocess (inst is set)
+    if inst !== nothing
+        ccall(:signal, Ptr{Cvoid}, (Cint, Ptr{Cvoid}), Base.SIGTERM, @cfunction(handle_timeout, Cvoid, (Cint,)))
+    end
+
 # ══ Entry point ══════════════════════════════════════════════════════════════════════════
     function packdots()
         visdir = proofs * "vis/"
