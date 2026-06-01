@@ -3231,6 +3231,7 @@ end; # using .Dumping # to save the import un comment this.
         cur_pat = proofs * "vis/" * ins * ".core.pat.lad"
         cur_tar = proofs * "vis/" * ins * ".core.tar.lad"
         prev_np = prev_nt = -1
+        orig_np = orig_nt = -1  # Track original sizes to detect no-reduction case
         iter = 0
         while true
             iter += 1
@@ -3239,6 +3240,18 @@ end; # using .Dumping # to save the import un comment this.
             end
             np = parse(Int, readline(cur_pat))
             nt = parse(Int, readline(cur_tar))
+            # On first iteration, check if core extraction kept all nodes
+            if iter == 1
+                patfile, tarfile = parsegraphfiles(ins)
+                if patfile !== nothing && isfile(patfile) && isfile(tarfile)
+                    orig_np = parse(Int, readline(patfile))
+                    orig_nt = parse(Int, readline(tarfile))
+                    if np == orig_np && nt == orig_nt
+                        tryrm(cur_pat); tryrm(cur_tar)
+                        printstyled("  $ins resolv: core kept all nodes ($np pat, $nt tar) — skipping\n"; color=:yellow); return
+                    end
+                end
+            end
             if np == prev_np && nt == prev_nt
                 tryrm(cur_pat); tryrm(cur_tar)
                 printstyled("  $ins resolv: fixpoint after $(iter-1) iteration(s) ($np pat, $nt tar nodes)\n"; color=:green); return
