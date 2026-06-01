@@ -36,7 +36,9 @@ const CSV_COLUMNS = [
     # Error tracking
     "has_error", "error_type", "error_details",
     # Resolv iterations
-    "resolv_iterations"
+    "resolv_iterations",
+    # Per-iteration size changes (JSON arrays for flexibility)
+    "iter_sizes_total", "iter_sizes_opb", "iter_sizes_pbp"
 ]
 
 function parse_out_file(filepath)
@@ -156,6 +158,29 @@ function count_resolv_iterations(proofdir, instance)
     return n
 end
 
+# Get sizes from each iteration's .out file
+function get_iteration_sizes(proofdir, instance, n_iterations)
+    sizes_total = []
+    sizes_opb = []
+    sizes_pbp = []
+
+    for i in 1:n_iterations
+        out_file = joinpath(proofdir, instance * ".core$i" * ".out")
+        if isfile(out_file)
+            data = parse_out_file(out_file)
+            push!(sizes_total, get(data, "grim_total_size", nothing))
+            push!(sizes_opb, get(data, "grim_opb_size", nothing))
+            push!(sizes_pbp, get(data, "grim_pbp_size", nothing))
+        else
+            push!(sizes_total, nothing)
+            push!(sizes_opb, nothing)
+            push!(sizes_pbp, nothing)
+        end
+    end
+
+    return (sizes_total, sizes_opb, sizes_pbp)
+end
+
 # Parse LAD file to get node count (first line of LAD format)
 function parse_lad_node_count(filepath)
     isfile(filepath) || return nothing
@@ -258,6 +283,9 @@ function aggregate_results(proofdir::String, output_csv::String)
             # Count resolv iterations
             resolv_iters = count_resolv_iterations(proofdir, instance)
 
+            # Get iteration sizes
+            iter_sizes_total, iter_sizes_opb, iter_sizes_pbp = get_iteration_sizes(proofdir, instance, resolv_iters)
+
             # Build row
             row = []
             push!(row, "\"$instance\"")  # instance name
@@ -356,6 +384,21 @@ function aggregate_results(proofdir::String, output_csv::String)
 
             # Resolv iterations
             push!(row, resolv_iters)
+
+            # Per-iteration sizes (as JSON arrays, escaped for CSV)
+            # Format: [size1,size2,size3] or empty if no iterations
+            function format_array(arr)
+                if isempty(arr)
+                    return ""
+                else
+                    # Filter out nothings and format
+                    vals = [v !== nothing ? string(v) : "null" for v in arr]
+                    return "\"[" * join(vals, ",") * "]\""
+                end
+            end
+            push!(row, format_array(iter_sizes_total))
+            push!(row, format_array(iter_sizes_opb))
+            push!(row, format_array(iter_sizes_pbp))
 
             # Write row
             println(io, join(row, ","))

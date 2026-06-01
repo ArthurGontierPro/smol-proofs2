@@ -316,6 +316,62 @@ def generate_html_report(df, stats, output_path):
         if stats['resolv']['max_instances']:
             html_parts.append(f"<p><strong>Max instances:</strong> {', '.join(stats['resolv']['max_instances'][:5])}</p>")
 
+    # Per-iteration size analysis
+    if 'iter_sizes_total' in df.columns:
+        import json
+        resolv_df = df[df['resolv_iterations'] > 0].copy()
+        if not resolv_df.empty:
+            html_parts.append("<h3>Per-Iteration Size Changes</h3>")
+
+            # Parse JSON arrays and compute deltas
+            size_deltas = []
+            outliers = []
+
+            for idx, row in resolv_df.iterrows():
+                if pd.notna(row['iter_sizes_total']) and row['iter_sizes_total']:
+                    try:
+                        sizes = json.loads(row['iter_sizes_total'])
+                        if len(sizes) > 0:
+                            # Compute delta from initial to each iteration
+                            initial = row['grim_total_size'] if pd.notna(row['grim_total_size']) else None
+                            if initial:
+                                for i, size in enumerate(sizes):
+                                    if size is not None:
+                                        delta_ratio = (size - initial) / initial
+                                        size_deltas.append(delta_ratio)
+                                        # Flag large growth as outlier (>20% or <-50%)
+                                        if delta_ratio > 0.2 or delta_ratio < -0.5:
+                                            outliers.append({
+                                                'instance': row['instance'],
+                                                'iteration': i+1,
+                                                'initial_size': initial,
+                                                'iter_size': size,
+                                                'delta_ratio': delta_ratio
+                                            })
+                    except:
+                        pass
+
+            if size_deltas:
+                import numpy as np
+                html_parts.append(f"<p><strong>Mean size change:</strong> {np.mean(size_deltas):.1%}</p>")
+                html_parts.append(f"<p><strong>Median size change:</strong> {np.median(size_deltas):.1%}</p>")
+                html_parts.append(f"<p><strong>Instances analyzed:</strong> {len(size_deltas)} iteration(s)</p>")
+
+                if outliers:
+                    html_parts.append(f"<h4>Outliers (large size changes)</h4>")
+                    html_parts.append("<table>")
+                    html_parts.append("<tr><th>Instance</th><th>Iteration</th><th>Initial Size</th><th>Iter Size</th><th>Change</th></tr>")
+                    # Sort by delta_ratio (most extreme first)
+                    outliers_sorted = sorted(outliers, key=lambda x: abs(x['delta_ratio']), reverse=True)[:10]
+                    for o in outliers_sorted:
+                        change_str = f"{o['delta_ratio']:+.1%}"
+                        if o['delta_ratio'] > 1:
+                            change_str = f"{o['delta_ratio']:+.1f}x"
+                        html_parts.append(f"<tr><td>{o['instance']}</td><td>{o['iteration']}</td>"
+                                        f"<td>{o['initial_size']:,}</td><td>{o['iter_size']:,}</td>"
+                                        f"<td>{change_str}</td></tr>")
+                    html_parts.append("</table>")
+
     # Generate plots
     html_parts.append("<h2>📊 Interactive Visualizations</h2>")
 
