@@ -12,6 +12,13 @@ import sys
 import argparse
 from pathlib import Path
 
+# Optional scipy for correlation analysis
+try:
+    from scipy import stats as scipy_stats
+    HAS_SCIPY = True
+except ImportError:
+    HAS_SCIPY = False
+
 def load_and_clean_data(csv_path):
     """Load CSV and convert boolean/numeric columns."""
     df = pd.read_csv(csv_path)
@@ -1008,18 +1015,14 @@ def generate_html_report(df, stats, output_path):
                         html_parts.append('</div>')
 
                 # Compute correlation coefficients for solver_nodes vs resolv_iterations
-                if len(valid_data) > 1:
-                    from scipy import stats as scipy_stats
-                    try:
-                        # Filter to instances with search (solver_nodes > 0)
-                        search_resolv_df = valid_data[valid_data['solver_nodes'] > 0]
-                        if len(search_resolv_df) > 1:
-                            pearson_corr, pearson_p = scipy_stats.pearsonr(search_resolv_df['solver_nodes'], search_resolv_df['resolv_iterations'])
-                            spearman_corr, spearman_p = scipy_stats.spearmanr(search_resolv_df['solver_nodes'], search_resolv_df['resolv_iterations'])
-                            html_parts.append(f"<p><strong>Pearson correlation:</strong> {pearson_corr:.3f} (p-value: {pearson_p:.3e})</p>")
-                            html_parts.append(f"<p><strong>Spearman correlation:</strong> {spearman_corr:.3f} (p-value: {spearman_p:.3e})</p>")
-                    except ImportError:
-                        pass  # scipy not available
+                if len(valid_data) > 1 and HAS_SCIPY:
+                    # Filter to instances with search (solver_nodes > 0)
+                    search_resolv_df = valid_data[valid_data['solver_nodes'] > 0]
+                    if len(search_resolv_df) > 1:
+                        pearson_corr, pearson_p = scipy_stats.pearsonr(search_resolv_df['solver_nodes'], search_resolv_df['resolv_iterations'])
+                        spearman_corr, spearman_p = scipy_stats.spearmanr(search_resolv_df['solver_nodes'], search_resolv_df['resolv_iterations'])
+                        html_parts.append(f"<p><strong>Pearson correlation:</strong> {pearson_corr:.3f} (p-value: {pearson_p:.3e})</p>")
+                        html_parts.append(f"<p><strong>Spearman correlation:</strong> {spearman_corr:.3f} (p-value: {spearman_p:.3e})</p>")
 
                 # Plot: solver_propagations vs resolv_iterations
                 if 'solver_propagations' in valid_data.columns:
