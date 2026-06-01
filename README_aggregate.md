@@ -78,6 +78,8 @@ The script generates a CSV file with the following columns:
 - `target_vertices` - Target graph vertices
 - `runtime_ms` - Solver runtime (milliseconds)
 - `status` - Solver status (SAT/UNSAT/TIMEOUT/etc.)
+- `solver_nodes` - Number of search nodes explored by solver
+- `solver_propagations` - Number of constraint propagations performed
 
 ### UNSAT Core Statistics
 - `core_pattern_nodes` - Number of pattern nodes in UNSAT core (from vis/*.core.pat.lad)
@@ -98,8 +100,14 @@ The script generates a CSV file with the following columns:
 - `error_type` - Type of error (OOM, Timeout, Int32Overflow, BoundsError, Unknown)
 - `error_details` - Error details (memory usage for OOM, timeout duration, etc.)
 
-### Other
+### Resolv Iterations and Per-Iteration Tracking
 - `resolv_iterations` - Number of resolv iterations (0 if none)
+- `iter_sizes_total` - JSON array of total proof sizes per iteration (e.g., "[100,95,92]")
+- `iter_sizes_opb` - JSON array of OPB sizes per iteration
+- `iter_sizes_pbp` - JSON array of PBP sizes per iteration
+- `iter_nbeq` - JSON array of constraint counts per iteration
+- `iter_var` - JSON array of variable counts per iteration
+- `iter_lit` - JSON array of literal counts per iteration
 
 ## Data Sources
 

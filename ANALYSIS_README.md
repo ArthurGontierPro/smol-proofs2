@@ -15,8 +15,9 @@
 
 **Requirements**:
 ```bash
-pip install plotly pandas
+pip install plotly pandas scipy
 ```
+Note: scipy is optional - correlation analysis will be skipped if not available
 
 **Usage**:
 ```bash
@@ -27,9 +28,13 @@ python3 analyze_results.py cluster_results.csv report.html
 - Overview statistics (counts, percentages)
 - Skip reasons breakdown
 - Timing statistics (mean, median, min, max)
-- Reduction ratios (literal, constraint, size)
-- Interactive scatter plots
-- Outlier detection with instance names
+- Reduction ratios (literal, constraint, size, variables)
+- Interactive scatter plots (all reduction types)
+- Separate analysis for instances with solver search
+- **Correlation analysis**: Solver search effort vs resolv iterations
+- **Correlation analysis**: Solver search vs pattern graph reduction
+- Per-iteration size/constraint/variable/literal tracking
+- Outlier detection with top 10 extreme cases
 - Top 10 slowest instances
 - Top 10 best reductions
 
